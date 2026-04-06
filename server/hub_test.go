@@ -440,3 +440,257 @@ func drainClientSend(client *Client, n int) []WSMessage {
 	}
 	return messages
 }
+
+// --- CoT / marker hub tests ---
+
+func TestHub_CotBroadcast(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	// Set position on c1 before joining
+	c1.mu.Lock()
+	c1.cotLat = 38.8977
+	c1.cotLon = -77.0365
+	c1.cotCe = 10.0
+	c1.cotType = "a-f-G-U-C"
+	c1.cotTime = time.Now()
+	c1.mu.Unlock()
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+
+	// Drain join messages from both clients
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	// Set position on c2 as well
+	c2.mu.Lock()
+	c2.cotLat = 40.7128
+	c2.cotLon = -74.0060
+	c2.cotCe = 5.0
+	c2.cotType = "a-f-G-U-C"
+	c2.cotTime = time.Now()
+	c2.mu.Unlock()
+
+	// Manually trigger a CoT state broadcast
+	room := hub.getOrCreateRoom("general")
+	hub.broadcastCotState(room)
+
+	// c1 should receive cot_state with c2's contact
+	c1Msgs := drainClientSend(c1, 5)
+	var foundCotState bool
+	for _, msg := range c1Msgs {
+		if msg.Type == "cot_state" {
+			foundCotState = true
+			var data CotStateData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				t.Fatalf("failed to unmarshal cot_state: %v", err)
+			}
+			if len(data.Contacts) != 1 {
+				t.Fatalf("expected 1 contact for c1, got %d", len(data.Contacts))
+			}
+			if data.Contacts[0].Callsign != "Bob" {
+				t.Fatalf("expected contact 'Bob', got '%s'", data.Contacts[0].Callsign)
+			}
+		}
+	}
+	if !foundCotState {
+		t.Fatal("c1 should receive cot_state")
+	}
+}
+
+func TestHub_CreateMarker(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	hub.CreateMapMarker(c1, roomHex, CreateMarkerData{
+		RoomID: roomHex,
+		Lat:    38.8977,
+		Lon:    -77.0365,
+		Name:   "HQ",
+		Icon:   "pin",
+		Color:  "#ff0000",
+	})
+
+	// Both clients should receive marker_created (broadcast to all, nil exclude)
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundCreated bool
+	for _, msg := range allMsgs {
+		if msg.Type == "marker_created" {
+			foundCreated = true
+			var data MarkerCreatedData
+			json.Unmarshal(msg.Data, &data)
+			if data.Marker.Name != "HQ" {
+				t.Fatalf("expected marker name 'HQ', got '%s'", data.Marker.Name)
+			}
+			if data.Marker.CreatorID != c1.identity.ID {
+				t.Fatal("marker creator_id should match Alice's identity")
+			}
+			if data.Marker.CreatorName != "Alice" {
+				t.Fatalf("expected creator name 'Alice', got '%s'", data.Marker.CreatorName)
+			}
+		}
+	}
+	if !foundCreated {
+		t.Fatal("should receive marker_created broadcast")
+	}
+
+	// Verify marker is stored in the room
+	markers := room.GetMarkers()
+	if len(markers) != 1 {
+		t.Fatalf("expected 1 marker in room, got %d", len(markers))
+	}
+}
+
+func TestHub_DeleteMarker(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	// Create a marker as Alice
+	hub.CreateMapMarker(c1, roomHex, CreateMarkerData{
+		RoomID: roomHex,
+		Lat:    38.8977,
+		Lon:    -77.0365,
+		Name:   "HQ",
+		Icon:   "pin",
+		Color:  "#ff0000",
+	})
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Get the marker ID
+	markers := room.GetMarkers()
+	if len(markers) != 1 {
+		t.Fatalf("expected 1 marker, got %d", len(markers))
+	}
+	markerID := markers[0].ID
+
+	// Alice deletes her own marker
+	hub.DeleteMapMarker(c1, roomHex, markerID)
+
+	// Should receive marker_deleted broadcast
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundDeleted bool
+	for _, msg := range allMsgs {
+		if msg.Type == "marker_deleted" {
+			foundDeleted = true
+			var data MarkerDeletedData
+			json.Unmarshal(msg.Data, &data)
+			if data.MarkerID != markerID {
+				t.Fatalf("expected marker_id '%s', got '%s'", markerID, data.MarkerID)
+			}
+		}
+	}
+	if !foundDeleted {
+		t.Fatal("should receive marker_deleted broadcast")
+	}
+
+	// Verify marker is removed from the room
+	markers = room.GetMarkers()
+	if len(markers) != 0 {
+		t.Fatalf("expected 0 markers after deletion, got %d", len(markers))
+	}
+}
+
+func TestHub_DeleteMarker_OwnershipCheck(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	// Alice creates a marker
+	hub.CreateMapMarker(c1, roomHex, CreateMarkerData{
+		RoomID: roomHex,
+		Lat:    38.8977,
+		Lon:    -77.0365,
+		Name:   "HQ",
+		Icon:   "pin",
+		Color:  "#ff0000",
+	})
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	markers := room.GetMarkers()
+	if len(markers) != 1 {
+		t.Fatalf("expected 1 marker, got %d", len(markers))
+	}
+	markerID := markers[0].ID
+
+	// Bob tries to delete Alice's marker
+	hub.DeleteMapMarker(c2, roomHex, markerID)
+
+	// Bob should receive an error message
+	c2Msgs := drainClientSend(c2, 5)
+	var gotError bool
+	for _, msg := range c2Msgs {
+		if msg.Type == "error" {
+			gotError = true
+			var data ErrorData
+			json.Unmarshal(msg.Data, &data)
+			if data.Message != "only the marker creator can delete it" {
+				t.Fatalf("expected ownership error message, got '%s'", data.Message)
+			}
+		}
+	}
+	if !gotError {
+		t.Fatal("Bob should receive error when trying to delete Alice's marker")
+	}
+
+	// Marker should still exist
+	markers = room.GetMarkers()
+	if len(markers) != 1 {
+		t.Fatalf("marker should still exist after unauthorized delete, got %d markers", len(markers))
+	}
+}

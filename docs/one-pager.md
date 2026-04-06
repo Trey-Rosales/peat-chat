@@ -25,6 +25,7 @@ PeatLink is a **decentralized mesh communication platform** that enables text an
 | **Text Chat** | Encrypted peer-to-peer messaging with conflict-free sync (CRDTs). Messages persist locally and merge automatically when peers reconnect. |
 | **Voice Channels** | Push-to-talk voice over WebRTC. Audio flows directly between peers -- the server never touches it. Join a channel, hold a key, talk. |
 | **Mesh Networking** | Built on [iroh](https://iroh.computer) gossip protocol. Devices relay data to extend range. Optional Bluetooth LE for fully offline mesh. |
+| **Tactical Map** | Shared map powered by MapLibre + Protomaps. Live CoT (Cursor on Target) position syncing. Drop and share markers (rally points, objectives, hazards). |
 | **Real-Time Topology** | Live visualization of the mesh network -- see every connected peer, their transport type, and latency at a glance. |
 
 <br>
@@ -36,6 +37,7 @@ PeatLink is a **decentralized mesh communication platform** that enables text an
 │  Frontend        React 18 · TypeScript      │
 │                  Zustand · Tailwind CSS      │
 │                  WebRTC (voice)              │
+│                  MapLibre GL JS · Protomaps  │
 ├─────────────────────────────────────────────┤
 │  Server          Go (WebSocket relay +      │
 │                  voice signaling)            │
@@ -76,7 +78,8 @@ PeatLink is a **decentralized mesh communication platform** that enables text an
 | Web UI + voice channels | Complete |
 | Settings & configuration | Complete |
 | Mobile shells (Android/iOS) | Functional (BLE integration in progress) |
-| Test suite | 79 tests passing (Go + Web) |
+| Tactical map + CoT sync | Complete |
+| Test suite | 102 tests passing (47 Go + 55 Web) |
 
 ## What's Next
 

@@ -3,16 +3,19 @@ import { useChatStore } from '../store/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { MessageInput } from './MessageInput'
 import { MeshViewer } from './MeshViewer'
+import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
+import type { GeoPosition } from '../hooks/useGeolocation'
 
 interface Props {
   send: (type: string, data: any) => void
   onOpenSidebar: () => void
   onPTTStart: () => void
   onPTTEnd: () => void
+  selfPosition: React.MutableRefObject<GeoPosition | null>
 }
 
-export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd }: Props) {
+export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPosition }: Props) {
   const activeRoomId = useChatStore((s) => s.activeRoomId)
   const rooms = useChatStore((s) => s.rooms)
   const userId = useChatStore((s) => s.userId)
@@ -21,6 +24,10 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd }: Props) {
   const meshViewerOpen = useChatStore((s) => s.meshViewerOpen)
   const toggleMeshViewer = useChatStore((s) => s.toggleMeshViewer)
   const meshPeers = useChatStore((s) => s.meshPeers)
+  const mapViewerOpen = useChatStore((s) => s.mapViewerOpen)
+  const toggleMapViewer = useChatStore((s) => s.toggleMapViewer)
+  const cotContacts = useChatStore((s) => s.cotContacts)
+  const cotMarkers = useChatStore((s) => s.cotMarkers)
   const activeVoice = useChatStore((s) => s.activeVoice)
   const localSpeaking = useChatStore((s) => s.localSpeaking)
   const voiceState = useChatStore((s) => s.voiceState)
@@ -91,6 +98,23 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd }: Props) {
           </div>
         </div>
 
+        {/* Map viewer toggle */}
+        <button
+          onClick={toggleMapViewer}
+          className={`p-2 rounded-lg transition shrink-0 ${
+            mapViewerOpen
+              ? 'bg-pl-accent/20 text-pl-accent'
+              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
+          }`}
+          title="Tactical map"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
+            <line x1="8" y1="2" x2="8" y2="18" />
+            <line x1="16" y1="6" x2="16" y2="22" />
+          </svg>
+        </button>
+
         {/* Mesh viewer toggle */}
         <button
           onClick={toggleMeshViewer}
@@ -112,8 +136,16 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd }: Props) {
         </button>
       </div>
 
-      {/* Content area: mesh viewer or chat */}
-      {meshViewerOpen ? (
+      {/* Content area: map, mesh viewer, or chat */}
+      {mapViewerOpen ? (
+        <MapViewer
+          contacts={cotContacts[room.id] || []}
+          markers={cotMarkers[room.id] || []}
+          selfPosition={selfPosition.current}
+          selfName={displayName}
+          send={send}
+        />
+      ) : meshViewerOpen ? (
         <MeshViewer
           peers={peers}
           selfName={displayName}

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -69,6 +70,7 @@ class MainActivity : AppCompatActivity() {
             settings.mediaPlaybackRequiresUserGesture = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             settings.cacheMode = WebSettings.LOAD_DEFAULT
+            settings.setGeolocationEnabled(true)
 
             webViewClient = WebViewClient()
             webChromeClient = object : WebChromeClient() {
@@ -82,6 +84,14 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         request.deny()
                     }
+                }
+
+                override fun onGeolocationPermissionsShowPrompt(
+                    origin: String,
+                    callback: GeolocationPermissions.Callback
+                ) {
+                    // Auto-grant geolocation for localhost (our own server)
+                    callback.invoke(origin, true, false)
                 }
             }
 
@@ -97,6 +107,7 @@ class MainActivity : AppCompatActivity() {
     private fun requestPermissions() {
         val allPerms = BLE_PERMISSIONS.toMutableList()
         allPerms.add(Manifest.permission.RECORD_AUDIO)
+        allPerms.add(Manifest.permission.ACCESS_FINE_LOCATION)
 
         val missing = allPerms.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED

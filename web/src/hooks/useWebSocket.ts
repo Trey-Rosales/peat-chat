@@ -107,6 +107,18 @@ export function useWebSocket(
             msg.data.speaking
           )
           break
+
+        // --- CoT / Map messages ---
+        case 'cot_state':
+          state.setCotContacts(msg.data.room_id, msg.data.contacts || [])
+          state.setCotMarkers(msg.data.room_id, msg.data.markers || [])
+          break
+        case 'marker_created':
+          state.addCotMarker(msg.data.room_id, msg.data.marker)
+          break
+        case 'marker_deleted':
+          state.removeCotMarker(msg.data.room_id, msg.data.marker_id)
+          break
       }
     }
   }, [signalingRef])

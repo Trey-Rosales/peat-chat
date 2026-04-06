@@ -27,6 +27,10 @@ export function SettingsPage({ onClose, send }: Props) {
   const setPttKey = useSettingsStore((s) => s.setPttKey)
   const setInputVolume = useSettingsStore((s) => s.setInputVolume)
   const setPreferredTransport = useSettingsStore((s) => s.setPreferredTransport)
+  const protomapsApiKey = useSettingsStore((s) => s.protomapsApiKey)
+  const setProtomapsApiKey = useSettingsStore((s) => s.setProtomapsApiKey)
+  const locationEnabled = useSettingsStore((s) => s.locationEnabled)
+  const setLocationEnabled = useSettingsStore((s) => s.setLocationEnabled)
 
   const [nameInput, setNameInput] = useState(displayName)
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([])
@@ -223,6 +227,54 @@ export function SettingsPage({ onClose, send }: Props) {
               <p className="text-xs text-pl-text-sec/60">
                 Preferred network path for mesh connections
               </p>
+            </div>
+          </section>
+
+          {/* Map */}
+          <section>
+            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+              Map
+            </h2>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm text-pl-text">Protomaps API Key</label>
+                <input
+                  type="text"
+                  value={protomapsApiKey}
+                  onChange={(e) => setProtomapsApiKey(e.target.value)}
+                  placeholder="Get a free key at protomaps.com"
+                  className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm placeholder-pl-text-sec font-mono"
+                />
+                <p className="text-xs text-pl-text-sec/60">
+                  Required for tactical map tiles
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm text-pl-text">Share Location</label>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setLocationEnabled(!locationEnabled)}
+                    className={`w-12 h-6 rounded-full transition-colors relative ${
+                      locationEnabled ? 'bg-pl-accent' : 'bg-pl-input'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                        locationEnabled ? 'translate-x-6' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                  <span className="text-xs text-pl-text-sec">
+                    {locationEnabled
+                      ? 'Broadcasting position to room'
+                      : 'Location sharing off'}
+                  </span>
+                </div>
+                <p className="text-xs text-pl-text-sec/60">
+                  When enabled, your GPS position is shared with room members on the tactical map
+                </p>
+              </div>
             </div>
           </section>
         </div>

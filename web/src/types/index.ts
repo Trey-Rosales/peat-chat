@@ -38,6 +38,31 @@ export interface VoiceChannel {
   members: VoiceMember[]
 }
 
+export interface CotContact {
+  uid: string
+  callsign: string
+  short_id: string
+  cot_type: string
+  lat: number
+  lon: number
+  hae: number
+  ce: number
+  time: number
+  stale: number
+}
+
+export interface CotMarker {
+  id: string
+  creator_id: string
+  creator_name: string
+  lat: number
+  lon: number
+  name: string
+  icon: string
+  color: string
+  created_at: number
+}
+
 export interface WSMessage {
   type: string
   data: any

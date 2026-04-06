@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, MeshPeer, Room, VoiceChannel, VoiceMember } from '../types'
+import type { ChatMessage, CotContact, CotMarker, MeshPeer, Room, VoiceChannel, VoiceMember } from '../types'
 
 interface ChatStore {
   userId: string
@@ -38,6 +38,16 @@ interface ChatStore {
   addVoiceChannel: (roomId: string, channel: { id: string; name: string }) => void
   addVoicePeer: (roomId: string, channelId: string, peer: VoiceMember) => void
   removeVoicePeer: (roomId: string, channelId: string, peerId: string) => void
+
+  // CoT / Map
+  cotContacts: Record<string, CotContact[]>
+  cotMarkers: Record<string, CotMarker[]>
+  mapViewerOpen: boolean
+  setCotContacts: (roomId: string, contacts: CotContact[]) => void
+  setCotMarkers: (roomId: string, markers: CotMarker[]) => void
+  addCotMarker: (roomId: string, marker: CotMarker) => void
+  removeCotMarker: (roomId: string, markerId: string) => void
+  toggleMapViewer: () => void
 
   // Settings
   settingsOpen: boolean
@@ -113,7 +123,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     meshPeers[roomId] = peers
     set({ meshPeers })
   },
-  toggleMeshViewer: () => set({ meshViewerOpen: !get().meshViewerOpen }),
+  toggleMeshViewer: () => {
+    const opening = !get().meshViewerOpen
+    set({
+      meshViewerOpen: opening,
+      mapViewerOpen: opening ? false : get().mapViewerOpen,
+    })
+  },
 
   // Voice
   voiceState: {},
@@ -174,6 +190,49 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return { ...ch, members: ch.members.filter((m) => m.id !== peerId) }
     })
     set({ voiceState })
+  },
+
+  // CoT / Map
+  cotContacts: {},
+  cotMarkers: {},
+  mapViewerOpen: false,
+
+  setCotContacts: (roomId, contacts) => {
+    const cotContacts = { ...get().cotContacts }
+    cotContacts[roomId] = contacts
+    set({ cotContacts })
+  },
+
+  setCotMarkers: (roomId, markers) => {
+    const cotMarkers = { ...get().cotMarkers }
+    cotMarkers[roomId] = markers
+    set({ cotMarkers })
+  },
+
+  addCotMarker: (roomId, marker) => {
+    const cotMarkers = { ...get().cotMarkers }
+    const existing = cotMarkers[roomId] || []
+    if (!existing.some((m) => m.id === marker.id)) {
+      cotMarkers[roomId] = [...existing, marker]
+      set({ cotMarkers })
+    }
+  },
+
+  removeCotMarker: (roomId, markerId) => {
+    const cotMarkers = { ...get().cotMarkers }
+    const existing = cotMarkers[roomId]
+    if (existing) {
+      cotMarkers[roomId] = existing.filter((m) => m.id !== markerId)
+      set({ cotMarkers })
+    }
+  },
+
+  toggleMapViewer: () => {
+    const opening = !get().mapViewerOpen
+    set({
+      mapViewerOpen: opening,
+      meshViewerOpen: opening ? false : get().meshViewerOpen,
+    })
   },
 
   // Settings

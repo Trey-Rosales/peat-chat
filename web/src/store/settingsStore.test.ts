@@ -8,6 +8,8 @@ beforeEach(() => {
     pttKey: ' ',
     inputVolume: 1.0,
     preferredTransport: 'tcp',
+    protomapsApiKey: '',
+    locationEnabled: false,
   })
 })
 
@@ -83,5 +85,27 @@ describe('settingsStore - transport', () => {
       useSettingsStore.getState().setPreferredTransport(t)
       expect(useSettingsStore.getState().preferredTransport).toBe(t)
     }
+  })
+})
+
+describe('settingsStore - map', () => {
+  it('has empty protomaps key by default', () => {
+    expect(useSettingsStore.getState().protomapsApiKey).toBe('')
+  })
+
+  it('sets protomaps API key', () => {
+    useSettingsStore.getState().setProtomapsApiKey('my-key-123')
+    expect(useSettingsStore.getState().protomapsApiKey).toBe('my-key-123')
+  })
+
+  it('has location disabled by default', () => {
+    expect(useSettingsStore.getState().locationEnabled).toBe(false)
+  })
+
+  it('toggles location enabled', () => {
+    useSettingsStore.getState().setLocationEnabled(true)
+    expect(useSettingsStore.getState().locationEnabled).toBe(true)
+    useSettingsStore.getState().setLocationEnabled(false)
+    expect(useSettingsStore.getState().locationEnabled).toBe(false)
   })
 })

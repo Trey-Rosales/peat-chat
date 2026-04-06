@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useWebSocket } from './hooks/useWebSocket'
 import { usePTT } from './hooks/usePTT'
+import { useGeolocation } from './hooks/useGeolocation'
 import { useChatStore } from './store/chatStore'
 import { VoiceManager } from './voice/VoiceManager'
 import { Sidebar } from './components/Sidebar'
@@ -36,6 +37,9 @@ export default function App() {
 
   // Push-to-talk (keyboard)
   usePTT(send, voiceManagerRef.current)
+
+  // Geolocation tracking for tactical map
+  const selfPositionRef = useGeolocation(send)
 
   const joinVoice = useCallback(
     async (roomId: string, channelId: string, existingMembers: VoiceMember[]) => {
@@ -148,6 +152,7 @@ export default function App() {
         onOpenSidebar={() => setSidebarOpen(true)}
         onPTTStart={handlePTTStart}
         onPTTEnd={handlePTTEnd}
+        selfPosition={selfPositionRef}
       />
 
       {showJoinModal && (

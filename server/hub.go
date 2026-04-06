@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Hub struct {
@@ -58,6 +60,7 @@ func (h *Hub) Run() {
 			for _, room := range rooms {
 				h.broadcastMeshState(room)
 				h.broadcastVoiceState(room)
+				h.broadcastCotState(room)
 			}
 		}
 	}
@@ -113,6 +116,18 @@ func (h *Hub) JoinRoom(client *Client, roomName string) {
 		RoomID:   roomID,
 		Channels: room.GetVoiceState(),
 	})
+
+	// Send current CoT positions and markers
+	contacts := room.GetCotContacts(client)
+	markers := room.GetMarkers()
+	if len(contacts) > 0 || len(markers) > 0 {
+		client.sendJSON("cot_state", CotStateData{
+			RoomID:   roomID,
+			SelfID:   client.identity.ID,
+			Contacts: contacts,
+			Markers:  markers,
+		})
+	}
 
 	data := mustMarshal("peer_update", PeerUpdateData{
 		RoomID:  roomID,
@@ -376,6 +391,86 @@ func (h *Hub) broadcastVoiceState(room *Room) {
 			RoomID:   roomID,
 			Channels: voiceState,
 		})
+	}
+}
+
+// --- CoT / map methods ---
+
+func (h *Hub) broadcastCotState(room *Room) {
+	members := room.GetMembers()
+	roomID := ChatIdHex(room.ID)
+	markers := room.GetMarkers()
+
+	for _, c := range members {
+		contacts := room.GetCotContacts(c)
+		if len(contacts) == 0 && len(markers) == 0 {
+			continue
+		}
+		c.sendJSON("cot_state", CotStateData{
+			RoomID:   roomID,
+			SelfID:   c.identity.ID,
+			Contacts: contacts,
+			Markers:  markers,
+		})
+	}
+}
+
+func (h *Hub) CreateMapMarker(client *Client, roomHexID string, d CreateMarkerData) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil {
+		client.sendJSON("error", ErrorData{Message: "room not found"})
+		return
+	}
+
+	client.mu.RLock()
+	name := client.name
+	client.mu.RUnlock()
+
+	marker := &CotMarker{
+		ID:          uuid.New().String(),
+		CreatorID:   client.identity.ID,
+		CreatorName: name,
+		Lat:         d.Lat,
+		Lon:         d.Lon,
+		Name:        d.Name,
+		Icon:        d.Icon,
+		Color:       d.Color,
+		CreatedAt:   uint64(time.Now().UnixMilli()),
+	}
+
+	room.AddMarker(marker)
+
+	data := mustMarshal("marker_created", MarkerCreatedData{
+		RoomID: roomHexID,
+		Marker: *marker,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) DeleteMapMarker(client *Client, roomHexID string, markerID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil {
+		return
+	}
+
+	// Only the creator can delete (check before removing)
+	room.mu.RLock()
+	marker, exists := room.Markers[markerID]
+	room.mu.RUnlock()
+	if !exists {
+		return
+	}
+	if marker.CreatorID != client.identity.ID {
+		client.sendJSON("error", ErrorData{Message: "only the marker creator can delete it"})
+		return
+	}
+
+	if room.DeleteMarker(markerID) {
+		data := mustMarshal("marker_deleted", MarkerDeletedData{
+			RoomID:   roomHexID,
+			MarkerID: markerID,
+		})
+		room.Broadcast(data, nil)
 	}
 }
 

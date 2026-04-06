@@ -229,3 +229,78 @@ type VoiceSpeakingBroadcastData struct {
 	PeerID    string `json:"peer_id"`
 	Speaking  bool   `json:"speaking"`
 }
+
+// --- CoT (Cursor on Target) types ---
+
+// Incoming: cot_position
+type CotPositionData struct {
+	RoomID  string  `json:"room_id"`
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	Hae     float64 `json:"hae"`
+	Ce      float64 `json:"ce"`
+	CotType string  `json:"cot_type"`
+}
+
+// Outgoing: cot_state (periodic broadcast)
+type CotStateData struct {
+	RoomID   string       `json:"room_id"`
+	SelfID   string       `json:"self_id"`
+	Contacts []CotContact `json:"contacts"`
+	Markers  []CotMarker  `json:"markers"`
+}
+
+type CotContact struct {
+	UID      string  `json:"uid"`
+	Callsign string  `json:"callsign"`
+	ShortID  string  `json:"short_id"`
+	CotType  string  `json:"cot_type"`
+	Lat      float64 `json:"lat"`
+	Lon      float64 `json:"lon"`
+	Hae      float64 `json:"hae"`
+	Ce       float64 `json:"ce"`
+	Time     uint64  `json:"time"`
+	Stale    uint64  `json:"stale"`
+}
+
+// --- Map marker types ---
+
+type CotMarker struct {
+	ID          string  `json:"id"`
+	CreatorID   string  `json:"creator_id"`
+	CreatorName string  `json:"creator_name"`
+	Lat         float64 `json:"lat"`
+	Lon         float64 `json:"lon"`
+	Name        string  `json:"name"`
+	Icon        string  `json:"icon"`
+	Color       string  `json:"color"`
+	CreatedAt   uint64  `json:"created_at"`
+}
+
+// Incoming: create_marker
+type CreateMarkerData struct {
+	RoomID string  `json:"room_id"`
+	Lat    float64 `json:"lat"`
+	Lon    float64 `json:"lon"`
+	Name   string  `json:"name"`
+	Icon   string  `json:"icon"`
+	Color  string  `json:"color"`
+}
+
+// Incoming: delete_marker
+type DeleteMarkerData struct {
+	RoomID   string `json:"room_id"`
+	MarkerID string `json:"marker_id"`
+}
+
+// Outgoing: marker_created
+type MarkerCreatedData struct {
+	RoomID string    `json:"room_id"`
+	Marker CotMarker `json:"marker"`
+}
+
+// Outgoing: marker_deleted
+type MarkerDeletedData struct {
+	RoomID   string `json:"room_id"`
+	MarkerID string `json:"marker_id"`
+}

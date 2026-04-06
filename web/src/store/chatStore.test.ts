@@ -15,6 +15,9 @@ beforeEach(() => {
     voiceState: {},
     activeVoice: null,
     localSpeaking: false,
+    cotContacts: {},
+    cotMarkers: {},
+    mapViewerOpen: false,
     settingsOpen: false,
   })
 })
@@ -220,6 +223,75 @@ describe('chatStore - voice', () => {
     const members = useChatStore.getState().voiceState['r1'][0].members
     expect(members).toHaveLength(1)
     expect(members[0].name).toBe('Bob')
+  })
+})
+
+describe('chatStore - CoT contacts', () => {
+  it('sets CoT contacts', () => {
+    useChatStore.getState().setCotContacts('r1', [
+      { uid: 'p1', callsign: 'Alice', short_id: 'p1s', cot_type: 'a-f-G-U-C', lat: 38.89, lon: -77.03, hae: 0, ce: 10, time: 1000, stale: 31000 },
+    ])
+    expect(useChatStore.getState().cotContacts['r1']).toHaveLength(1)
+    expect(useChatStore.getState().cotContacts['r1'][0].callsign).toBe('Alice')
+  })
+})
+
+describe('chatStore - CoT markers', () => {
+  it('sets markers', () => {
+    useChatStore.getState().setCotMarkers('r1', [
+      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 },
+    ])
+    expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
+  })
+
+  it('adds a marker', () => {
+    useChatStore.getState().setCotMarkers('r1', [])
+    useChatStore.getState().addCotMarker('r1', {
+      id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000,
+    })
+    expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
+  })
+
+  it('does not duplicate markers', () => {
+    const marker = { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 }
+    useChatStore.getState().setCotMarkers('r1', [marker])
+    useChatStore.getState().addCotMarker('r1', marker)
+    expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
+  })
+
+  it('removes a marker', () => {
+    useChatStore.getState().setCotMarkers('r1', [
+      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 },
+      { id: 'm2', creator_id: 'p2', creator_name: 'Bob', lat: 39.0, lon: -77.1, name: 'Objective', icon: 'objective', color: 'red', created_at: 2000 },
+    ])
+    useChatStore.getState().removeCotMarker('r1', 'm1')
+    const markers = useChatStore.getState().cotMarkers['r1']
+    expect(markers).toHaveLength(1)
+    expect(markers[0].name).toBe('Objective')
+  })
+})
+
+describe('chatStore - map viewer', () => {
+  it('toggles map viewer', () => {
+    expect(useChatStore.getState().mapViewerOpen).toBe(false)
+    useChatStore.getState().toggleMapViewer()
+    expect(useChatStore.getState().mapViewerOpen).toBe(true)
+    useChatStore.getState().toggleMapViewer()
+    expect(useChatStore.getState().mapViewerOpen).toBe(false)
+  })
+
+  it('opening map closes mesh viewer', () => {
+    useChatStore.setState({ meshViewerOpen: true })
+    useChatStore.getState().toggleMapViewer()
+    expect(useChatStore.getState().mapViewerOpen).toBe(true)
+    expect(useChatStore.getState().meshViewerOpen).toBe(false)
+  })
+
+  it('opening mesh closes map viewer', () => {
+    useChatStore.setState({ mapViewerOpen: true })
+    useChatStore.getState().toggleMeshViewer()
+    expect(useChatStore.getState().meshViewerOpen).toBe(true)
+    expect(useChatStore.getState().mapViewerOpen).toBe(false)
   })
 })
 

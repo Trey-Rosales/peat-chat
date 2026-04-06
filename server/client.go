@@ -30,6 +30,14 @@ type Client struct {
 	connectedAt  time.Time
 	lastPingSent time.Time
 	latencyMs    int64
+
+	// CoT position
+	cotLat  float64
+	cotLon  float64
+	cotHae  float64
+	cotCe   float64
+	cotType string
+	cotTime time.Time
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, name string) *Client {
@@ -46,6 +54,28 @@ func NewClient(hub *Hub, conn *websocket.Conn, name string) *Client {
 		rooms:       make(map[[32]byte]bool),
 		transport:   "tcp",
 		connectedAt: time.Now(),
+		cotType:     "a-f-G-U-C",
+	}
+}
+
+func (c *Client) toCotContact() *CotContact {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.cotTime.IsZero() {
+		return nil
+	}
+	t := uint64(c.cotTime.UnixMilli())
+	return &CotContact{
+		UID:      c.identity.ID,
+		Callsign: c.name,
+		ShortID:  c.identity.ShortID,
+		CotType:  c.cotType,
+		Lat:      c.cotLat,
+		Lon:      c.cotLon,
+		Hae:      c.cotHae,
+		Ce:       c.cotCe,
+		Time:     t,
+		Stale:    t + 30000,
 	}
 }
 
@@ -153,6 +183,35 @@ func (c *Client) readPump() {
 				c.transport = d.Transport
 				c.mu.Unlock()
 				c.broadcastMeshToMyRooms()
+			}
+
+		// --- CoT / map messages ---
+
+		case "cot_position":
+			var d CotPositionData
+			if json.Unmarshal(msg.Data, &d) == nil {
+				c.mu.Lock()
+				c.cotLat = d.Lat
+				c.cotLon = d.Lon
+				c.cotHae = d.Hae
+				c.cotCe = d.Ce
+				if d.CotType != "" {
+					c.cotType = d.CotType
+				}
+				c.cotTime = time.Now()
+				c.mu.Unlock()
+			}
+
+		case "create_marker":
+			var d CreateMarkerData
+			if json.Unmarshal(msg.Data, &d) == nil && d.Name != "" {
+				c.hub.CreateMapMarker(c, d.RoomID, d)
+			}
+
+		case "delete_marker":
+			var d DeleteMarkerData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MarkerID != "" {
+				c.hub.DeleteMapMarker(c, d.RoomID, d.MarkerID)
 			}
 
 		// --- Voice channel messages ---

@@ -373,3 +373,159 @@ func TestRoom_GetMeshPeers(t *testing.T) {
 		t.Fatalf("expected transport 'tcp', got '%s'", peers[0].Transport)
 	}
 }
+
+// --- CoT / marker tests ---
+
+func TestRoom_GetCotContacts(t *testing.T) {
+	hub := NewHub()
+	room := NewRoom("test")
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+
+	// Set positions on both clients
+	c1.mu.Lock()
+	c1.cotLat = 38.8977
+	c1.cotLon = -77.0365
+	c1.cotCe = 10.0
+	c1.cotType = "a-f-G-U-C"
+	c1.cotTime = time.Now()
+	c1.mu.Unlock()
+
+	c2.mu.Lock()
+	c2.cotLat = 40.7128
+	c2.cotLon = -74.0060
+	c2.cotCe = 5.0
+	c2.cotType = "a-f-G-U-C"
+	c2.cotTime = time.Now()
+	c2.mu.Unlock()
+
+	room.AddMember(c1)
+	room.AddMember(c2)
+
+	// Exclude c1 -- should only get c2's contact
+	contacts := room.GetCotContacts(c1)
+	if len(contacts) != 1 {
+		t.Fatalf("expected 1 contact (excluding self), got %d", len(contacts))
+	}
+	if contacts[0].Callsign != "Bob" {
+		t.Fatalf("expected callsign 'Bob', got '%s'", contacts[0].Callsign)
+	}
+	if contacts[0].Lat != 40.7128 {
+		t.Fatalf("expected lat 40.7128, got %f", contacts[0].Lat)
+	}
+	if contacts[0].Lon != -74.0060 {
+		t.Fatalf("expected lon -74.0060, got %f", contacts[0].Lon)
+	}
+
+	// Exclude c2 -- should only get c1's contact
+	contacts = room.GetCotContacts(c2)
+	if len(contacts) != 1 {
+		t.Fatalf("expected 1 contact (excluding self), got %d", len(contacts))
+	}
+	if contacts[0].Callsign != "Alice" {
+		t.Fatalf("expected callsign 'Alice', got '%s'", contacts[0].Callsign)
+	}
+}
+
+func TestRoom_GetCotContacts_SkipsNoPosition(t *testing.T) {
+	hub := NewHub()
+	room := NewRoom("test")
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+
+	// Only c1 has position set; c2 has no cotTime (zero value)
+	c1.mu.Lock()
+	c1.cotLat = 38.8977
+	c1.cotLon = -77.0365
+	c1.cotCe = 10.0
+	c1.cotType = "a-f-G-U-C"
+	c1.cotTime = time.Now()
+	c1.mu.Unlock()
+
+	room.AddMember(c1)
+	room.AddMember(c2)
+
+	// Exclude c1 -- c2 has no position so should be skipped
+	contacts := room.GetCotContacts(c1)
+	if len(contacts) != 0 {
+		t.Fatalf("expected 0 contacts (c2 has no position), got %d", len(contacts))
+	}
+
+	// Exclude c2 -- c1 does have position
+	contacts = room.GetCotContacts(c2)
+	if len(contacts) != 1 {
+		t.Fatalf("expected 1 contact, got %d", len(contacts))
+	}
+	if contacts[0].Callsign != "Alice" {
+		t.Fatalf("expected callsign 'Alice', got '%s'", contacts[0].Callsign)
+	}
+}
+
+func TestRoom_AddMarker(t *testing.T) {
+	room := NewRoom("test")
+
+	marker := &CotMarker{
+		ID:          "marker-1",
+		CreatorID:   "creator-1",
+		CreatorName: "Alice",
+		Lat:         38.8977,
+		Lon:         -77.0365,
+		Name:        "HQ",
+		Icon:        "pin",
+		Color:       "#ff0000",
+		CreatedAt:   uint64(time.Now().UnixMilli()),
+	}
+
+	room.AddMarker(marker)
+
+	markers := room.GetMarkers()
+	if len(markers) != 1 {
+		t.Fatalf("expected 1 marker, got %d", len(markers))
+	}
+	if markers[0].ID != "marker-1" {
+		t.Fatalf("expected marker ID 'marker-1', got '%s'", markers[0].ID)
+	}
+	if markers[0].Name != "HQ" {
+		t.Fatalf("expected marker name 'HQ', got '%s'", markers[0].Name)
+	}
+	if markers[0].CreatorName != "Alice" {
+		t.Fatalf("expected creator name 'Alice', got '%s'", markers[0].CreatorName)
+	}
+}
+
+func TestRoom_DeleteMarker(t *testing.T) {
+	room := NewRoom("test")
+
+	marker := &CotMarker{
+		ID:          "marker-1",
+		CreatorID:   "creator-1",
+		CreatorName: "Alice",
+		Lat:         38.8977,
+		Lon:         -77.0365,
+		Name:        "HQ",
+		Icon:        "pin",
+		Color:       "#ff0000",
+		CreatedAt:   uint64(time.Now().UnixMilli()),
+	}
+
+	room.AddMarker(marker)
+
+	ok := room.DeleteMarker("marker-1")
+	if !ok {
+		t.Fatal("DeleteMarker should return true for existing marker")
+	}
+
+	markers := room.GetMarkers()
+	if len(markers) != 0 {
+		t.Fatalf("expected 0 markers after deletion, got %d", len(markers))
+	}
+}
+
+func TestRoom_DeleteMarker_NotFound(t *testing.T) {
+	room := NewRoom("test")
+
+	ok := room.DeleteMarker("nonexistent-marker")
+	if ok {
+		t.Fatal("DeleteMarker should return false for nonexistent marker")
+	}
+}

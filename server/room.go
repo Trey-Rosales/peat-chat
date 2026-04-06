@@ -32,6 +32,7 @@ type Room struct {
 	Messages      []ChatMessage
 	Members       map[*Client]bool
 	VoiceChannels map[string]*VoiceChannel
+	Markers       map[string]*CotMarker
 	mu            sync.RWMutex
 }
 
@@ -43,6 +44,7 @@ func NewRoom(name string) *Room {
 		Messages:      make([]ChatMessage, 0),
 		Members:       make(map[*Client]bool),
 		VoiceChannels: map[string]*VoiceChannel{defaultVC.ID: defaultVC},
+		Markers:       make(map[string]*CotMarker),
 	}
 }
 
@@ -243,4 +245,50 @@ func (r *Room) GetVoiceChannelMembers(channelID string) []*Client {
 		members = append(members, c)
 	}
 	return members
+}
+
+// --- CoT methods ---
+
+// GetCotContacts returns CoT position data for all members except the excluded client.
+func (r *Room) GetCotContacts(exclude *Client) []CotContact {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var contacts []CotContact
+	for c := range r.Members {
+		if c == exclude {
+			continue
+		}
+		if ct := c.toCotContact(); ct != nil {
+			contacts = append(contacts, *ct)
+		}
+	}
+	return contacts
+}
+
+// --- Marker methods ---
+
+func (r *Room) AddMarker(marker *CotMarker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Markers[marker.ID] = marker
+}
+
+func (r *Room) DeleteMarker(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.Markers[id]; ok {
+		delete(r.Markers, id)
+		return true
+	}
+	return false
+}
+
+func (r *Room) GetMarkers() []CotMarker {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	markers := make([]CotMarker, 0, len(r.Markers))
+	for _, m := range r.Markers {
+		markers = append(markers, *m)
+	}
+	return markers
 }

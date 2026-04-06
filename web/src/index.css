@@ -31,3 +31,19 @@ input:focus, textarea:focus {
     font-size: 16px !important;
   }
 }
+
+/* MapLibre dark theme overrides */
+.maplibregl-ctrl-attrib {
+  background: rgba(11, 20, 26, 0.8) !important;
+  color: #8696a0 !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: #00a884 !important;
+}
+.maplibregl-ctrl-group {
+  background: #111b21 !important;
+  border: 1px solid #2a3942 !important;
+}
+.maplibregl-ctrl-group button {
+  filter: invert(1);
+}

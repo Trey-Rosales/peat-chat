@@ -312,7 +312,7 @@ See [`scripts/build-mobile.sh`](scripts/build-mobile.sh) for cross-compilation d
 | **peatlink-mobile** | axum 0.7, uniffi 0.28, peat-btle 0.2 (optional) |
 | **Go server** | gorilla/websocket, blake3, ed25519 |
 | **Web** | React 18, Zustand 4.5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
-| **Testing** | Go `testing`, Vitest, React Testing Library |
+| **Testing** | Go `testing` (47 tests), Vitest (55 tests), React Testing Library |
 
 ---
 
