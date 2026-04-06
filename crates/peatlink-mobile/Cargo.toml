@@ -1,0 +1,55 @@
+[package]
+name = "peatlink-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi_bindgen.rs"
+
+[[bin]]
+name = "peatlink-mobile-server"
+path = "src/main.rs"
+
+[features]
+default = []
+bluetooth = ["peat-btle"]
+bluetooth-chat = ["bluetooth"]
+
+[dependencies]
+peat-mesh = { version = "0.7", features = ["automerge-backend"] }
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "set-header", "fs"] }
+uniffi = { version = "0.28", features = ["cli", "tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+blake3 = "1"
+hex = "0.4"
+rand = "0.9"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# BLE transport (optional, platform-specific)
+peat-btle = { version = "0.2", features = ["legacy-chat"], optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+peat-btle = { version = "0.2", features = ["android", "legacy-chat"], optional = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+peat-btle = { version = "0.2", features = ["ios", "legacy-chat"], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+peat-btle = { version = "0.2", features = ["macos", "legacy-chat"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+peat-btle = { version = "0.2", features = ["linux", "legacy-chat"], optional = true }
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }

@@ -1,0 +1,45 @@
+# Rust
+/target
+
+# Go
+/server/peatlink-server
+/server/server
+
+# Web
+/web/node_modules
+/web/dist
+/web/android
+/web/ios
+*.tsbuildinfo
+
+# Android
+/mobile/android/.gradle
+/mobile/android/app/build
+/mobile/android/app/src/main/jniLibs
+/mobile/android/build
+/mobile/android/local.properties
+
+# iOS
+/mobile/ios/PeatLinkFFI.xcframework
+/mobile/ios/bindings
+/mobile/ios/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Runtime data (generated keys and CRDT stores)
+identity.key
+*.automerge
+
+# Environment
+.env
+.env.local

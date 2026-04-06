@@ -1,0 +1,47 @@
+[Error]
+enum PeatLinkError {
+    "StartupError",
+    "AlreadyRunning",
+    "NotRunning",
+    "InternalError",
+};
+
+dictionary BlePeerInfo {
+    string id;
+    string name;
+    i8 rssi;
+    boolean is_connected;
+    u64 last_seen_ms;
+    string transport;
+};
+
+interface MobileNode {
+    [Throws=PeatLinkError]
+    constructor(string data_dir, string display_name);
+
+    [Throws=PeatLinkError]
+    u16 start(string? web_dir);
+
+    [Throws=PeatLinkError]
+    void stop();
+
+    u16 port();
+    string node_id();
+    string display_name();
+    boolean is_running();
+
+    // BLE mesh controls
+    [Throws=PeatLinkError]
+    void start_ble(string mesh_id, string callsign, sequence<u8>? shared_secret);
+
+    [Throws=PeatLinkError]
+    void stop_ble();
+
+    boolean is_ble_running();
+
+    sequence<BlePeerInfo> ble_peers();
+};
+
+namespace peatlink_mobile {
+    string peatlink_version();
+};

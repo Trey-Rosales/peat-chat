@@ -1,0 +1,5 @@
+[bindings.kotlin]
+package_name = "com.peatlink.ffi"
+
+[bindings.swift]
+module_name = "PeatLinkFFI"
