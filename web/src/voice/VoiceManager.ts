@@ -94,49 +94,53 @@ export class VoiceManager {
       this.peerNames.set(member.id, member.name)
     }
 
-    const settings = useSettingsStore.getState()
-    this.audioContext = new AudioContext()
-    this.gainNode = this.audioContext.createGain()
-    this.gainNode.gain.value = settings.inputVolume
-    this.destinationNode = this.audioContext.createMediaStreamDestination()
-    this.gainNode.connect(this.destinationNode)
-    this.bleIncomingGain = this.audioContext.createGain()
-    this.bleIncomingGain.connect(this.destinationNode)
-    this.bleIncomingGain.connect(this.audioContext.destination)
-    this.blePlaybackCursor = this.audioContext.currentTime
-    await this.audioContext.resume().catch(() => {})
-
-    const constraints: MediaStreamConstraints = {
-      audio: settings.micDeviceId
-        ? { deviceId: { exact: settings.micDeviceId } }
-        : true,
-    }
+    // Audio setup — wrapped in try-catch for BLE-only devices where
+    // AudioContext/getUserMedia may be limited
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
-      this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
-      this.sourceNode.connect(this.gainNode)
-    } catch {
-      this._listenOnly = true
-    }
+      const settings = useSettingsStore.getState()
+      this.audioContext = new AudioContext()
+      this.gainNode = this.audioContext.createGain()
+      this.gainNode.gain.value = settings.inputVolume
+      this.destinationNode = this.audioContext.createMediaStreamDestination()
+      this.gainNode.connect(this.destinationNode)
+      this.bleIncomingGain = this.audioContext.createGain()
+      this.bleIncomingGain.connect(this.destinationNode)
+      this.bleIncomingGain.connect(this.audioContext.destination)
+      this.blePlaybackCursor = this.audioContext.currentTime
+      await this.audioContext.resume().catch(() => {})
 
-    const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
-    if (processedTrack) {
-      processedTrack.enabled = false
+      const constraints: MediaStreamConstraints = {
+        audio: settings.micDeviceId
+          ? { deviceId: { exact: settings.micDeviceId } }
+          : true,
+      }
+      try {
+        this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
+        this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
+        this.sourceNode.connect(this.gainNode)
+      } catch {
+        this._listenOnly = true
+      }
+
+      const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
+      if (processedTrack) {
+        processedTrack.enabled = false
+      }
+    } catch (err) {
+      console.warn('Audio setup failed (BLE voice still available):', err)
+      this._listenOnly = true
     }
 
     this.startBleBridge()
 
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
 
-    // Create WebRTC peer connections for existing members.
-    // Each connection is independent — one failure shouldn't crash the channel.
-    // On BLE-only devices, WebRTC may fail entirely (no STUN), which is fine
-    // since audio flows through the BLE bridge instead.
+    // Create WebRTC peer connections — each independently guarded
     for (const member of existingMembers) {
       try {
         await this.createPeerConnection(member.id, true)
       } catch (err) {
-        console.warn(`WebRTC peer connection to ${member.name} failed (may be BLE-only):`, err)
+        console.warn(`WebRTC peer connection to ${member.name} failed:`, err)
       }
     }
   }

@@ -83,10 +83,29 @@ pub struct MobileNode {
 impl MobileNode {
     pub fn new(data_dir: String, display_name: String) -> Result<Self, PeatLinkError> {
         let runtime = Runtime::new().map_err(|e| PeatLinkError::startup(e))?;
-        let identity = hex::encode(rand::random::<[u8; 32]>());
 
         std::fs::create_dir_all(&data_dir)
             .map_err(|e| PeatLinkError::startup(format!("create data dir: {}", e)))?;
+
+        // Persistent identity — same ID across app restarts
+        let identity_path = std::path::Path::new(&data_dir).join("identity");
+        let identity = if let Ok(saved) = std::fs::read_to_string(&identity_path) {
+            let saved = saved.trim().to_string();
+            if saved.len() >= 16 {
+                tracing::info!("Loaded persistent identity: {}...", &saved[..12]);
+                saved
+            } else {
+                let new_id = hex::encode(rand::random::<[u8; 32]>());
+                let _ = std::fs::write(&identity_path, &new_id);
+                tracing::info!("Generated new identity: {}...", &new_id[..12]);
+                new_id
+            }
+        } else {
+            let new_id = hex::encode(rand::random::<[u8; 32]>());
+            let _ = std::fs::write(&identity_path, &new_id);
+            tracing::info!("Generated new identity: {}...", &new_id[..12]);
+            new_id
+        };
 
         #[cfg(feature = "bluetooth")]
         let (ble_event_tx, ble_event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -230,9 +249,13 @@ impl MobileNode {
     /// Regenerate identity (new random ID).
     pub fn regenerate_identity(&self) -> String {
         let new_id = hex::encode(rand::random::<[u8; 32]>());
+        // Save to disk so it persists
+        let identity_path = std::path::Path::new(&self.data_dir).join("identity");
+        let _ = std::fs::write(&identity_path, &new_id);
         self.runtime.block_on(async {
             *self.identity.write().await = new_id.clone();
         });
+        tracing::info!("Identity regenerated: {}...", &new_id[..12]);
         new_id
     }
 
