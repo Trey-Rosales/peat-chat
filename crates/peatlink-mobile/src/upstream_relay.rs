@@ -51,7 +51,13 @@ pub async fn start_upstream_relay(
     };
 
     tokio::spawn(relay_loop(
-        url, hub, display_name, room_name, seen_ids, connected, shutdown_rx,
+        url,
+        hub,
+        display_name,
+        room_name,
+        seen_ids,
+        connected,
+        shutdown_rx,
     ));
 
     Ok(handle)
@@ -79,8 +85,14 @@ async fn relay_loop(
                 tracing::info!("upstream relay connected");
 
                 let result = run_relay(
-                    ws_stream, &hub, &display_name, &room_name, &seen_ids, &mut shutdown_rx,
-                ).await;
+                    ws_stream,
+                    &hub,
+                    &display_name,
+                    &room_name,
+                    &seen_ids,
+                    &mut shutdown_rx,
+                )
+                .await;
 
                 *connected.write().await = false;
 
@@ -91,7 +103,11 @@ async fn relay_loop(
                 tracing::warn!("upstream relay disconnected, reconnecting in {:?}", backoff);
             }
             Err(e) => {
-                tracing::warn!("upstream relay connection failed: {}, retrying in {:?}", e, backoff);
+                tracing::warn!(
+                    "upstream relay connection failed: {}, retrying in {:?}",
+                    e,
+                    backoff
+                );
             }
         }
 
@@ -138,7 +154,11 @@ async fn run_relay(
         "type": "set_name",
         "data": { "name": display_name }
     });
-    if ws_tx.send(Message::Text(set_name.to_string())).await.is_err() {
+    if ws_tx
+        .send(Message::Text(set_name.to_string()))
+        .await
+        .is_err()
+    {
         return RelayResult::Disconnected;
     }
 
@@ -238,16 +258,28 @@ async fn handle_upstream_message(
 
         // Chat messages — dedup, then route to correct room or downstream
         "message" => {
-            let Some(data) = envelope.get("data") else { return };
-            let Some(msg_val) = data.get("message") else { return };
+            let Some(data) = envelope.get("data") else {
+                return;
+            };
+            let Some(msg_val) = data.get("message") else {
+                return;
+            };
 
-            let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if msg_id.is_empty() { return; }
+            let msg_id = msg_val
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if msg_id.is_empty() {
+                return;
+            }
 
             {
                 let key = format!("relay-in-{}", msg_id);
                 let mut ids = seen_ids.write().await;
-                if ids.contains(&key) { return; }
+                if ids.contains(&key) {
+                    return;
+                }
                 ids.insert(key);
             }
 
@@ -264,7 +296,9 @@ async fn handle_upstream_message(
                     return; // echo of our own message in a local room
                 }
 
-                if let Ok(chat_msg) = serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone()) {
+                if let Ok(chat_msg) =
+                    serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone())
+                {
                     hub.inject_external_message(room_name, chat_msg).await;
                 }
             } else {
@@ -277,7 +311,9 @@ async fn handle_upstream_message(
 
         // Room history — check if it's for a local room or a DM room
         "room_history" => {
-            let Some(data) = envelope.get("data") else { return };
+            let Some(data) = envelope.get("data") else {
+                return;
+            };
             let history_room_id = data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
             let local_room_exists = hub.find_room_by_hex(history_room_id).await.is_some();
 
@@ -290,15 +326,25 @@ async fn handle_upstream_message(
                         if !self_id.is_empty() && sender == self_id.as_str() {
                             continue;
                         }
-                        let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        if msg_id.is_empty() { continue; }
+                        let msg_id = msg_val
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if msg_id.is_empty() {
+                            continue;
+                        }
                         let key = format!("relay-in-{}", msg_id);
                         let mut ids = seen_ids.write().await;
-                        if ids.contains(&key) { continue; }
+                        if ids.contains(&key) {
+                            continue;
+                        }
                         ids.insert(key);
                         drop(ids);
 
-                        if let Ok(chat_msg) = serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone()) {
+                        if let Ok(chat_msg) =
+                            serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone())
+                        {
                             hub.inject_external_message(room_name, chat_msg).await;
                         }
                     }
@@ -310,10 +356,18 @@ async fn handle_upstream_message(
         }
 
         // Server broadcasts — send via downstream channel directly to WebView
-        "peer_update" | "mesh_state" | "room_joined" | "dm_opened"
-        | "cot_state" | "marker_created" | "marker_deleted"
-        | "voice_state" | "voice_channel_created" | "voice_peer_joined"
-        | "voice_peer_left" | "voice_speaking_broadcast" => {
+        "peer_update"
+        | "mesh_state"
+        | "room_joined"
+        | "dm_opened"
+        | "cot_state"
+        | "marker_created"
+        | "marker_deleted"
+        | "voice_state"
+        | "voice_channel_created"
+        | "voice_peer_joined"
+        | "voice_peer_left"
+        | "voice_speaking_broadcast" => {
             let _ = hub.downstream_tx.send(Arc::new(text.to_string()));
         }
 
@@ -360,7 +414,7 @@ async fn broadcast_raw_to_local(hub: &Arc<Hub>, text: &str) {
 async fn filter_for_upstream(
     broadcast: &str,
     seen_ids: &SeenIds,
-    upstream_self_id: &Arc<RwLock<String>>,
+    _upstream_self_id: &Arc<RwLock<String>>,
 ) -> Option<String> {
     let envelope: serde_json::Value = serde_json::from_str(broadcast).ok()?;
     let msg_type = envelope.get("type")?.as_str()?;
@@ -376,7 +430,9 @@ async fn filter_for_upstream(
             {
                 let key = format!("relay-out-{}", msg_id);
                 let mut ids = seen_ids.write().await;
-                if ids.contains(&key) { return None; }
+                if ids.contains(&key) {
+                    return None;
+                }
                 ids.insert(key);
             }
 
@@ -389,13 +445,15 @@ async fn filter_for_upstream(
                 "type": "send_message",
                 "data": {
                     "room_id": room_id,
+                    "message_id": msg_id,
                     "content": content,
                 }
             });
             if let Some(rt) = reply_to {
                 send["data"]["reply_to"] = serde_json::Value::String(rt.to_string());
             }
-            // Pass through sender_name so Go server preserves the original author
+            // Only pass sender_name — the Go server uses it as display name override
+            // Don't pass sender_id to avoid resolveBlePeer failures for non-BLE senders
             if let Some(sn) = sender_name {
                 send["data"]["sender_name"] = serde_json::Value::String(sn.to_string());
             }
@@ -409,10 +467,13 @@ async fn filter_for_upstream(
         "create_marker" | "delete_marker" => Some(broadcast.to_string()),
 
         // Forward voice operations
-        "join_voice" | "leave_voice" | "voice_offer" | "voice_answer"
-        | "voice_ice" | "voice_speaking" | "create_voice_channel" => {
-            Some(broadcast.to_string())
-        }
+        "join_voice"
+        | "leave_voice"
+        | "voice_offer"
+        | "voice_answer"
+        | "voice_ice"
+        | "voice_speaking"
+        | "create_voice_channel" => Some(broadcast.to_string()),
 
         // Don't forward server-generated broadcasts back upstream
         // (peer_update, mesh_state, room_joined, room_history, identity, etc.)

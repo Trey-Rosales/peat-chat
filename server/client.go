@@ -167,14 +167,24 @@ func (c *Client) readPump() {
 				c.sendJSON("error", ErrorData{Message: "room not found"})
 				continue
 			}
+			// Try BLE peer relay path first (if sender_id points to a registered BLE peer)
+			if d.SenderID != "" {
+				if ok := c.hub.BroadcastMessageFromRelay(c, room, d.SenderID, d.SenderName, d.MessageID, d.Content, d.ReplyTo); ok {
+					continue
+				}
+				// sender_id not a registered BLE peer — fall through to relay's own identity
+			}
+
 			c.mu.RLock()
 			name := c.name
 			c.mu.RUnlock()
-			// Use sender_name override if provided (for BLE relay forwarding)
 			if d.SenderName != "" {
 				name = d.SenderName
 			}
 			chatMsg := NewChatMessage(c.identity.ID, name, d.Content)
+			if d.MessageID != "" {
+				chatMsg.ID = d.MessageID
+			}
 			if d.ReplyTo != nil {
 				chatMsg.ReplyTo = d.ReplyTo
 			}
@@ -211,7 +221,7 @@ func (c *Client) readPump() {
 					Time: time.Now(),
 				}
 				if d.SenderID != "" && d.SenderName != "" {
-					// BLE peer position — register as a separate CoT contact
+					// BLE peer CoT — use sender info directly (no resolveBlePeer needed)
 					room.SetBleCotPosition(d.SenderID, d.SenderName, pos)
 				} else {
 					room.SetCotPosition(c, pos)
@@ -221,7 +231,13 @@ func (c *Client) readPump() {
 		case "create_marker":
 			var d CreateMarkerData
 			if json.Unmarshal(msg.Data, &d) == nil && d.Name != "" {
-				c.hub.CreateMapMarker(c, d.RoomID, d)
+				if d.SenderID != "" {
+					if !c.hub.CreateMapMarkerFromRelay(c, d.RoomID, d) {
+						c.sendJSON("error", ErrorData{Message: "BLE peer not found"})
+					}
+				} else {
+					c.hub.CreateMapMarker(c, d.RoomID, d)
+				}
 			}
 
 		case "delete_marker":
@@ -241,13 +257,21 @@ func (c *Client) readPump() {
 		case "join_voice":
 			var d JoinVoiceData
 			if json.Unmarshal(msg.Data, &d) == nil && d.ChannelID != "" {
-				c.hub.JoinVoice(c, d.RoomID, d.ChannelID)
+				if d.SenderID != "" {
+					c.hub.JoinVoiceFromRelay(c, d.RoomID, d.ChannelID, d.SenderID, d.SenderName)
+				} else {
+					c.hub.JoinVoice(c, d.RoomID, d.ChannelID)
+				}
 			}
 
 		case "leave_voice":
 			var d LeaveVoiceData
 			if json.Unmarshal(msg.Data, &d) == nil && d.ChannelID != "" {
-				c.hub.LeaveVoice(c, d.RoomID, d.ChannelID)
+				if d.SenderID != "" {
+					c.hub.LeaveVoiceFromRelay(c, d.RoomID, d.ChannelID, d.SenderID)
+				} else {
+					c.hub.LeaveVoice(c, d.RoomID, d.ChannelID)
+				}
 			}
 
 		case "voice_offer":
@@ -271,7 +295,11 @@ func (c *Client) readPump() {
 		case "voice_speaking":
 			var d VoiceSpeakingData
 			if json.Unmarshal(msg.Data, &d) == nil && d.ChannelID != "" {
-				c.hub.BroadcastVoiceSpeaking(c, d.RoomID, d.ChannelID, d.Speaking)
+				if d.SenderID != "" {
+					c.hub.BroadcastVoiceSpeakingFromRelay(c, d.RoomID, d.ChannelID, d.SenderID, d.Speaking)
+				} else {
+					c.hub.BroadcastVoiceSpeaking(c, d.RoomID, d.ChannelID, d.Speaking)
+				}
 			}
 
 		// --- Message editing / deletion ---

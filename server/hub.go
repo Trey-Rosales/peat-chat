@@ -19,7 +19,7 @@ type BlePeer struct {
 type Hub struct {
 	rooms       map[[32]byte]*Room
 	clients     map[*Client]bool
-	clientsByID map[string]*Client // identity.ID -> *Client for O(1) signaling relay
+	clientsByID map[string]*Client  // identity.ID -> *Client for O(1) signaling relay
 	blePeers    map[string]*BlePeer // peer_id -> BlePeer (BLE peers reachable via relay)
 	register    chan *Client
 	unregister  chan *Client
@@ -196,6 +196,39 @@ func (h *Hub) BroadcastMessage(client *Client, room *Room, msg ChatMessage) {
 	room.Broadcast(data, nil)
 }
 
+func (h *Hub) BroadcastMessageFromRelay(relay *Client, room *Room, peerID, peerName, messageID, content string, replyTo *string) bool {
+	h.mu.RLock()
+	peer := h.resolveBlePeer(relay, peerID)
+	h.mu.RUnlock()
+	if peer == nil {
+		return false
+	}
+
+	if messageID == "" {
+		messageID = uuid.New().String()
+	}
+	msg := ChatMessage{
+		ID:         messageID,
+		Sender:     peer.PeerID,
+		SenderName: peerName,
+		Timestamp:  uint64(time.Now().UnixMilli()),
+		Content:    content,
+		ReplyTo:    replyTo,
+	}
+	if msg.SenderName == "" {
+		msg.SenderName = peer.PeerName
+	}
+
+	room.AddMessage(msg)
+	roomID := ChatIdHex(room.ID)
+	data := mustMarshal("message", MessageData{
+		RoomID:  roomID,
+		Message: msg,
+	})
+	room.Broadcast(data, nil)
+	return true
+}
+
 func (h *Hub) broadcastMeshState(room *Room) {
 	h.mu.RLock()
 	blePeers := h.getBlePeerMeshData()
@@ -246,6 +279,17 @@ func (h *Hub) getBlePeerMeshData() []MeshPeerData {
 	return peers
 }
 
+func (h *Hub) resolveBlePeer(relay *Client, peerID string) *BlePeer {
+	if relay == nil || peerID == "" {
+		return nil
+	}
+	peer := h.blePeers[peerID]
+	if peer == nil || peer.Relay != relay {
+		return nil
+	}
+	return peer
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -264,7 +308,7 @@ func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
 	// Also register in clientsByID so DMs can target this peer
 	// DMs to this peer will be routed through the relay
 	h.mu.Unlock()
-	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:12], relay.name)
+	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:min(12, len(peerID))], relay.name)
 
 	// Broadcast updated mesh state
 	relay.mu.RLock()
@@ -281,9 +325,39 @@ func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
 // UnregisterBlePeer removes a BLE peer.
 func (h *Hub) UnregisterBlePeer(relay *Client, peerID string) {
 	h.mu.Lock()
-	delete(h.blePeers, peerID)
+	peer := h.resolveBlePeer(relay, peerID)
+	if peer != nil {
+		delete(h.blePeers, peerID)
+	}
 	h.mu.Unlock()
 	log.Printf("BLE peer unregistered: %s", peerID[:min(12, len(peerID))])
+
+	if peer == nil {
+		return
+	}
+
+	relay.mu.RLock()
+	roomIDs := make([][32]byte, 0, len(relay.rooms))
+	for roomID := range relay.rooms {
+		roomIDs = append(roomIDs, roomID)
+	}
+	relay.mu.RUnlock()
+
+	for _, roomID := range roomIDs {
+		h.mu.RLock()
+		room := h.rooms[roomID]
+		h.mu.RUnlock()
+		if room == nil {
+			continue
+		}
+		for channelID := range room.VoiceChannels {
+			room.LeaveBleVoiceChannel(channelID, peerID)
+		}
+		room.ClearBleCotPosition(peerID)
+		h.broadcastVoiceState(room)
+		h.broadcastCotState(room)
+		h.broadcastMeshState(room)
+	}
 }
 
 func (h *Hub) removeFromAllRooms(client *Client) {
@@ -377,6 +451,44 @@ func (h *Hub) JoinVoice(client *Client, roomHexID, channelID string) {
 	h.broadcastVoiceState(room)
 }
 
+func (h *Hub) JoinVoiceFromRelay(relay *Client, roomHexID, channelID, peerID, peerName string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(relay) {
+		return
+	}
+	h.mu.RLock()
+	peer := h.resolveBlePeer(relay, peerID)
+	h.mu.RUnlock()
+	if peer == nil {
+		return
+	}
+	if peerName != "" {
+		peer.PeerName = peerName
+	}
+	if !room.JoinBleVoiceChannel(channelID, peer) {
+		return
+	}
+
+	roomID := ChatIdHex(room.ID)
+	data := mustMarshal("voice_peer_joined", VoicePeerJoinedData{
+		RoomID:    roomID,
+		ChannelID: channelID,
+		PeerID:    peer.PeerID,
+		Name:      peer.PeerName,
+	})
+	members := room.GetVoiceChannelMembers(channelID)
+	for _, m := range members {
+		if m != relay {
+			select {
+			case m.send <- data:
+			default:
+			}
+		}
+	}
+
+	h.broadcastVoiceState(room)
+}
+
 func (h *Hub) LeaveVoice(client *Client, roomHexID, channelID string) {
 	room := h.getRoomByHex(roomHexID)
 	if room == nil {
@@ -400,6 +512,31 @@ func (h *Hub) LeaveVoice(client *Client, roomHexID, channelID string) {
 		select {
 		case m.send <- data:
 		default:
+		}
+	}
+
+	h.broadcastVoiceState(room)
+}
+
+func (h *Hub) LeaveVoiceFromRelay(relay *Client, roomHexID, channelID, peerID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.VoiceChannelHasBleMember(channelID, peerID) {
+		return
+	}
+	room.LeaveBleVoiceChannel(channelID, peerID)
+
+	data := mustMarshal("voice_peer_left", VoicePeerLeftData{
+		RoomID:    roomHexID,
+		ChannelID: channelID,
+		PeerID:    peerID,
+	})
+	members := room.GetVoiceChannelMembers(channelID)
+	for _, m := range members {
+		if m != relay {
+			select {
+			case m.send <- data:
+			default:
+			}
 		}
 	}
 
@@ -482,6 +619,30 @@ func (h *Hub) BroadcastVoiceSpeaking(client *Client, roomHexID, channelID string
 		select {
 		case m.send <- data:
 		default:
+		}
+	}
+}
+
+func (h *Hub) BroadcastVoiceSpeakingFromRelay(relay *Client, roomHexID, channelID, peerID string, speaking bool) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(relay) || !room.VoiceChannelHasBleMember(channelID, peerID) {
+		return
+	}
+	room.SetBleSpeaking(channelID, peerID, speaking)
+
+	data := mustMarshal("voice_speaking_broadcast", VoiceSpeakingBroadcastData{
+		RoomID:    roomHexID,
+		ChannelID: channelID,
+		PeerID:    peerID,
+		Speaking:  speaking,
+	})
+	members := room.GetVoiceChannelMembers(channelID)
+	for _, m := range members {
+		if m != relay {
+			select {
+			case m.send <- data:
+			default:
+			}
 		}
 	}
 }
@@ -849,6 +1010,63 @@ func (h *Hub) CreateMapMarker(client *Client, roomHexID string, d CreateMarkerDa
 		Marker: *marker,
 	})
 	room.Broadcast(data, nil)
+}
+
+func (h *Hub) CreateMapMarkerFromRelay(relay *Client, roomHexID string, d CreateMarkerData) bool {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(relay) || d.SenderID == "" {
+		return false
+	}
+
+	cotType := d.CotType
+	if cotType == "" {
+		switch d.Icon {
+		case "rally":
+			cotType = "b-m-p-s-m"
+		case "objective":
+			cotType = "b-m-p-s-p-i"
+		case "hazard":
+			cotType = "b-m-p-s-m"
+		case "waypoint":
+			cotType = "b-m-p-w"
+		case "info":
+			cotType = "b-m-p-s-p-i"
+		default:
+			cotType = "b-m-p-s-m"
+		}
+	}
+
+	createdAt := uint64(time.Now().UnixMilli())
+	creatorName := d.SenderName
+	if creatorName == "" {
+		creatorName = "BLE Peer"
+	}
+	marker := &CotMarker{
+		ID:          uuid.New().String(),
+		CreatorID:   d.SenderID,
+		CreatorName: creatorName,
+		Lat:         d.Lat,
+		Lon:         d.Lon,
+		Hae:         0,
+		Ce:          999999,
+		Le:          999999,
+		Name:        d.Name,
+		Icon:        d.Icon,
+		Color:       d.Color,
+		CotType:     cotType,
+		How:         "h-e",
+		CreatedAt:   createdAt,
+		Stale:       createdAt + 86400000,
+		Remarks:     d.Remarks,
+	}
+
+	room.AddMarker(marker)
+	data := mustMarshal("marker_created", MarkerCreatedData{
+		RoomID: roomHexID,
+		Marker: *marker,
+	})
+	room.Broadcast(data, nil)
+	return true
 }
 
 func (h *Hub) DeleteMapMarker(client *Client, roomHexID string, markerID string) {
