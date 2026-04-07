@@ -350,8 +350,11 @@ class PeatBleService(
 
                 Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
                 node.onBleDataReceived(address, value.map { it.toUByte() }, now)
-                // Also push to direct bridge transport
-                node.pushBleRecv(value.map { it.toUByte() })
+                // Reassemble chunks and push complete messages to bridge
+                val complete = reassembleChunked(value)
+                if (complete != null) {
+                    node.pushBleRecv(complete.map { it.toUByte() })
+                }
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -439,8 +442,8 @@ class PeatBleService(
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            Log.i(TAG, "MTU changed to $mtu for ${gatt.device.address}")
-            // After MTU negotiation, discover services
+            negotiatedMtu = mtu
+            Log.i(TAG, "MTU changed to $mtu for ${gatt.device.address} (max write: ${mtu - 3} bytes)")
             gatt.discoverServices()
         }
 
@@ -497,7 +500,10 @@ class PeatBleService(
                 val now = System.currentTimeMillis().toULong()
                 Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
-                node.pushBleRecv(data.map { it.toUByte() })
+                val complete = reassembleChunked(data)
+                if (complete != null) {
+                    node.pushBleRecv(complete.map { it.toUByte() })
+                }
             }
         }
 
@@ -507,7 +513,10 @@ class PeatBleService(
                 val now = System.currentTimeMillis().toULong()
                 Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
-                node.pushBleRecv(data.map { it.toUByte() })
+                val complete = reassembleChunked(data)
+                if (complete != null) {
+                    node.pushBleRecv(complete.map { it.toUByte() })
+                }
             }
         }
     }
@@ -516,6 +525,13 @@ class PeatBleService(
 
     private var tickCount = 0
     private var lastDataSize = 0
+    private var negotiatedMtu = 23 // default, updated in onMtuChanged
+    private val CHUNK_HEADER_SIZE = 4 // [type(1), msgId(1), seq(1), total(1)]
+
+    // Reassembly buffer for incoming chunked messages
+    private val reassemblyBuffer = mutableMapOf<Int, MutableMap<Int, ByteArray>>() // msgId → (seq → data)
+    private val reassemblyTotal = mutableMapOf<Int, Int>() // msgId → total chunks
+    private var nextMsgId: Byte = 0
 
     private fun startTickLoop() {
         tickJob = scope.launch {
@@ -552,13 +568,40 @@ class PeatBleService(
     }
 
     /**
-     * Broadcast data to all connected BLE peers:
-     * - Write to GATT servers we're connected to as a client
-     * - Notify all GATT clients connected to our server
+     * Broadcast data to all connected BLE peers with automatic chunking.
+     * Messages larger than MTU are split into chunks with reassembly headers.
+     *
+     * Chunk header (4 bytes): [type, msgId, seqNum, totalChunks]
+     * type: 0x00 = single (no chunking), 0x01 = chunked
      */
     private fun broadcastToAllPeers(data: ByteArray) {
+        val maxPayload = (negotiatedMtu - 3 - CHUNK_HEADER_SIZE).coerceAtLeast(100)
+
+        if (data.size <= maxPayload) {
+            // Small enough to send as single message (no chunking header needed)
+            sendRawToAllPeers(data)
+        } else {
+            // Chunk it
+            val msgId = nextMsgId++
+            val chunks = data.toList().chunked(maxPayload)
+            val total = chunks.size.coerceAtMost(255)
+
+            for ((seq, chunk) in chunks.withIndex()) {
+                if (seq >= 255) break
+                val header = byteArrayOf(0x01, msgId, seq.toByte(), total.toByte())
+                val packet = header + chunk.toByteArray()
+                sendRawToAllPeers(packet)
+            }
+
+            if (chunks.size > 1) {
+                Log.d(TAG, "Chunked ${data.size} bytes into ${chunks.size} packets (msgId=$msgId)")
+            }
+        }
+    }
+
+    private fun sendRawToAllPeers(data: ByteArray) {
         // Write to peers where we're the GATT client
-        for ((address, gatt) in connectedGattClients) {
+        for ((address, gatt) in connectedGattClients.toMap()) {
             try {
                 val service = gatt.getService(PEAT_SERVICE_UUID) ?: continue
                 val char = service.getCharacteristic(PEAT_SYNC_CHAR_UUID) ?: continue
@@ -584,5 +627,42 @@ class PeatBleService(
                 Log.w(TAG, "Failed to notify $address: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Reassemble chunked data received from a peer.
+     * Returns the complete message if all chunks have arrived, null otherwise.
+     */
+    private fun reassembleChunked(data: ByteArray): ByteArray? {
+        if (data.size < CHUNK_HEADER_SIZE) return data // too small to be chunked
+
+        val type = data[0]
+        if (type != 0x01.toByte()) return data // not chunked, return as-is
+
+        val msgId = data[1].toInt() and 0xFF
+        val seq = data[2].toInt() and 0xFF
+        val total = data[3].toInt() and 0xFF
+        val payload = data.copyOfRange(CHUNK_HEADER_SIZE, data.size)
+
+        val chunks = reassemblyBuffer.getOrPut(msgId) { mutableMapOf() }
+        reassemblyTotal[msgId] = total
+        chunks[seq] = payload
+
+        if (chunks.size >= total) {
+            // All chunks received — reassemble
+            reassemblyBuffer.remove(msgId)
+            reassemblyTotal.remove(msgId)
+            val assembled = ByteArray(chunks.values.sumOf { it.size })
+            var offset = 0
+            for (i in 0 until total) {
+                val chunk = chunks[i] ?: continue
+                chunk.copyInto(assembled, offset)
+                offset += chunk.size
+            }
+            Log.d(TAG, "Reassembled $total chunks into ${assembled.size} bytes (msgId=$msgId)")
+            return assembled
+        }
+
+        return null // still waiting for more chunks
     }
 }
