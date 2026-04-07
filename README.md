@@ -4,7 +4,7 @@
 
 **Decentralized tactical mesh chat**
 
-P2P messaging over iroh gossip | CRDT persistence | Push-to-talk voice | Real-time web UI | Native mobile
+P2P messaging over iroh gossip | CRDT persistence | Push-to-talk voice | Tactical map with CoT | Native mobile
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
@@ -51,11 +51,30 @@ make server             # start the Go server on :8090
 
 Open **http://localhost:8090** -- enter a name, join a room, start chatting.
 
-For development with hot reload, run in a second terminal:
+For development with hot reload, run in two terminals:
 
 ```bash
-make web-dev            # Vite dev server on :5173, proxies WS to :8090
+make server             # Go server on :8090
+make web-dev            # Vite dev server on :5173 (HTTPS if certs present)
 ```
+
+#### LAN / Mobile Testing
+
+Vite binds to all interfaces automatically. For mobile devices to access microphone and geolocation, HTTPS is required:
+
+```bash
+# Generate local dev certs (first time)
+brew install mkcert
+mkcert -install
+mkdir -p web/.certs
+cd web/.certs && mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1 YOUR_LAN_IP
+
+# For iOS: install the CA cert from $(mkcert -CAROOT)/rootCA.pem on the device
+# Settings > General > VPN & Device Management > Install profile
+# Settings > General > About > Certificate Trust Settings > Enable full trust
+```
+
+Then access `https://YOUR_LAN_IP:5173` from your mobile device.
 
 ### CLI (peer-to-peer, no server needed)
 
@@ -74,26 +93,26 @@ Messages sync directly between peers via iroh gossip and persist to `~/.peatlink
 ## Architecture
 
 ```
-                    ┌──────────────────────────────────────────────────────┐
-                    │                      Clients                        │
-                    │                                                      │
-                    │   CLI (Rust)     Web (React)       Mobile Apps       │
-                    │       │              │             (iOS/Android)     │
-                    │       │         ┌────┴────┐             │           │
-                    │       │         │ Text    │             │           │
-                    │       │         │ + Voice │             │           │
-                    │       │         │ + PTT   │             │           │
-                    │       │         └────┬────┘             │           │
-                    └───────┼──────────────┼──────────────────┼───────────┘
-                            │              │                  │
-               ┌────────────┴──┐    ┌──────┴──────┐   ┌──────┴───────────┐
-               │  peatlink     │    │     Go       │   │  peatlink        │
-               │   -core       │    │    Server    │   │   -mobile        │
-               │               │    │              │   │                  │
-               │  iroh gossip  │    │  WS relay +  │   │  axum + UniFFI   │
-               │  automerge    │    │  voice       │   │  optional BLE    │
-               │               │    │  signaling   │   │                  │
-               └───────────────┘    └──────────────┘   └──────────────────┘
+                    +------------------------------------------------------+
+                    |                      Clients                         |
+                    |                                                      |
+                    |   CLI (Rust)     Web (React)       Mobile Apps       |
+                    |       |              |             (iOS/Android)     |
+                    |       |         +----------+           |            |
+                    |       |         | Text     |           |            |
+                    |       |         | + Voice  |           |            |
+                    |       |         | + Map    |           |            |
+                    |       |         +----------+           |            |
+                    +-------+--------------+-----------------+------------+
+                            |              |                  |
+               +------------+--+    +------+------+   +------+-----------+
+               |  peatlink     |    |     Go       |   |  peatlink       |
+               |   -core       |    |    Server    |   |   -mobile       |
+               |               |    |              |   |                 |
+               |  iroh gossip  |    |  WS relay +  |   |  axum + UniFFI |
+               |  automerge    |    |  voice sig + |   |  optional BLE  |
+               |               |    |  CoT broker  |   |                |
+               +---------------+    +--------------+   +-----------------+
 ```
 
 ### Core Components
@@ -109,11 +128,42 @@ Messages sync directly between peers via iroh gossip and persist to `~/.peatlink
 
 **`peatlink-mobile`** -- Embeds an axum WebSocket server inside mobile apps. React UI connects to `localhost:{port}` via WebView. Native bindings generated by UniFFI (Kotlin + Swift). Optional BLE mesh via `peat-btle`.
 
-**Go Server** -- WebSocket relay for the web UI. Manages rooms, Ed25519 client sessions, message history (1000 per room), mesh topology broadcasts, and **WebRTC voice signaling relay**.
+**Go Server** -- WebSocket relay for the web UI. Manages rooms, Ed25519 client sessions, message history (1000 per room), mesh topology broadcasts, **WebRTC voice signaling relay**, and **CoT position/marker brokering**.
 
-**Web UI** -- React 18 + Zustand + Tailwind CSS. Dark-themed chat interface with room sidebar, message threads, unread badges, SVG mesh topology viewer, **push-to-talk voice channels**, and **settings page**.
+**Web UI** -- React 18 + Zustand + Tailwind CSS. Dark-themed chat interface with room sidebar, message threads, unread badges, SVG mesh topology viewer, **push-to-talk voice channels**, **tactical map (MapLibre GL)**, and **settings page**.
 
 **Mobile Shells** -- Kotlin (Android) and Swift (iOS) wrappers that load the React UI in a WebView, handle BLE and microphone permissions, and interface with the embedded Rust server via UniFFI.
+
+---
+
+## Tactical Map
+
+The tactical map uses [MapLibre GL JS](https://maplibre.org) with multiple tile sources:
+
+| Style | Source | Key Required |
+|:------|:-------|:-------------|
+| **Satellite** | Esri World Imagery | No |
+| **Dark** | Protomaps vector tiles | Yes (free) |
+| **Light** | Protomaps vector tiles | Yes (free) |
+| **Topo** | Protomaps vector tiles | Yes (free) |
+
+The map defaults to satellite view (no API key needed). Add a [Protomaps API key](https://protomaps.com) in Settings to unlock vector tile styles.
+
+### CoT (Cursor on Target) Integration
+
+All positions and markers use standard CoT event types for future ATAK interoperability:
+
+- **Self position** -- `a-f-G-U-C` (Atom-Friend-Ground-Unit-Combat), broadcast every GPS update
+- **Markers** -- Proper CoT types (`b-m-p-w` waypoint, `b-m-p-s-m` spot marker, `b-m-p-s-p-i` POI, etc.) with `how`, `ce`, `le`, `hae`, `stale`, and `remarks` fields
+- **Contacts** -- All room members appear in the contact list; those with GPS show on the map
+
+### Map Features
+
+- **Position sharing** -- Toggle in Settings; broadcasts GPS to room members
+- **Callsign HUD** -- Bottom-right corner shows callsign, coordinates, altitude, and accuracy (TAK-style)
+- **Shared markers** -- Right-click (desktop) or long-press (mobile) to place markers with CoT type, affiliation, and remarks
+- **Style switching** -- Cycle between map styles via the button in the top-left corner
+- **Contact tracking** -- Peer positions update in real-time; stale contacts fade
 
 ---
 
@@ -125,14 +175,16 @@ Each room has voice channels (a default "General" channel is created automatical
 
 1. **WebRTC mesh** -- Peers connect directly via WebRTC. The server only relays signaling (SDP offers/answers, ICE candidates), never audio.
 2. **Push-to-talk** -- Audio track is created muted on join. Holding the PTT key (default: Space) unmutes the track. No renegotiation per press.
-3. **Speaking indicators** -- `voice_speaking` messages broadcast who's talking. The UI shows animated rings around active speakers.
-4. **Newcomer offers** -- When joining a channel with existing members, the newcomer creates WebRTC offers to each existing peer. This avoids simultaneous-offer glare.
+3. **Open mic mode** -- Toggle between PTT and continuous transmission via the VoiceBar.
+4. **Listen-only** -- If no microphone is available (or HTTPS is required), users join in listen-only mode and can still hear others.
+5. **Speaking indicators** -- `voice_speaking` messages broadcast who's talking. The UI shows animated rings around active speakers.
+6. **Newcomer offers** -- When joining a channel with existing members, the newcomer creates WebRTC offers to each existing peer.
 
 ### Voice UI
 
 - **Sidebar** -- Voice channels appear below the active room with member lists and speaking indicators
-- **Voice Bar** -- Persistent bar at the bottom of the sidebar when connected, showing channel name, PTT key hint, and disconnect button
-- **PTT Button** -- Mic button next to the message input when in a voice channel (also works via touch-hold on mobile)
+- **Voice Bar** -- Persistent bar at the bottom of the sidebar showing channel info, PTT/Open mic toggle, and disconnect button
+- **PTT Button** -- Mic button next to the message input (touch-hold on mobile, keyboard shortcut on desktop)
 - **Header** -- Shows which voice channel you're connected to
 
 ---
@@ -147,7 +199,9 @@ Accessible via the gear icon in the sidebar header. Settings persist to `localSt
 | **Audio Input** | Microphone device, input volume slider |
 | **Audio Output** | Speaker device |
 | **Push-to-Talk** | PTT key binding (click to rebind) |
+| **Voice Mode** | Push-to-talk or open mic |
 | **Network** | Preferred transport (TCP, QUIC, BLE, Wi-Fi, LAN, P2P) |
+| **Map** | Protomaps API key, map style, share location toggle |
 
 ---
 
@@ -167,15 +221,19 @@ peat-chat/
 │       ├── ws_server.rs          #   embedded axum WS server
 │       ├── ble.rs                #   BLE mesh transport
 │       └── peatlink_mobile.udl   #   UniFFI interface definition
-├── server/                       # Go WebSocket relay + voice signaling
-│   ├── *_test.go                 #   server unit tests
+├── server/                       # Go WebSocket relay + voice + CoT
+│   ├── hub.go                    #   room management, voice, CoT broker
+│   ├── client.go                 #   WebSocket client + CoT position
+│   ├── room.go                   #   room state + voice channels
+│   ├── message.go                #   all message types (chat, voice, CoT)
+│   └── *_test.go                 #   server unit tests
 ├── web/                          # React + TypeScript frontend
 │   └── src/
-│       ├── components/           #   ChatView, Sidebar, MeshViewer,
-│       │                         #   VoiceChannelList, VoiceBar, PTTButton,
-│       │                         #   SettingsPage, KeyBindingCapture...
+│       ├── components/           #   ChatView, Sidebar, MapViewer,
+│       │                         #   MarkerForm, VoiceChannelList,
+│       │                         #   VoiceBar, PTTButton, SettingsPage...
 │       ├── store/                #   chatStore + settingsStore (Zustand)
-│       ├── hooks/                #   useWebSocket, usePTT
+│       ├── hooks/                #   useWebSocket, usePTT, useGeolocation
 │       ├── voice/                #   VoiceManager (WebRTC engine)
 │       └── types/                #   TypeScript interfaces
 ├── mobile/
@@ -195,8 +253,8 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
 ### Chat Messages
 
 ```
-  Client → Server                  Server → Client
- ──────────────────                ──────────────────
+  Client -> Server                  Server -> Client
+ ------------------                ------------------
   set_name {name}                  identity {id, short_id}
   join_room {name}                 room_joined {room_id, name, members}
   send_message {room_id,           room_history {room_id, messages[]}
@@ -209,8 +267,8 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
 ### Voice Messages
 
 ```
-  Client → Server                  Server → Client
- ──────────────────                ──────────────────
+  Client -> Server                  Server -> Client
+ ------------------                ------------------
   create_voice_channel             voice_channel_created
     {room_id, name}                  {room_id, channel_id, name}
   join_voice                       voice_state
@@ -233,6 +291,20 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
      target_id, candidate}
 ```
 
+### CoT / Map Messages
+
+```
+  Client -> Server                  Server -> Client
+ ------------------                ------------------
+  cot_position {room_id,           cot_state {room_id, self_id,
+    lat, lon, hae, ce, cot_type}     contacts[], markers[]}
+  create_marker {room_id,          marker_created {room_id, marker}
+    lat, lon, name, icon, color,   marker_deleted {room_id, marker_id}
+    cot_type, remarks}
+  delete_marker {room_id,
+    marker_id}
+```
+
 ---
 
 ## How It Works
@@ -246,6 +318,8 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
 **Mesh state** is broadcast every 5 seconds -- peer transport type, latency, and connection health. The web UI renders this as an interactive topology graph.
 
 **Voice channels** use WebRTC for peer-to-peer audio. The server acts as a dumb signaling relay -- it forwards SDP and ICE messages between peers without inspecting them. Push-to-talk mutes/unmutes the audio track without renegotiation.
+
+**CoT positions** are broadcast every 5 seconds to all room members. Markers carry full CoT metadata (type, how, ce, le, hae, stale, remarks) for future ATAK plugin interoperability.
 
 ---
 
@@ -310,9 +384,9 @@ See [`scripts/build-mobile.sh`](scripts/build-mobile.sh) for cross-compilation d
 | **peatlink-core** | iroh 0.97, iroh-gossip 0.97, peat-mesh 0.7, automerge 0.7, tokio, blake3 |
 | **peatlink-cli** | clap 4, tracing |
 | **peatlink-mobile** | axum 0.7, uniffi 0.28, peat-btle 0.2 (optional) |
-| **Go server** | gorilla/websocket, blake3, ed25519 |
-| **Web** | React 18, Zustand 4.5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
-| **Testing** | Go `testing` (47 tests), Vitest (55 tests), React Testing Library |
+| **Go server** | gorilla/websocket, blake3, google/uuid |
+| **Web** | React 18, Zustand 4.5, MapLibre GL 5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
+| **Testing** | Go `testing` (48 tests), Vitest (55 tests), React Testing Library |
 
 ---
 

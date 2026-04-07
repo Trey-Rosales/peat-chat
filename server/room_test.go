@@ -427,7 +427,7 @@ func TestRoom_GetCotContacts(t *testing.T) {
 	}
 }
 
-func TestRoom_GetCotContacts_SkipsNoPosition(t *testing.T) {
+func TestRoom_GetCotContacts_IncludesNoPosition(t *testing.T) {
 	hub := NewHub()
 	room := NewRoom("test")
 	c1 := newTestClient(hub, "Alice")
@@ -445,10 +445,16 @@ func TestRoom_GetCotContacts_SkipsNoPosition(t *testing.T) {
 	room.AddMember(c1)
 	room.AddMember(c2)
 
-	// Exclude c1 -- c2 has no position so should be skipped
+	// Exclude c1 -- c2 has no GPS but should still appear as a contact
 	contacts := room.GetCotContacts(c1)
-	if len(contacts) != 0 {
-		t.Fatalf("expected 0 contacts (c2 has no position), got %d", len(contacts))
+	if len(contacts) != 1 {
+		t.Fatalf("expected 1 contact (c2 without GPS), got %d", len(contacts))
+	}
+	if contacts[0].Callsign != "Bob" {
+		t.Fatalf("expected callsign 'Bob', got '%s'", contacts[0].Callsign)
+	}
+	if contacts[0].Lat != 0 || contacts[0].Lon != 0 {
+		t.Fatalf("expected zero lat/lon for no-GPS contact")
 	}
 
 	// Exclude c2 -- c1 does have position
@@ -458,6 +464,9 @@ func TestRoom_GetCotContacts_SkipsNoPosition(t *testing.T) {
 	}
 	if contacts[0].Callsign != "Alice" {
 		t.Fatalf("expected callsign 'Alice', got '%s'", contacts[0].Callsign)
+	}
+	if contacts[0].Lat != 38.8977 {
+		t.Fatalf("expected lat 38.8977, got %f", contacts[0].Lat)
 	}
 }
 

@@ -254,7 +254,21 @@ export function SettingsPage({ onClose, send }: Props) {
                 <label className="text-sm text-pl-text">Share Location</label>
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setLocationEnabled(!locationEnabled)}
+                    onClick={() => {
+                      if (!locationEnabled) {
+                        // Trigger geolocation from user gesture so iOS prompts
+                        navigator.geolocation.getCurrentPosition(
+                          () => setLocationEnabled(true),
+                          (err) => {
+                            console.warn('Geolocation denied:', err.message)
+                            alert('Location access denied. Enable location in your browser/OS settings.')
+                          },
+                          { enableHighAccuracy: true, timeout: 10000 }
+                        )
+                      } else {
+                        setLocationEnabled(false)
+                      }
+                    }}
                     className={`w-12 h-6 rounded-full transition-colors relative ${
                       locationEnabled ? 'bg-pl-accent' : 'bg-pl-input'
                     }`}

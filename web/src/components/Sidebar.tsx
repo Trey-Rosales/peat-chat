@@ -9,10 +9,12 @@ interface Props {
   onSelectRoom: () => void
   onJoinVoice: (roomId: string, channelId: string, members: VoiceMember[]) => void
   onLeaveVoice: () => void
+  onPTTStart: () => void
+  onPTTEnd: () => void
   send: (type: string, data: any) => void
 }
 
-export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, send }: Props) {
+export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, onPTTStart, onPTTEnd, send }: Props) {
   const displayName = useChatStore((s) => s.displayName)
   const shortId = useChatStore((s) => s.shortId)
   const connected = useChatStore((s) => s.connected)
@@ -21,6 +23,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, s
   const setActiveRoom = useChatStore((s) => s.setActiveRoom)
   const voiceState = useChatStore((s) => s.voiceState)
   const toggleSettings = useChatStore((s) => s.toggleSettings)
+  const voiceError = useChatStore((s) => s.voiceError)
 
   const sortedRooms = Object.values(rooms).sort((a, b) => {
     const aLast = a.messages[a.messages.length - 1]?.timestamp ?? 0
@@ -106,8 +109,15 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, s
         ))}
       </div>
 
+      {/* Voice error toast */}
+      {voiceError && (
+        <div className="mx-2 mb-2 px-3 py-2 bg-pl-danger/15 border border-pl-danger/30 rounded-lg text-xs text-pl-danger">
+          {voiceError}
+        </div>
+      )}
+
       {/* Voice bar */}
-      <VoiceBar onDisconnect={onLeaveVoice} />
+      <VoiceBar onDisconnect={onLeaveVoice} onPTTStart={onPTTStart} onPTTEnd={onPTTEnd} />
     </div>
   )
 }

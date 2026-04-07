@@ -35,17 +35,20 @@ export function useGeolocation(send: (type: string, data: any) => void) {
         watchIdRef.current = null
       }
       positionRef.current = null
+      useChatStore.getState().setSelfPosition(null)
       return
     }
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        positionRef.current = {
+        const geoPos = {
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
           hae: pos.coords.altitude ?? 0,
           ce: pos.coords.accuracy,
         }
+        positionRef.current = geoPos
+        useChatStore.getState().setSelfPosition(geoPos)
         sendPosition()
       },
       (err) => {

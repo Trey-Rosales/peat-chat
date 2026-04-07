@@ -3,14 +3,18 @@ import { useSettingsStore } from '../store/settingsStore'
 
 interface Props {
   onDisconnect: () => void
+  onPTTStart: () => void
+  onPTTEnd: () => void
 }
 
-export function VoiceBar({ onDisconnect }: Props) {
+export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   const activeVoice = useChatStore((s) => s.activeVoice)
   const rooms = useChatStore((s) => s.rooms)
   const voiceState = useChatStore((s) => s.voiceState)
   const localSpeaking = useChatStore((s) => s.localSpeaking)
   const pttKey = useSettingsStore((s) => s.pttKey)
+  const voiceMode = useSettingsStore((s) => s.voiceMode)
+  const setVoiceMode = useSettingsStore((s) => s.setVoiceMode)
 
   if (!activeVoice) return null
 
@@ -19,6 +23,19 @@ export function VoiceBar({ onDisconnect }: Props) {
   const channel = channels.find((c) => c.id === activeVoice.channelId)
 
   const keyLabel = pttKey === ' ' ? 'Space' : pttKey.length === 1 ? pttKey.toUpperCase() : pttKey
+  const isOpen = voiceMode === 'open'
+
+  const toggleMode = () => {
+    if (isOpen) {
+      // Switching to PTT — mute
+      onPTTEnd()
+      setVoiceMode('ptt')
+    } else {
+      // Switching to open — unmute
+      setVoiceMode('open')
+      onPTTStart()
+    }
+  }
 
   return (
     <div className="border-t border-pl-border bg-pl-header px-3 py-2 shrink-0">
@@ -45,10 +62,25 @@ export function VoiceBar({ onDisconnect }: Props) {
           </div>
         </div>
 
-        {/* PTT hint */}
-        <div className="text-[10px] text-pl-text-sec/60 shrink-0 hidden md:block">
-          Hold <kbd className="px-1 py-0.5 bg-pl-input rounded text-pl-text-sec text-[9px] font-mono">{keyLabel}</kbd>
-        </div>
+        {/* PTT / Open mic toggle */}
+        <button
+          onClick={toggleMode}
+          className={`px-2 py-1 rounded-md text-[10px] font-medium transition shrink-0 ${
+            isOpen
+              ? 'bg-pl-accent/20 text-pl-accent'
+              : 'bg-pl-input text-pl-text-sec hover:text-pl-text'
+          }`}
+          title={isOpen ? 'Switch to push-to-talk' : 'Switch to open mic'}
+        >
+          {isOpen ? 'OPEN' : 'PTT'}
+        </button>
+
+        {/* PTT hint (desktop only, PTT mode only) */}
+        {!isOpen && (
+          <div className="text-[10px] text-pl-text-sec/60 shrink-0 hidden md:block">
+            Hold <kbd className="px-1 py-0.5 bg-pl-input rounded text-pl-text-sec text-[9px] font-mono">{keyLabel}</kbd>
+          </div>
+        )}
 
         {/* Disconnect button */}
         <button

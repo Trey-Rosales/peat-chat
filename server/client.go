@@ -62,7 +62,15 @@ func (c *Client) toCotContact() *CotContact {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.cotTime.IsZero() {
-		return nil
+		// No position yet -- still return the contact so the mesh knows about them
+		return &CotContact{
+			UID:      c.identity.ID,
+			Callsign: c.name,
+			ShortID:  c.identity.ShortID,
+			CotType:  c.cotType,
+			Time:     uint64(c.connectedAt.UnixMilli()),
+			Stale:    uint64(c.connectedAt.UnixMilli()) + 86400000,
+		}
 	}
 	t := uint64(c.cotTime.UnixMilli())
 	return &CotContact{

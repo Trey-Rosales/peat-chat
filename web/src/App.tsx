@@ -3,6 +3,7 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { usePTT } from './hooks/usePTT'
 import { useGeolocation } from './hooks/useGeolocation'
 import { useChatStore } from './store/chatStore'
+import { useSettingsStore } from './store/settingsStore'
 import { VoiceManager } from './voice/VoiceManager'
 import { Sidebar } from './components/Sidebar'
 import { ChatView } from './components/ChatView'
@@ -47,8 +48,19 @@ export default function App() {
       try {
         await voiceManagerRef.current.joinChannel(roomId, channelId, existingMembers)
         useChatStore.getState().setActiveVoice(roomId, channelId)
+        if (voiceManagerRef.current.listenOnly) {
+          useChatStore.getState().setVoiceError('No mic — listen-only (HTTPS required for mic on LAN)')
+          setTimeout(() => useChatStore.getState().setVoiceError(null), 5000)
+        } else if (useSettingsStore.getState().voiceMode === 'open') {
+          // Open mic mode — unmute immediately
+          voiceManagerRef.current.setMuted(false)
+          useChatStore.getState().setLocalSpeaking(true)
+          send('voice_speaking', { room_id: roomId, channel_id: channelId, speaking: true })
+        }
       } catch (err) {
         console.error('Failed to join voice channel:', err)
+        useChatStore.getState().setVoiceError('Failed to join voice channel.')
+        setTimeout(() => useChatStore.getState().setVoiceError(null), 5000)
       }
     },
     []
@@ -141,6 +153,8 @@ export default function App() {
             onSelectRoom={() => setSidebarOpen(false)}
             onJoinVoice={joinVoice}
             onLeaveVoice={leaveVoice}
+            onPTTStart={handlePTTStart}
+            onPTTEnd={handlePTTEnd}
             send={send}
           />
         </div>

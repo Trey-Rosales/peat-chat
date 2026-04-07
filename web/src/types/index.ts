@@ -51,16 +51,28 @@ export interface CotContact {
   stale: number
 }
 
+/** Returns true if a contact has a real GPS position (not 0,0) */
+export function contactHasPosition(c: CotContact): boolean {
+  return c.lat !== 0 || c.lon !== 0
+}
+
 export interface CotMarker {
   id: string
   creator_id: string
   creator_name: string
   lat: number
   lon: number
+  hae: number
+  ce: number
+  le: number
   name: string
   icon: string
   color: string
+  cot_type: string
+  how: string
   created_at: number
+  stale: number
+  remarks: string
 }
 
 export interface WSMessage {

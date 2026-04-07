@@ -271,20 +271,29 @@ type CotMarker struct {
 	CreatorName string  `json:"creator_name"`
 	Lat         float64 `json:"lat"`
 	Lon         float64 `json:"lon"`
+	Hae         float64 `json:"hae"`
+	Ce          float64 `json:"ce"`
+	Le          float64 `json:"le"`
 	Name        string  `json:"name"`
 	Icon        string  `json:"icon"`
 	Color       string  `json:"color"`
+	CotType     string  `json:"cot_type"`
+	How         string  `json:"how"`
 	CreatedAt   uint64  `json:"created_at"`
+	Stale       uint64  `json:"stale"`
+	Remarks     string  `json:"remarks"`
 }
 
 // Incoming: create_marker
 type CreateMarkerData struct {
-	RoomID string  `json:"room_id"`
-	Lat    float64 `json:"lat"`
-	Lon    float64 `json:"lon"`
-	Name   string  `json:"name"`
-	Icon   string  `json:"icon"`
-	Color  string  `json:"color"`
+	RoomID  string  `json:"room_id"`
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	Name    string  `json:"name"`
+	Icon    string  `json:"icon"`
+	Color   string  `json:"color"`
+	CotType string  `json:"cot_type"`
+	Remarks string  `json:"remarks"`
 }
 
 // Incoming: delete_marker

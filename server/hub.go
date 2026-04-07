@@ -219,7 +219,7 @@ func (h *Hub) removeFromAllRooms(client *Client) {
 					ChannelID: channelID,
 					PeerID:    client.identity.ID,
 				})
-				room.Broadcast(vcData, nil)
+				room.Broadcast(vcData, client)
 			}
 			if len(leftChannels) > 0 {
 				h.broadcastVoiceState(room)
@@ -403,9 +403,6 @@ func (h *Hub) broadcastCotState(room *Room) {
 
 	for _, c := range members {
 		contacts := room.GetCotContacts(c)
-		if len(contacts) == 0 && len(markers) == 0 {
-			continue
-		}
 		c.sendJSON("cot_state", CotStateData{
 			RoomID:   roomID,
 			SelfID:   c.identity.ID,
@@ -426,16 +423,43 @@ func (h *Hub) CreateMapMarker(client *Client, roomHexID string, d CreateMarkerDa
 	name := client.name
 	client.mu.RUnlock()
 
+	cotType := d.CotType
+	if cotType == "" {
+		switch d.Icon {
+		case "rally":
+			cotType = "b-m-p-s-m"
+		case "objective":
+			cotType = "b-m-p-s-p-i"
+		case "hazard":
+			cotType = "b-m-p-s-m"
+		case "waypoint":
+			cotType = "b-m-p-w"
+		case "info":
+			cotType = "b-m-p-s-p-i"
+		default:
+			cotType = "b-m-p-s-m"
+		}
+	}
+
+	createdAt := uint64(time.Now().UnixMilli())
+
 	marker := &CotMarker{
 		ID:          uuid.New().String(),
 		CreatorID:   client.identity.ID,
 		CreatorName: name,
 		Lat:         d.Lat,
 		Lon:         d.Lon,
+		Hae:         0,
+		Ce:          999999,
+		Le:          999999,
 		Name:        d.Name,
 		Icon:        d.Icon,
 		Color:       d.Color,
-		CreatedAt:   uint64(time.Now().UnixMilli()),
+		CotType:     cotType,
+		How:         "h-e",
+		CreatedAt:   createdAt,
+		Stale:       createdAt + 86400000,
+		Remarks:     d.Remarks,
 	}
 
 	room.AddMarker(marker)

@@ -17,6 +17,7 @@ export class VoiceManager {
   private roomId: string = ''
   private channelId: string = ''
   private active = false
+  private _listenOnly = false
 
   constructor(send: (type: string, data: any) => void) {
     this.send = send
@@ -34,6 +35,10 @@ export class VoiceManager {
     return this.channelId
   }
 
+  get listenOnly(): boolean {
+    return this._listenOnly
+  }
+
   async joinChannel(
     roomId: string,
     channelId: string,
@@ -46,29 +51,35 @@ export class VoiceManager {
     this.roomId = roomId
     this.channelId = channelId
     this.active = true
+    this._listenOnly = false
 
     const settings = useSettingsStore.getState()
 
-    // Get microphone access
+    // Try to get microphone access; fall back to listen-only if unavailable
     const constraints: MediaStreamConstraints = {
       audio: settings.micDeviceId
         ? { deviceId: { exact: settings.micDeviceId } }
         : true,
     }
-    this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
 
-    // Set up audio processing chain for volume control
-    this.audioContext = new AudioContext()
-    this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
-    this.gainNode = this.audioContext.createGain()
-    this.gainNode.gain.value = settings.inputVolume
-    this.destinationNode = this.audioContext.createMediaStreamDestination()
-    this.sourceNode.connect(this.gainNode)
-    this.gainNode.connect(this.destinationNode)
+      // Set up audio processing chain for volume control
+      this.audioContext = new AudioContext()
+      this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
+      this.gainNode = this.audioContext.createGain()
+      this.gainNode.gain.value = settings.inputVolume
+      this.destinationNode = this.audioContext.createMediaStreamDestination()
+      this.sourceNode.connect(this.gainNode)
+      this.gainNode.connect(this.destinationNode)
 
-    // Start muted (push-to-talk)
-    const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
-    processedTrack.enabled = false
+      // Start muted (push-to-talk)
+      const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
+      processedTrack.enabled = false
+    } catch {
+      // No mic available — continue in listen-only mode
+      this._listenOnly = true
+    }
 
     // Tell the server we're joining
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
@@ -123,6 +134,7 @@ export class VoiceManager {
 
     this.roomId = ''
     this.channelId = ''
+    this._listenOnly = false
   }
 
   private async createPeerConnection(

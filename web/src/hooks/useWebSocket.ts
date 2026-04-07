@@ -11,6 +11,13 @@ export function useWebSocket(
   const store = useChatStore
 
   const connect = useCallback(() => {
+    // Close any lingering connection before opening a new one
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.close()
+      wsRef.current = null
+    }
+
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     const url = `${proto}//${host}/ws`
@@ -20,9 +27,19 @@ export function useWebSocket(
 
     ws.onopen = () => {
       store.getState().setConnected(true)
-      const name = store.getState().displayName
-      if (name) {
-        ws.send(JSON.stringify({ type: 'set_name', data: { name } }))
+      const { displayName, rooms } = store.getState()
+      if (displayName) {
+        ws.send(JSON.stringify({ type: 'set_name', data: { name: displayName } }))
+        // Rejoin all rooms from store (handles reconnection), or join
+        // the default "general" room if this is the first connection
+        const roomList = Object.values(rooms)
+        if (roomList.length > 0) {
+          for (const room of roomList) {
+            ws.send(JSON.stringify({ type: 'join_room', data: { name: room.name } }))
+          }
+        } else {
+          ws.send(JSON.stringify({ type: 'join_room', data: { name: 'general' } }))
+        }
       }
     }
 
@@ -127,7 +144,11 @@ export function useWebSocket(
     connect()
     return () => {
       clearTimeout(reconnectTimer.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
   }, [connect])
 

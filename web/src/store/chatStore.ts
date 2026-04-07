@@ -39,6 +39,10 @@ interface ChatStore {
   addVoicePeer: (roomId: string, channelId: string, peer: VoiceMember) => void
   removeVoicePeer: (roomId: string, channelId: string, peerId: string) => void
 
+  // Self position
+  selfPosition: { lat: number; lon: number; hae: number; ce: number } | null
+  setSelfPosition: (pos: { lat: number; lon: number; hae: number; ce: number } | null) => void
+
   // CoT / Map
   cotContacts: Record<string, CotContact[]>
   cotMarkers: Record<string, CotMarker[]>
@@ -48,6 +52,10 @@ interface ChatStore {
   addCotMarker: (roomId: string, marker: CotMarker) => void
   removeCotMarker: (roomId: string, markerId: string) => void
   toggleMapViewer: () => void
+
+  // Voice error
+  voiceError: string | null
+  setVoiceError: (err: string | null) => void
 
   // Settings
   settingsOpen: boolean
@@ -192,6 +200,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ voiceState })
   },
 
+  // Self position
+  selfPosition: null,
+  setSelfPosition: (pos) => set({ selfPosition: pos }),
+
   // CoT / Map
   cotContacts: {},
   cotMarkers: {},
@@ -234,6 +246,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       meshViewerOpen: opening ? false : get().meshViewerOpen,
     })
   },
+
+  // Voice error
+  voiceError: null,
+  setVoiceError: (err) => set({ voiceError: err }),
 
   // Settings
   settingsOpen: false,

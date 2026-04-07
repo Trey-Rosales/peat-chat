@@ -43,3 +43,4 @@ identity.key
 # Environment
 .env
 .env.local
+.certs/
