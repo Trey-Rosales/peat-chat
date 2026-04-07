@@ -73,8 +73,18 @@ export default function App() {
 
   const handlePTTStart = () => {
     const activeVoice = useChatStore.getState().activeVoice
-    if (!activeVoice || !voiceManagerRef.current) return
-    voiceManagerRef.current.setMuted(false)
+    if (!activeVoice) return
+    const { userId, displayName } = useChatStore.getState()
+
+    // WebRTC voice (if available)
+    if (voiceManagerRef.current) {
+      voiceManagerRef.current.setMuted(false)
+    }
+    // BLE voice (if available on Android)
+    if (window.PeatLinkVoice?.hasBleVoice?.()) {
+      window.PeatLinkVoice.startPtt(userId, displayName || 'Android')
+    }
+
     useChatStore.getState().setLocalSpeaking(true)
     send('voice_speaking', {
       room_id: activeVoice.roomId,
@@ -85,8 +95,15 @@ export default function App() {
 
   const handlePTTEnd = () => {
     const activeVoice = useChatStore.getState().activeVoice
-    if (!activeVoice || !voiceManagerRef.current) return
-    voiceManagerRef.current.setMuted(true)
+    if (!activeVoice) return
+
+    if (voiceManagerRef.current) {
+      voiceManagerRef.current.setMuted(true)
+    }
+    if (window.PeatLinkVoice?.hasBleVoice?.()) {
+      window.PeatLinkVoice.stopPtt()
+    }
+
     useChatStore.getState().setLocalSpeaking(false)
     send('voice_speaking', {
       room_id: activeVoice.roomId,
