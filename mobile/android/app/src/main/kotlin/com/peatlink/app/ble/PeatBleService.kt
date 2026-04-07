@@ -285,23 +285,32 @@ class PeatBleService(
         gattServerDevices.clear()
     }
 
+    // Track which addresses are confirmed Peat devices (passed manufacturer data check)
+    private val knownPeatDevices = mutableSetOf<String>()
+
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status_code: Int, newState: Int) {
             val address = device.address
             val now = System.currentTimeMillis().toULong()
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    connectedCount++
-                    this@PeatBleService.status = "peer connected: ${address.takeLast(5)}"
-                    Log.i(TAG, "GATT server: peer connected from $address (status=$status_code)")
+                    Log.i(TAG, "GATT server: incoming connection from $address (status=$status_code)")
                     gattServerDevices.add(address)
+                    // Register as discovered + connected so peat-btle tracks it
+                    val name = try { device.name } catch (_: Throwable) { null }
+                    node.onBleDiscovered(address, name, 0, "peatlink-default", now)
                     node.onBleConnected(address, now)
+                    knownPeatDevices.add(address)
+                    connectedCount = knownPeatDevices.size
+                    this@PeatBleService.status = "peer connected: ${address.takeLast(5)}"
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    connectedCount = (connectedCount - 1).coerceAtLeast(0)
                     Log.i(TAG, "GATT server: peer disconnected from $address (status=$status_code)")
                     gattServerDevices.remove(address)
-                    node.onBleDisconnected(address)
+                    if (knownPeatDevices.remove(address)) {
+                        node.onBleDisconnected(address)
+                        connectedCount = knownPeatDevices.size
+                    }
                     if (connectedCount == 0) {
                         this@PeatBleService.status = "scanning + advertising"
                     }
@@ -331,6 +340,7 @@ class PeatBleService(
         ) {
             if (characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
                 val now = System.currentTimeMillis().toULong()
+                Log.d(TAG, "GATT server: received ${value.size} bytes from ${device.address}")
                 node.onBleDataReceived(device.address, value.map { it.toUByte() }, now)
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
@@ -393,17 +403,21 @@ class PeatBleService(
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    connectedCount++
+                    knownPeatDevices.add(address) // We only connect to verified Peat devices
+                    connectedCount = knownPeatDevices.size
                     this@PeatBleService.status = "connected: ${address.takeLast(5)}"
                     Log.i(TAG, "GATT client: connected to $address (status=$status_code)")
                     node.onBleConnected(address, now)
                     gatt.requestMtu(TARGET_MTU)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    connectedCount = (connectedCount - 1).coerceAtLeast(0)
                     Log.i(TAG, "GATT client: disconnected from $address (status=$status_code)")
-                    node.onBleDisconnected(address)
+                    if (knownPeatDevices.remove(address)) {
+                        node.onBleDisconnected(address)
+                        connectedCount = knownPeatDevices.size
+                    }
                     connectedGattClients.remove(address)
+                    pendingConnections.remove(address)
                     try { gatt.close() } catch (_: Throwable) {}
                     if (connectedCount == 0) {
                         this@PeatBleService.status = "scanning + advertising"
@@ -471,15 +485,26 @@ class PeatBleService(
 
     // --- Tick loop ---
 
+    private var tickCount = 0
+    private var lastDataSize = 0
+
     private fun startTickLoop() {
         tickJob = scope.launch {
             while (isActive && running) {
                 try {
                     val now = System.currentTimeMillis().toULong()
                     val data = node.bleTick(now)
+                    tickCount++
                     if (data != null) {
+                        lastDataSize = data.size
                         val bytes = ByteArray(data.size) { data[it].toByte() }
+                        val targetCount = connectedGattClients.size + gattServerDevices.size
+                        if (tickCount % 10 == 0) {
+                            Log.i(TAG, "Tick #$tickCount: sending ${bytes.size} bytes to $targetCount peers")
+                        }
                         broadcastToAllPeers(bytes)
+                    } else if (tickCount % 10 == 0) {
+                        Log.d(TAG, "Tick #$tickCount: no data to send (peers: ${knownPeatDevices.size})")
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Tick error: ${e.message}")
