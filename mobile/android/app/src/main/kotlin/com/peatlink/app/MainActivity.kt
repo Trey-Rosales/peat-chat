@@ -184,11 +184,28 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 @JavascriptInterface
-                fun pollIncomingFrames(): String { return "[]" }
+                fun pollIncomingFrames(): String {
+                    // Return decoded PCM from BLE peers for WebRTC injection
+                    val frames = bleVoice?.drainDecodedPcm() ?: return "[]"
+                    if (frames.isEmpty()) return "[]"
+                    val arr = JSONArray()
+                    for (pcm in frames) {
+                        arr.put(JSONObject().apply {
+                            put("pcm", Base64.encodeToString(pcm, Base64.NO_WRAP))
+                        })
+                    }
+                    return arr.toString()
+                }
 
                 @JavascriptInterface
                 fun sendPcmFrame(base64Pcm: String, senderId: String, senderName: String) {
-                    // Audio now flows natively, not through WebView
+                    // Receive WebRTC audio (Mac), encode to Opus, send via BLE
+                    try {
+                        val pcm = Base64.decode(base64Pcm, Base64.DEFAULT)
+                        bleVoice?.ingestPcmFromWebRTC(pcm)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "sendPcmFrame: ${e.message}")
+                    }
                 }
             }, "PeatLinkVoice")
         }

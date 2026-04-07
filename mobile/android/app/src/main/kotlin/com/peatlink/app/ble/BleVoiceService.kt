@@ -45,8 +45,15 @@ class BleVoiceService {
     private var playbackJob: Job? = null
     private val incomingFrames = ConcurrentLinkedQueue<ByteArray>()
 
-    // Outgoing queue — PeatBleService reads from this
+    // Outgoing queue — PeatBleService reads from this and sends via GATT
     val outgoingAudioFrames = ConcurrentLinkedQueue<ByteArray>()
+
+    // Decoded PCM queue for JS bridge (WiFi phone feeds this into WebRTC for Mac)
+    private val decodedPcmForBridge = ConcurrentLinkedQueue<ByteArray>()
+    private val MAX_BRIDGE_FRAMES = 50
+
+    // PCM frames from WebRTC (Mac audio → encode → send via BLE)
+    private var bridgeEncoder: MediaCodec? = null
 
     private var running = false
 
@@ -54,6 +61,7 @@ class BleVoiceService {
         if (running) return
         running = true
         initPlayback()
+        initBridgeEncoder()
         startPlaybackLoop()
         Log.i(TAG, "BLE voice service started (${SAMPLE_RATE}Hz, ${BITRATE}bps Opus)")
     }
@@ -63,7 +71,61 @@ class BleVoiceService {
         stopTransmitting()
         playbackJob?.cancel()
         releasePlayback()
+        releaseBridgeEncoder()
         Log.i(TAG, "BLE voice service stopped")
+    }
+
+    // --- JS Bridge methods (WiFi phone only — feeds WebRTC) ---
+
+    /** Get decoded PCM frames for the VoiceManager to inject into WebRTC */
+    fun drainDecodedPcm(): List<ByteArray> {
+        val frames = mutableListOf<ByteArray>()
+        while (true) {
+            val frame = decodedPcmForBridge.poll() ?: break
+            frames.add(frame)
+        }
+        return frames
+    }
+
+    /** Receive PCM from WebRTC (Mac audio), encode to Opus, queue for BLE */
+    fun ingestPcmFromWebRTC(pcmBytes: ByteArray) {
+        if (pcmBytes.isEmpty()) return
+        val sampleCount = pcmBytes.size / 2
+        val pcm = ShortArray(sampleCount)
+        for (i in 0 until sampleCount) {
+            pcm[i] = ((pcmBytes[i * 2].toInt() and 0xFF) or
+                       (pcmBytes[i * 2 + 1].toInt() shl 8)).toShort()
+        }
+        synchronized(this) {
+            val enc = bridgeEncoder ?: return
+            val encoded = encodeOpusFrame(enc, pcm, sampleCount)
+            if (encoded != null) {
+                // Send as single frame (from WebRTC, no batching needed)
+                val batch = buildBatchPacket(listOf(encoded))
+                outgoingAudioFrames.add(batch)
+            }
+        }
+    }
+
+    private fun initBridgeEncoder() {
+        bridgeEncoder = try {
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+                val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
+                fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
+                fmt.setInteger(MediaFormat.KEY_COMPLEXITY, 3)
+                configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                start()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Bridge Opus encoder unavailable: ${e.message}")
+            null
+        }
+    }
+
+    private fun releaseBridgeEncoder() {
+        try { bridgeEncoder?.stop() } catch (_: Throwable) {}
+        try { bridgeEncoder?.release() } catch (_: Throwable) {}
+        bridgeEncoder = null
     }
 
     fun startTransmitting() {
@@ -275,10 +337,18 @@ class BleVoiceService {
                 val pcm = decodeOpusFrame(dec, opusFrame)
                 if (pcm != null) {
                     track.write(pcm, 0, pcm.size)
+                    // Also queue for JS bridge (WiFi phone → WebRTC → Mac)
+                    decodedPcmForBridge.add(pcm)
+                    while (decodedPcmForBridge.size > MAX_BRIDGE_FRAMES) {
+                        decodedPcmForBridge.poll()
+                    }
                 }
             } else {
-                // Raw PCM fallback
                 track.write(opusFrame, 0, opusFrame.size)
+                decodedPcmForBridge.add(opusFrame)
+                while (decodedPcmForBridge.size > MAX_BRIDGE_FRAMES) {
+                    decodedPcmForBridge.poll()
+                }
             }
         }
     }
