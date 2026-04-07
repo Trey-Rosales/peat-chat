@@ -46,27 +46,29 @@ export default function App() {
 
   const joinVoice = useCallback(
     async (roomId: string, channelId: string, existingMembers: VoiceMember[]) => {
-      // BLE-only mode: join voice channel without WebRTC VoiceManager
       const hasBleVoice = !!window.PeatLinkVoice?.hasBleVoice?.()
-      if (!voiceManagerRef.current && !hasBleVoice) return
 
-      if (!voiceManagerRef.current && hasBleVoice) {
-        // BLE-only: just send join_voice and set active — no WebRTC needed
+      // Check if we should use WebRTC (has VoiceManager that's not active yet)
+      const useWebRTC = !!voiceManagerRef.current
+
+      if (!useWebRTC && !hasBleVoice) return
+
+      if (!useWebRTC) {
+        // BLE-only: just send join_voice — no WebRTC, audio via native BleVoiceService
         send('join_voice', { room_id: roomId, channel_id: channelId })
         useChatStore.getState().setActiveVoice(roomId, channelId)
         return
       }
 
-      if (!voiceManagerRef.current) return
       try {
-        await voiceManagerRef.current.joinChannel(roomId, channelId, existingMembers)
+        await voiceManagerRef.current!.joinChannel(roomId, channelId, existingMembers)
         useChatStore.getState().setActiveVoice(roomId, channelId)
-        if (voiceManagerRef.current.listenOnly) {
+        if (voiceManagerRef.current?.listenOnly) {
           useChatStore.getState().setVoiceError('No mic — listen-only (HTTPS required for mic on LAN)')
           setTimeout(() => useChatStore.getState().setVoiceError(null), 5000)
         } else if (useSettingsStore.getState().voiceMode === 'open') {
           // Open mic mode — unmute immediately
-          voiceManagerRef.current.setMuted(false)
+          voiceManagerRef.current?.setMuted(false)
           useChatStore.getState().setLocalSpeaking(true)
           send('voice_speaking', { room_id: roomId, channel_id: channelId, speaking: true })
         }
@@ -89,11 +91,11 @@ export default function App() {
     if (!activeVoice) return
     const { userId, displayName } = useChatStore.getState()
 
-    // WebRTC voice (if available)
-    if (voiceManagerRef.current) {
+    // WebRTC voice (if available — WiFi phone and Mac)
+    if (voiceManagerRef.current?.isActive) {
       voiceManagerRef.current.setMuted(false)
     }
-    // BLE voice (if available on Android)
+    // BLE voice capture (Android devices)
     if (window.PeatLinkVoice?.hasBleVoice?.()) {
       window.PeatLinkVoice.startPtt(userId, displayName || 'Android')
     }
@@ -110,7 +112,7 @@ export default function App() {
     const activeVoice = useChatStore.getState().activeVoice
     if (!activeVoice) return
 
-    if (voiceManagerRef.current) {
+    if (voiceManagerRef.current?.isActive) {
       voiceManagerRef.current.setMuted(true)
     }
     if (window.PeatLinkVoice?.hasBleVoice?.()) {
