@@ -9,10 +9,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// BlePeer represents a BLE-connected device reachable through a relay client.
+type BlePeer struct {
+	PeerID   string
+	PeerName string
+	Relay    *Client // the relay client that registered this peer
+}
+
 type Hub struct {
 	rooms       map[[32]byte]*Room
 	clients     map[*Client]bool
 	clientsByID map[string]*Client // identity.ID -> *Client for O(1) signaling relay
+	blePeers    map[string]*BlePeer // peer_id -> BlePeer (BLE peers reachable via relay)
 	register    chan *Client
 	unregister  chan *Client
 	mu          sync.RWMutex
@@ -23,6 +31,7 @@ func NewHub() *Hub {
 		rooms:       make(map[[32]byte]*Room),
 		clients:     make(map[*Client]bool),
 		clientsByID: make(map[string]*Client),
+		blePeers:    make(map[string]*BlePeer),
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 	}
@@ -188,10 +197,15 @@ func (h *Hub) BroadcastMessage(client *Client, room *Room, msg ChatMessage) {
 }
 
 func (h *Hub) broadcastMeshState(room *Room) {
+	h.mu.RLock()
+	blePeers := h.getBlePeerMeshData()
+	h.mu.RUnlock()
+
 	members := room.GetMembers()
 	roomID := ChatIdHex(room.ID)
 	for _, c := range members {
 		peers := room.GetMeshPeers(c)
+		peers = append(peers, blePeers...)
 		c.sendJSON("mesh_state", MeshStateData{
 			RoomID: roomID,
 			SelfID: c.identity.ID,
@@ -202,16 +216,74 @@ func (h *Hub) broadcastMeshState(room *Room) {
 
 // broadcastMeshStateLocked is called when hub.mu.RLock is already held.
 func (h *Hub) broadcastMeshStateLocked(room *Room) {
+	blePeers := h.getBlePeerMeshData()
+
 	members := room.GetMembers()
 	roomID := ChatIdHex(room.ID)
 	for _, c := range members {
 		peers := room.GetMeshPeers(c)
+		peers = append(peers, blePeers...)
 		c.sendJSON("mesh_state", MeshStateData{
 			RoomID: roomID,
 			SelfID: c.identity.ID,
 			Peers:  peers,
 		})
 	}
+}
+
+func (h *Hub) getBlePeerMeshData() []MeshPeerData {
+	var peers []MeshPeerData
+	for _, bp := range h.blePeers {
+		peers = append(peers, MeshPeerData{
+			ID:           bp.PeerID,
+			Name:         bp.PeerName,
+			ShortID:      bp.PeerID[:min(12, len(bp.PeerID))],
+			Transport:    "btle",
+			State:        "connected",
+			ConnectedVia: bp.Relay.identity.ID,
+		})
+	}
+	return peers
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// RegisterBlePeer makes a BLE peer visible to other clients via the relay.
+func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
+	h.mu.Lock()
+	h.blePeers[peerID] = &BlePeer{
+		PeerID:   peerID,
+		PeerName: peerName,
+		Relay:    relay,
+	}
+	// Also register in clientsByID so DMs can target this peer
+	// DMs to this peer will be routed through the relay
+	h.mu.Unlock()
+	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:12], relay.name)
+
+	// Broadcast updated mesh state
+	relay.mu.RLock()
+	for roomID := range relay.rooms {
+		h.mu.RLock()
+		if room, ok := h.rooms[roomID]; ok {
+			h.broadcastMeshStateLocked(room)
+		}
+		h.mu.RUnlock()
+	}
+	relay.mu.RUnlock()
+}
+
+// UnregisterBlePeer removes a BLE peer.
+func (h *Hub) UnregisterBlePeer(relay *Client, peerID string) {
+	h.mu.Lock()
+	delete(h.blePeers, peerID)
+	h.mu.Unlock()
+	log.Printf("BLE peer unregistered: %s", peerID[:min(12, len(peerID))])
 }
 
 func (h *Hub) removeFromAllRooms(client *Client) {

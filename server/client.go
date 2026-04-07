@@ -306,6 +306,20 @@ func (c *Client) readPump() {
 				c.hub.UnpinMessage(c, d.RoomID, d.MessageID)
 			}
 
+		// --- BLE Peer Registration ---
+
+		case "register_ble_peer":
+			var d RegisterBlePeerData
+			if json.Unmarshal(msg.Data, &d) == nil && d.PeerID != "" {
+				c.hub.RegisterBlePeer(c, d.PeerID, d.PeerName)
+			}
+
+		case "unregister_ble_peer":
+			var d UnregisterBlePeerData
+			if json.Unmarshal(msg.Data, &d) == nil && d.PeerID != "" {
+				c.hub.UnregisterBlePeer(c, d.PeerID)
+			}
+
 		// --- Direct Messages ---
 
 		case "start_dm":

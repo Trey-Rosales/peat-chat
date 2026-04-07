@@ -146,12 +146,25 @@ async fn bridge_loop(
                         tracing::info!("BLE peer connected: {} ({})", info.name, info.id);
                         ble_peer_names.insert(info.id.clone(), info.name.clone());
                         broadcast_ble_peer_update(&hub, &room_name, info, "joined", &self_node_id).await;
+
+                        // Register BLE peer with Go server so Mac can see and DM them
+                        let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
+                            "peer_id": info.id,
+                            "peer_name": info.name,
+                        }));
+                        let _ = hub.passthrough_tx.send(Arc::new(reg));
+
                         sync_room_history_to_ble(&hub, &room_name, &ble_send_tx).await;
                     }
                     BlePeerEvent::PeerDisconnected(info) => {
                         tracing::info!("BLE peer disconnected: {} ({})", info.name, info.id);
                         ble_peer_names.remove(&info.id);
                         broadcast_ble_peer_update(&hub, &room_name, info, "left", &self_node_id).await;
+
+                        let unreg = crate::ws_server::make_json("unregister_ble_peer", &serde_json::json!({
+                            "peer_id": info.id,
+                        }));
+                        let _ = hub.passthrough_tx.send(Arc::new(unreg));
                     }
                 }
             }

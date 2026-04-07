@@ -398,6 +398,19 @@ type MessageUnpinnedData struct {
 	MessageID string `json:"message_id"`
 }
 
+// --- BLE Peer Registration ---
+
+// Incoming: register_ble_peer — relay registers a BLE peer as reachable through it
+type RegisterBlePeerData struct {
+	PeerID   string `json:"peer_id"`
+	PeerName string `json:"peer_name"`
+}
+
+// Incoming: unregister_ble_peer
+type UnregisterBlePeerData struct {
+	PeerID string `json:"peer_id"`
+}
+
 // --- Direct Messages ---
 
 // Incoming: start_dm

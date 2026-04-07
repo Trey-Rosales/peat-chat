@@ -417,13 +417,9 @@ class PeatBleService(
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    knownPeatDevices.add(address)
-                    connectedCount = knownPeatDevices.size
-                    this@PeatBleService.status = "connected: ${address.takeLast(5)}"
-                    Log.i(TAG, "GATT client: connected to $address (status=$status_code)")
+                    // Don't mark as Peat peer yet — wait for service discovery to confirm
+                    Log.i(TAG, "GATT client: connected to $address (unverified, discovering services...)")
                     node.onBleConnected(address, now)
-                    val name = try { gatt.device.name } catch (_: Throwable) { null }
-                    node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
                     gatt.requestMtu(TARGET_MTU)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -450,22 +446,37 @@ class PeatBleService(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            val address = gatt.device.address
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.w(TAG, "Service discovery failed for ${gatt.device.address}")
+                Log.w(TAG, "Service discovery failed for $address, disconnecting")
+                gatt.disconnect()
                 return
             }
 
             val service = gatt.getService(PEAT_SERVICE_UUID)
             if (service == null) {
-                Log.w(TAG, "Peat service not found on ${gatt.device.address}")
+                // NOT a PeatLink device — disconnect
+                Log.i(TAG, "No Peat service on $address — not a PeatLink device, disconnecting")
+                connectedGattClients.remove(address)
+                pendingConnections.remove(address)
+                gatt.disconnect()
+                gatt.close()
                 return
             }
 
             val syncChar = service.getCharacteristic(PEAT_SYNC_CHAR_UUID)
             if (syncChar == null) {
-                Log.w(TAG, "Sync characteristic not found on ${gatt.device.address}")
+                Log.w(TAG, "Sync characteristic not found on $address")
                 return
             }
+
+            // Service verified — THIS is a real PeatLink peer
+            knownPeatDevices.add(address)
+            connectedCount = knownPeatDevices.size
+            val name = try { gatt.device.name } catch (_: Throwable) { null }
+            node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
+            this@PeatBleService.status = "verified peer: ${address.takeLast(5)}"
+            Log.i(TAG, "GATT client: verified PeatLink peer $address ($name)")
 
             // Enable notifications
             gatt.setCharacteristicNotification(syncChar, true)
