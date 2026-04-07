@@ -174,9 +174,10 @@ async fn run_relay(
         return RelayResult::Disconnected;
     }
 
-    // Subscribe to passthrough channel ONLY — this carries user-originated actions
-    // (send_message, set_name, DMs, voice, CoT) but NOT upstream-injected messages.
-    // This prevents the relay from re-forwarding messages that came from the Go server.
+    // Relay channel: user-originated chat messages from local WS server + BLE bridge
+    let mut relay_rx = hub.relay_tx.subscribe();
+
+    // Passthrough: non-chat actions (set_name, DMs, voice, CoT, BLE peer registration)
     let mut passthrough_rx = hub.passthrough_tx.subscribe();
 
     // Periodic seen_ids cleanup
@@ -199,25 +200,21 @@ async fn run_relay(
                 }
             }
 
-            // Passthrough: user-originated messages → forward to upstream
-            Ok(passthrough) = passthrough_rx.recv() => {
-                // Check if this is a "message" broadcast that needs reformatting
-                let is_message = passthrough.contains("\"type\":\"message\"");
-                if is_message {
-                    // Reformat as send_message for the Go server
-                    if let Some(fwd) = filter_for_upstream(
-                        &passthrough, seen_ids, &upstream_self_id, hub
-                    ).await {
-                        if ws_tx.send(Message::Text(fwd)).await.is_err() {
-                            return RelayResult::Disconnected;
-                        }
-                    }
-                    // If filter returns None, message was deduped — don't send
-                } else {
-                    // Non-message types: forward as-is (set_name, CoT, DMs, etc.)
-                    if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
+            // Relay channel: chat messages from local WS server and BLE bridge
+            Ok(relay_msg) = relay_rx.recv() => {
+                if let Some(fwd) = filter_for_upstream(
+                    &relay_msg, seen_ids, &upstream_self_id, hub
+                ).await {
+                    if ws_tx.send(Message::Text(fwd)).await.is_err() {
                         return RelayResult::Disconnected;
                     }
+                }
+            }
+
+            // Passthrough: non-chat actions → forward as-is
+            Ok(passthrough) = passthrough_rx.recv() => {
+                if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
+                    return RelayResult::Disconnected;
                 }
             }
 

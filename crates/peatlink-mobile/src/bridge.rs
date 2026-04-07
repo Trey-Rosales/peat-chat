@@ -420,7 +420,7 @@ async fn handle_ble_ws_message(
                             // Inject into local Hub (shows on WiFi phone WebView)
                             hub.inject_external_message(room_name, chat_msg.clone()).await;
 
-                            // Also send to passthrough so upstream relay forwards to Go server
+                            // Send to relay channel so upstream relay forwards to Go server
                             let fwd = crate::ws_server::make_json(
                                 "message",
                                 &serde_json::json!({
@@ -428,7 +428,7 @@ async fn handle_ble_ws_message(
                                     "message": chat_msg,
                                 }),
                             );
-                            let _ = hub.passthrough_tx.send(Arc::new(fwd));
+                            let _ = hub.relay_tx.send(Arc::new(fwd));
                         }
                     } else {
                         // DM or other room — send via downstream

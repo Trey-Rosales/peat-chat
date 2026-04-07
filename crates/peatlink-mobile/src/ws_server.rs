@@ -94,6 +94,8 @@ pub struct Hub {
     pub data_dir: Option<String>,
     /// Channel for messages the local server doesn't handle — relayed upstream.
     pub passthrough_tx: broadcast::Sender<Arc<String>>,
+    /// Dedicated channel for the upstream relay (user-originated chat messages).
+    pub relay_tx: broadcast::Sender<Arc<String>>,
     /// Channel for messages from upstream that should be sent to all local WebView clients.
     pub downstream_tx: broadcast::Sender<Arc<String>>,
 }
@@ -102,6 +104,7 @@ impl Hub {
     fn new(data_dir: Option<String>) -> Self {
         let id = hex::encode(rand::random::<[u8; 16]>());
         let (passthrough_tx, _) = broadcast::channel(256);
+        let (relay_tx, _) = broadcast::channel(256);
         let (downstream_tx, _) = broadcast::channel(256);
         Self {
             rooms: RwLock::new(HashMap::new()),
@@ -110,6 +113,7 @@ impl Hub {
             default_display_name: RwLock::new(String::new()),
             data_dir,
             passthrough_tx,
+            relay_tx,
             downstream_tx,
         }
     }
@@ -481,9 +485,8 @@ async fn handle_message(
                     }),
                 );
                 let _ = room.tx.send(Arc::new(broadcast.clone()));
-                // Also send to passthrough so the upstream relay forwards it
-                // (relay no longer subscribes to room broadcasts to avoid echo loops)
-                let _ = hub.passthrough_tx.send(Arc::new(broadcast));
+                // Send to relay channel so the upstream relay forwards it to Go server
+                let _ = hub.relay_tx.send(Arc::new(broadcast));
             } else {
                 // Room not found locally — forward to upstream (DM rooms, etc.)
                 let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
