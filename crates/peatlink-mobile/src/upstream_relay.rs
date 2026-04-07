@@ -278,12 +278,16 @@ async fn handle_upstream_message(
             }
 
             {
-                let key = format!("relay-in-{}", msg_id);
+                let key_in = format!("relay-in-{}", msg_id);
+                let key_out = format!("relay-out-{}", msg_id);
                 let mut ids = seen_ids.write().await;
-                if ids.contains(&key) {
+                if ids.contains(&key_in) {
                     return;
                 }
-                ids.insert(key);
+                ids.insert(key_in);
+                // Also mark as "already forwarded" so filter_for_upstream won't
+                // re-send upstream messages that get broadcast by the local Hub
+                ids.insert(key_out);
             }
 
             // Check if this message's room_id matches a local Hub room
@@ -337,12 +341,14 @@ async fn handle_upstream_message(
                         if msg_id.is_empty() {
                             continue;
                         }
-                        let key = format!("relay-in-{}", msg_id);
+                        let key_in = format!("relay-in-{}", msg_id);
+                        let key_out = format!("relay-out-{}", msg_id);
                         let mut ids = seen_ids.write().await;
-                        if ids.contains(&key) {
+                        if ids.contains(&key_in) {
                             continue;
                         }
-                        ids.insert(key);
+                        ids.insert(key_in);
+                        ids.insert(key_out); // prevent re-forwarding upstream
                         drop(ids);
 
                         if let Ok(chat_msg) =
