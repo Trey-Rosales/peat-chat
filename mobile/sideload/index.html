@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PeatLink - Android Install</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0b141a; color: #e9edef; font-family: -apple-system, system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .card {
+    background: #1b2b34; border-radius: 16px; padding: 40px;
+    max-width: 420px; width: 100%; text-align: center;
+  }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .version { color: #8696a0; font-size: 14px; margin-bottom: 24px; }
+  .download-btn {
+    display: inline-block; background: #00a884; color: #111b21;
+    font-size: 18px; font-weight: 600; padding: 14px 32px;
+    border-radius: 10px; text-decoration: none; margin: 16px 0;
+    transition: background 0.2s;
+  }
+  .download-btn:hover { background: #06cf9c; }
+  .size { color: #8696a0; font-size: 13px; margin-bottom: 24px; }
+  .instructions { text-align: left; font-size: 14px; line-height: 1.7; color: #aebac1; }
+  .instructions li { margin-bottom: 8px; }
+  .instructions code { background: #0b141a; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>PeatLink</h1>
+  <div class="version">v0.1.0 &mdash; Android</div>
+
+  <a href="peatlink.apk" class="download-btn">Download APK</a>
+  <div class="size">~43 MB</div>
+
+  <ol class="instructions">
+    <li>Tap <strong>Download APK</strong> above</li>
+    <li>If prompted, allow downloads from this source</li>
+    <li>Open the downloaded file to install</li>
+    <li>You may need to enable <strong>Settings &rarr; Install unknown apps</strong> for your browser</li>
+    <li>Open PeatLink &mdash; grant BLE, audio, and location permissions when prompted</li>
+    <li>The app will auto-discover the Go server on your WiFi network via mDNS</li>
+  </ol>
+</div>
+</body>
+</html>

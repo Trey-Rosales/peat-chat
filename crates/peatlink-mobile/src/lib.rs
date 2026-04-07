@@ -1,4 +1,5 @@
 pub mod error;
+pub mod upstream_relay;
 pub mod ws_server;
 
 #[cfg(feature = "bluetooth")]
@@ -30,11 +31,14 @@ pub struct BlePeerInfo {
 
 pub struct MobileNode {
     data_dir: String,
-    display_name: String,
+    display_name: RwLock<String>,
     port: RwLock<u16>,
     running: RwLock<bool>,
     runtime: Arc<Runtime>,
-    identity: String,
+    identity: RwLock<String>,
+    hub: RwLock<Option<Arc<ws_server::Hub>>>,
+    upstream_handle: RwLock<Option<upstream_relay::UpstreamRelayHandle>>,
+    seen_ids: upstream_relay::SeenIds,
 
     #[cfg(feature = "bluetooth")]
     ble_manager: Arc<ble::BleManager>,
@@ -57,11 +61,14 @@ impl MobileNode {
 
         Ok(Self {
             data_dir,
-            display_name,
+            display_name: RwLock::new(display_name),
             port: RwLock::new(0),
             running: RwLock::new(false),
             runtime: Arc::new(runtime),
-            identity,
+            identity: RwLock::new(identity),
+            hub: RwLock::new(None),
+            upstream_handle: RwLock::new(None),
+            seen_ids: upstream_relay::new_seen_ids(),
             #[cfg(feature = "bluetooth")]
             ble_manager,
             #[cfg(feature = "bluetooth")]
@@ -81,13 +88,29 @@ impl MobileNode {
         }
 
         let web_path = web_dir.map(PathBuf::from);
-        let actual_port = rt
-            .block_on(ws_server::run_server(0, web_path))
+        let (actual_port, hub) = rt
+            .block_on(ws_server::run_server(0, web_path, Some(self.data_dir.clone())))
             .map_err(|e| PeatLinkError::startup(e))?;
 
         rt.block_on(async {
+            // Check for a persisted callsign from a previous session
+            let callsign_path = std::path::Path::new(&self.data_dir).join("callsign");
+            if let Ok(saved) = std::fs::read_to_string(&callsign_path) {
+                let saved = saved.trim().to_string();
+                if !saved.is_empty() {
+                    *self.display_name.write().await = saved.clone();
+                    *hub.default_display_name.write().await = saved;
+                }
+            } else {
+                // Use the MobileNode's display name (from Android prefs)
+                let name = self.display_name.read().await.clone();
+                if !name.is_empty() {
+                    *hub.default_display_name.write().await = name;
+                }
+            }
             *self.port.write().await = actual_port;
             *self.running.write().await = true;
+            *self.hub.write().await = Some(hub);
         });
 
         Ok(actual_port)
@@ -100,7 +123,12 @@ impl MobileNode {
             return Err(PeatLinkError::NotRunning);
         }
         rt.block_on(async {
+            // Stop upstream relay if running
+            if let Some(handle) = self.upstream_handle.write().await.take() {
+                handle.shutdown().await;
+            }
             *self.running.write().await = false;
+            *self.hub.write().await = None;
         });
         // Also stop BLE if running
         #[cfg(feature = "bluetooth")]
@@ -115,15 +143,93 @@ impl MobileNode {
     }
 
     pub fn node_id(&self) -> String {
-        self.identity.clone()
+        self.runtime.block_on(self.identity.read()).clone()
     }
 
     pub fn display_name(&self) -> String {
-        self.display_name.clone()
+        self.runtime.block_on(self.display_name.read()).clone()
     }
 
     pub fn is_running(&self) -> bool {
         *self.runtime.block_on(self.running.read())
+    }
+
+    // --- Settings ---
+
+    /// Update the display name. Also propagates to Hub and upstream relay.
+    pub fn set_display_name(&self, name: String) {
+        self.runtime.block_on(async {
+            *self.display_name.write().await = name.clone();
+            // Update the Hub's default name so new connections get it
+            if let Some(hub) = self.hub.read().await.as_ref() {
+                *hub.default_display_name.write().await = name.clone();
+                // Send set_name via passthrough to update upstream relay
+                let msg = ws_server::make_json("set_name", &serde_json::json!({"name": name}));
+                let _ = hub.passthrough_tx.send(std::sync::Arc::new(msg));
+            }
+        });
+    }
+
+    /// Regenerate identity (new random ID).
+    pub fn regenerate_identity(&self) -> String {
+        let new_id = hex::encode(rand::random::<[u8; 32]>());
+        self.runtime.block_on(async {
+            *self.identity.write().await = new_id.clone();
+        });
+        new_id
+    }
+
+    // --- Upstream relay ---
+
+    /// Connect to an upstream Go server for message relay.
+    pub fn connect_upstream(&self, url: String, room_name: String) -> Result<(), PeatLinkError> {
+        let rt = self.runtime.clone();
+
+        let hub = rt.block_on(self.hub.read()).clone();
+        let hub = hub.ok_or_else(|| {
+            PeatLinkError::startup("server not running — call start() first")
+        })?;
+
+        let display_name = rt.block_on(self.display_name.read()).clone();
+
+        let handle = rt
+            .block_on(upstream_relay::start_upstream_relay(
+                url,
+                hub,
+                display_name,
+                room_name,
+                self.seen_ids.clone(),
+            ))
+            .map_err(|e| PeatLinkError::startup(e))?;
+
+        rt.block_on(async {
+            *self.upstream_handle.write().await = Some(handle);
+        });
+
+        Ok(())
+    }
+
+    /// Disconnect from the upstream relay.
+    pub fn disconnect_upstream(&self) -> Result<(), PeatLinkError> {
+        let rt = self.runtime.clone();
+        rt.block_on(async {
+            if let Some(handle) = self.upstream_handle.write().await.take() {
+                handle.shutdown().await;
+            }
+        });
+        Ok(())
+    }
+
+    /// Whether the upstream relay is currently connected.
+    pub fn is_upstream_connected(&self) -> bool {
+        let rt = self.runtime.clone();
+        rt.block_on(async {
+            if let Some(handle) = self.upstream_handle.read().await.as_ref() {
+                handle.is_connected().await
+            } else {
+                false
+            }
+        })
     }
 
     // --- BLE mesh controls ---

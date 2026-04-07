@@ -30,6 +30,19 @@ interface MobileNode {
     string display_name();
     boolean is_running();
 
+    // Settings
+    void set_display_name(string name);
+    string regenerate_identity();
+
+    // Upstream relay
+    [Throws=PeatLinkError]
+    void connect_upstream(string url, string room_name);
+
+    [Throws=PeatLinkError]
+    void disconnect_upstream();
+
+    boolean is_upstream_connected();
+
     // BLE mesh controls
     [Throws=PeatLinkError]
     void start_ble(string mesh_id, string callsign, sequence<u8>? shared_secret);

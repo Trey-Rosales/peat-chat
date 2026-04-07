@@ -16,8 +16,15 @@
 /mobile/android/.gradle
 /mobile/android/app/build
 /mobile/android/app/src/main/jniLibs
+/mobile/android/app/src/main/assets/web
 /mobile/android/build
 /mobile/android/local.properties
+
+# Generated UniFFI bindings (rebuilt by build-mobile.sh)
+/mobile/android/app/src/main/kotlin/com/peatlink/ffi/
+
+# Sideload artifacts
+/mobile/sideload/peatlink.apk
 
 # iOS
 /mobile/ios/PeatLinkFFI.xcframework

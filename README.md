@@ -220,6 +220,7 @@ peat-chat/
 │   ├── peatlink-cli/             # terminal chat client
 │   └── peatlink-mobile/          # mobile FFI library
 │       ├── ws_server.rs          #   embedded axum WS server
+│       ├── upstream_relay.rs     #   WS client relay to Go server
 │       ├── ble.rs                #   BLE mesh transport
 │       └── peatlink_mobile.udl   #   UniFFI interface definition
 ├── server/                       # Go WebSocket relay + voice + CoT
@@ -239,7 +240,13 @@ peat-chat/
 │       ├── voice/                #   VoiceManager (WebRTC engine)
 │       └── types/                #   TypeScript interfaces
 ├── mobile/
-│   ├── android/                  # Kotlin shell
+│   ├── android/                  # Kotlin shell + upstream relay + NSD discovery
+│   │   └── app/src/main/kotlin/
+│   │       ├── MainActivity.kt   #   WebView + UniFFI integration
+│   │       ├── PeatLinkPrefs.kt  #   settings persistence (SharedPreferences)
+│   │       └── net/
+│   │           └── ServerDiscovery.kt  # mDNS/NSD Go server discovery
+│   ├── sideload/                 # APK download page for sideloading
 │   └── ios/                      # Swift shell
 ├── scripts/
 │   └── build-mobile.sh           # cross-compilation
@@ -360,6 +367,40 @@ make mobile-server
 
 See [`scripts/build-mobile.sh`](scripts/build-mobile.sh) for cross-compilation details.
 
+### Android
+
+The Android app embeds the full PeatLink stack -- Rust server (axum WS), React UI, and optional BLE mesh -- in a single APK.
+
+**What's inside:**
+- `peatlink-mobile` cross-compiled for `arm64-v8a` and `x86_64` via `cargo-ndk`
+- UniFFI-generated Kotlin bindings for the `MobileNode` interface
+- React web dist bundled into APK assets, extracted to `filesDir` at runtime
+- Embedded axum WS server starts on a random port, serves React UI from localhost via WebView
+- **Upstream WS relay** -- connects to a Go server on the LAN, bidirectionally bridges all message types (chat, voice, CoT, DMs, reactions, edits, pins) with echo suppression
+- **Passthrough channel** -- messages the local server doesn't handle (`start_dm`, `join_dm`, voice commands, CoT) forwarded to upstream
+- **Downstream channel** -- upstream responses (`dm_opened`, `peer_update`, `mesh_state`) forwarded directly to WebView
+- **mDNS/NSD discovery** -- Android NSD discovers Go servers advertising `_peatlink._tcp` on LAN
+- **Settings persistence** -- callsign, identity, and upstream URL saved to SharedPreferences and synced between React UI, local server, and upstream Go server
+- **Connection status bar** -- tap to open settings; green/yellow/grey indicator shows upstream relay state
+
+**Building:**
+
+```bash
+# Prerequisites
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk
+# Set ANDROID_NDK_HOME to your NDK path
+
+# Build APK
+make mobile-android
+
+# The APK lands in mobile/android/app/build/outputs/apk/
+```
+
+**Sideloading:**
+
+A self-contained sideload page is available at `mobile/sideload/index.html`. Host it on any web server alongside the APK for easy device installation. The Go server also registers itself via mDNS (`_peatlink._tcp`) so Android devices can auto-discover it on LAN.
+
 ---
 
 ## Make Targets
@@ -389,8 +430,8 @@ See [`scripts/build-mobile.sh`](scripts/build-mobile.sh) for cross-compilation d
 |:----------|:----------|
 | **peatlink-core** | peat-mesh 0.8 (automerge-backend), automerge 0.7, tokio, blake3 |
 | **peatlink-cli** | clap 4, tracing |
-| **peatlink-mobile** | axum 0.7, uniffi 0.28, peat-mesh 0.7, peat-btle 0.2 (optional) |
-| **Go server** | gorilla/websocket, blake3, google/uuid |
+| **peatlink-mobile** | axum 0.7, uniffi 0.28, tokio-tungstenite, futures-util, peat-mesh 0.7, peat-btle 0.2 (optional) |
+| **Go server** | gorilla/websocket, blake3, google/uuid, grandcat/zeroconf (mDNS) |
 | **Web** | React 18, Zustand 4.5, MapLibre GL 5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
 | **Testing** | Go `testing` (48 tests), Vitest (55 tests), React Testing Library |
 

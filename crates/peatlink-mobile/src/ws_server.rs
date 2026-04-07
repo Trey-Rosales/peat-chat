@@ -17,15 +17,15 @@ use tower_http::cors::CorsLayer;
 
 pub type ChatId = [u8; 32];
 
-fn chat_id_from_name(name: &str) -> ChatId {
+pub fn chat_id_from_name(name: &str) -> ChatId {
     *blake3::hash(name.as_bytes()).as_bytes()
 }
 
-fn chat_id_hex(id: &ChatId) -> String {
+pub fn chat_id_hex(id: &ChatId) -> String {
     hex::encode(id)
 }
 
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -51,11 +51,11 @@ struct WsEnvelope {
 
 // ---------- room ----------
 
-struct Room {
-    name: String,
-    messages: Vec<ChatMessage>,
-    members: HashMap<u64, ClientInfo>,
-    tx: broadcast::Sender<Arc<String>>,
+pub(crate) struct Room {
+    pub(crate) name: String,
+    pub(crate) messages: Vec<ChatMessage>,
+    pub(crate) members: HashMap<u64, ClientInfo>,
+    pub(crate) tx: broadcast::Sender<Arc<String>>,
 }
 
 #[derive(Clone)]
@@ -85,18 +85,32 @@ impl Room {
 // ---------- hub (shared state) ----------
 
 pub struct Hub {
-    rooms: RwLock<HashMap<ChatId, Arc<RwLock<Room>>>>,
+    pub rooms: RwLock<HashMap<ChatId, Arc<RwLock<Room>>>>,
     next_client_id: RwLock<u64>,
     server_identity: String,
+    /// Default display name for clients (set from MobileNode callsign).
+    pub default_display_name: RwLock<String>,
+    /// Data directory for persisting callsign etc.
+    pub data_dir: Option<String>,
+    /// Channel for messages the local server doesn't handle — relayed upstream.
+    pub passthrough_tx: broadcast::Sender<Arc<String>>,
+    /// Channel for messages from upstream that should be sent to all local WebView clients.
+    pub downstream_tx: broadcast::Sender<Arc<String>>,
 }
 
 impl Hub {
-    fn new() -> Self {
+    fn new(data_dir: Option<String>) -> Self {
         let id = hex::encode(rand::random::<[u8; 16]>());
+        let (passthrough_tx, _) = broadcast::channel(256);
+        let (downstream_tx, _) = broadcast::channel(256);
         Self {
             rooms: RwLock::new(HashMap::new()),
             next_client_id: RwLock::new(1),
             server_identity: id,
+            default_display_name: RwLock::new(String::new()),
+            data_dir,
+            passthrough_tx,
+            downstream_tx,
         }
     }
 
@@ -125,7 +139,7 @@ impl Hub {
             .clone()
     }
 
-    async fn find_room_by_hex(&self, hex_id: &str) -> Option<(ChatId, Arc<RwLock<Room>>)> {
+    pub async fn find_room_by_hex(&self, hex_id: &str) -> Option<(ChatId, Arc<RwLock<Room>>)> {
         let rooms = self.rooms.read().await;
         for (id, room) in rooms.iter() {
             let full = chat_id_hex(id);
@@ -134,6 +148,34 @@ impl Hub {
             }
         }
         None
+    }
+
+    /// Inject an externally-sourced message (from upstream relay or BLE bridge) into a room.
+    pub async fn inject_external_message(&self, room_name: &str, msg: ChatMessage) {
+        let room_arc = self.get_or_create_room(room_name).await;
+        let chat_id = chat_id_from_name(room_name);
+        let room_id = chat_id_hex(&chat_id);
+        let mut room = room_arc.write().await;
+        room.messages.push(msg.clone());
+        if room.messages.len() > 1000 {
+            let excess = room.messages.len() - 1000;
+            room.messages.drain(..excess);
+        }
+        let broadcast = make_json(
+            "message",
+            &serde_json::json!({
+                "room_id": room_id,
+                "message": msg,
+            }),
+        );
+        let _ = room.tx.send(Arc::new(broadcast));
+    }
+
+    /// Subscribe to broadcast messages from a room (for relay/bridge consumers).
+    pub async fn subscribe_room(&self, room_name: &str) -> broadcast::Receiver<Arc<String>> {
+        let room_arc = self.get_or_create_room(room_name).await;
+        let room = room_arc.read().await;
+        room.tx.subscribe()
     }
 }
 
@@ -191,10 +233,26 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
     }))
     .await;
 
+    // If a default display name is configured (from MobileNode callsign),
+    // auto-apply it and forward to upstream relay
+    {
+        let default_name = hub.default_display_name.read().await;
+        if !default_name.is_empty() {
+            session.name = default_name.clone();
+            let set_name_msg = make_json("set_name", &serde_json::json!({
+                "name": *default_name,
+            }));
+            let _ = hub.passthrough_tx.send(Arc::new(set_name_msg));
+        }
+    }
+
     tracing::info!("client connected: {} ({})", session.name, short_id);
 
     // Channel for room broadcast messages
     let (fwd_tx, mut fwd_rx) = mpsc::channel::<Arc<String>>(256);
+
+    // Subscribe to downstream messages from the upstream relay
+    let mut downstream_rx = hub.downstream_tx.subscribe();
 
     loop {
         tokio::select! {
@@ -212,6 +270,12 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
             }
             // Forwarded broadcast from rooms
             Some(data) = fwd_rx.recv() => {
+                if socket.send(Message::Text((*data).clone().into())).await.is_err() {
+                    break;
+                }
+            }
+            // Downstream messages from upstream relay (DMs, etc.)
+            Ok(data) = downstream_rx.recv() => {
                 if socket.send(Message::Text((*data).clone().into())).await.is_err() {
                     break;
                 }
@@ -263,6 +327,15 @@ async fn handle_message(
                             info.name = name.to_string();
                         }
                     }
+                    // Update the Hub's default name so it persists for this session
+                    *hub.default_display_name.write().await = name.to_string();
+                    // Save to disk so it persists across app restarts
+                    if let Some(dir) = hub.data_dir.as_ref() {
+                        let path = std::path::Path::new(dir).join("callsign");
+                        let _ = std::fs::write(&path, name);
+                    }
+                    // Forward to upstream relay so it updates our name on the Go server
+                    let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
                 }
             }
         }
@@ -355,6 +428,9 @@ async fn handle_message(
                     "message": msg,
                 }));
                 let _ = room.tx.send(Arc::new(broadcast));
+            } else {
+                // Room not found locally — forward to upstream (DM rooms, etc.)
+                let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
             }
         }
 
@@ -373,10 +449,9 @@ async fn handle_message(
         }
 
         _ => {
-            let _ = send_json(socket, "error", &serde_json::json!({
-                "message": format!("unknown type: {}", env.r#type)
-            }))
-            .await;
+            // Forward unrecognized message types to the passthrough channel
+            // so the upstream relay can handle them (DMs, voice, CoT, etc.)
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
         }
     }
 
@@ -417,7 +492,7 @@ async fn send_json(socket: &mut WebSocket, msg_type: &str, data: &serde_json::Va
     socket.send(Message::Text(json.into())).await.is_ok()
 }
 
-fn make_json(msg_type: &str, data: &serde_json::Value) -> String {
+pub fn make_json(msg_type: &str, data: &serde_json::Value) -> String {
     serde_json::to_string(&serde_json::json!({
         "type": msg_type,
         "data": data,
@@ -427,13 +502,17 @@ fn make_json(msg_type: &str, data: &serde_json::Value) -> String {
 
 // ---------- server startup ----------
 
-pub async fn run_server(port: u16, web_dir: Option<PathBuf>) -> Result<u16, String> {
-    let hub = Arc::new(Hub::new());
+pub async fn run_server(
+    port: u16,
+    web_dir: Option<PathBuf>,
+    data_dir: Option<String>,
+) -> Result<(u16, Arc<Hub>), String> {
+    let hub = Arc::new(Hub::new(data_dir));
 
     let app = Router::new()
         .route("/ws", get(ws_upgrade))
         .layer(CorsLayer::permissive())
-        .with_state(hub);
+        .with_state(hub.clone());
 
     // Add static file serving if web_dir is provided
     let app = if let Some(dir) = web_dir {
@@ -457,14 +536,9 @@ pub async fn run_server(port: u16, web_dir: Option<PathBuf>) -> Result<u16, Stri
     let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     tracing::info!("PeatLink mobile server listening on :{}", actual_port);
 
-    // Spawn the mesh state ticker
-    let hub_for_ticker = Arc::new(Hub::new()); // mesh state broadcasting
-    // Note: for the embedded version, mesh state is broadcast inline on join/leave
-    // The Go server's 5s ticker is replaced by event-driven broadcasting
-
     tokio::spawn(async move {
         axum::serve(listener, app).await.ok();
     });
 
-    Ok(actual_port)
+    Ok((actual_port, hub))
 }

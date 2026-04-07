@@ -20,10 +20,17 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- mDNS / NSD discovery -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Android 13+ requires this for NSD -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
         android:label="PeatLink"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.PeatLink"
         android:usesCleartextTraffic="true">
 

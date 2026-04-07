@@ -16,6 +16,8 @@
 - [x] Mobile web support (HTTPS, LAN access, touch PTT, long-press markers)
 - [x] BLE mesh transport (peat-btle) for mobile
 - [x] Persistent Ed25519 identity via peat-mesh DeviceKeypair
+- [x] Android app with embedded Rust server, upstream WS relay, and LAN auto-discovery
+- [x] Go server mDNS service registration (`_peatlink._tcp`) via zeroconf
 
 ---
 
@@ -181,7 +183,16 @@ and overlays — with no central server required.
 > Phases 1–5 are the core product. Phase 6 extends reach.
 
 ### Native Mobile Apps
-- [ ] Android app (Kotlin shell + embedded Rust server via peatlink-mobile)
+- [x] Android app (Kotlin shell + embedded Rust server via peatlink-mobile)
+  - [x] Cross-compilation for arm64-v8a / x86_64 via cargo-ndk
+  - [x] UniFFI Kotlin bindings for MobileNode interface
+  - [x] React UI bundled into APK assets, served from localhost WebView
+  - [x] Upstream WS relay to Go server with bidirectional message bridging and echo suppression
+  - [x] Passthrough/downstream channels for all message types (chat, voice, CoT, DMs, reactions, edits, pins)
+  - [x] mDNS/NSD auto-discovery of Go servers on LAN (`_peatlink._tcp`)
+  - [x] Settings persistence (callsign, identity, upstream URL) via SharedPreferences
+  - [x] Connection status bar with settings dialog
+  - [x] Sideload page for APK distribution
 - [ ] iOS app (Swift shell + embedded Rust server)
 - [ ] Background BLE mesh operation
 - [ ] Native push notifications

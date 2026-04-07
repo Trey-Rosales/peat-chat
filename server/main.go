@@ -6,9 +6,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/gorilla/websocket"
+	"github.com/grandcat/zeroconf"
 )
 
 var upgrader = websocket.Upgrader{
@@ -58,6 +61,34 @@ func main() {
 			</body></html>`)
 		})
 	}
+
+	// Register mDNS service so Android devices can auto-discover this server
+	mdnsServer, err := zeroconf.Register(
+		"PeatLink Server",  // instance name
+		"_peatlink._tcp",   // service type
+		"local.",           // domain
+		*port,              // port
+		[]string{"version=0.1.0"}, // TXT records
+		nil,                // interfaces (nil = all)
+	)
+	if err != nil {
+		log.Printf("WARNING: mDNS registration failed: %v", err)
+	} else {
+		log.Printf("mDNS: advertising _peatlink._tcp on port %d", *port)
+		defer mdnsServer.Shutdown()
+	}
+
+	// Handle graceful shutdown
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		log.Println("shutting down...")
+		if mdnsServer != nil {
+			mdnsServer.Shutdown()
+		}
+		os.Exit(0)
+	}()
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("PeatLink server listening on %s", addr)

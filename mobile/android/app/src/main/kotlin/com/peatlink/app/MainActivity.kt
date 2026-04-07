@@ -2,41 +2,42 @@ package com.peatlink.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
+import android.view.View
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
+import java.io.File
 
-// UniFFI-generated bindings (available after cross-compilation + bindgen)
-// import com.peatlink.ffi.MobileNode
-// import com.peatlink.ffi.BlePeerInfo
-// import com.peatlink.ffi.peatlink_version
+import com.peatlink.app.net.ServerDiscovery
 
 /**
  * PeatLink native Android shell.
- *
- * Lifecycle:
- * 1. Request BLE permissions
- * 2. Start embedded Rust server (peat-mesh + axum WS) via UniFFI
- * 3. Start BLE mesh via peat-btle
- * 4. Load React UI in WebView pointing at localhost:{port}
  */
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "PeatLink"
         private const val BLE_PERMISSION_REQUEST = 1001
-        private const val AUDIO_PERMISSION_REQUEST = 1002
 
         private val BLE_PERMISSIONS = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -53,18 +54,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private lateinit var rootLayout: FrameLayout
     private lateinit var webView: WebView
+    private lateinit var statusText: TextView
+    private lateinit var connBar: TextView
+    private lateinit var prefs: PeatLinkPrefs
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
-    // Uncomment once native .so is cross-compiled and UniFFI bindings generated:
-    // private var node: MobileNode? = null
+    private var node: Any? = null
     private var serverPort: Int = 0
+    private var discovery: ServerDiscovery? = null
+    private var serverStarted = false
+    private var connStatusJob: Job? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        prefs = PeatLinkPrefs(this)
+        prefs.initializeIfNeeded()
+
+        // Use a vertical LinearLayout: connBar on top, then webView/statusText below
+        val outerLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0b141a"))
+        }
+
+        // Connection status bar — tappable, non-overlapping
+        connBar = TextView(this).apply {
+            setBackgroundColor(Color.parseColor("#1b2b34"))
+            setTextColor(Color.parseColor("#8696a0"))
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(16, 10, 16, 10)
+            text = "Not connected to server"
+            visibility = View.GONE
+            setOnClickListener { showSettingsDialog() }
+        }
+        outerLayout.addView(connBar, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        // FrameLayout holds either statusText or webView
+        rootLayout = FrameLayout(this)
+
+        statusText = TextView(this).apply {
+            setTextColor(Color.parseColor("#8696a0"))
+            textSize = 16f
+            gravity = Gravity.CENTER
+            text = "Starting PeatLink..."
+            setPadding(48, 0, 48, 0)
+        }
+        rootLayout.addView(statusText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
         webView = WebView(this).apply {
+            visibility = View.GONE
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -78,16 +125,12 @@ class MainActivity : AppCompatActivity() {
                     request: android.webkit.WebResourceRequest
                 ): Boolean {
                     val host = request.url.host ?: ""
-                    // Only allow localhost navigation -- block external origins
-                    if (host == "localhost" || host == "127.0.0.1") {
-                        return false
-                    }
-                    return true // block non-localhost navigation
+                    return !(host == "localhost" || host == "127.0.0.1")
                 }
+
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest) {
-                    // Only grant permissions for localhost origins
                     val origin = request.origin.toString()
                     if (!origin.startsWith("http://localhost") && !origin.startsWith("https://localhost")) {
                         request.deny()
@@ -96,32 +139,30 @@ class MainActivity : AppCompatActivity() {
                     val granted = request.resources.filter { res ->
                         res == PermissionRequest.RESOURCE_AUDIO_CAPTURE
                     }.toTypedArray()
-                    if (granted.isNotEmpty()) {
-                        request.grant(granted)
-                    } else {
-                        request.deny()
-                    }
+                    if (granted.isNotEmpty()) request.grant(granted) else request.deny()
                 }
 
                 override fun onGeolocationPermissionsShowPrompt(
                     origin: String,
                     callback: GeolocationPermissions.Callback
                 ) {
-                    // Only grant geolocation for localhost
-                    if (origin.startsWith("http://localhost") || origin.startsWith("https://localhost")) {
-                        callback.invoke(origin, true, false)
-                    } else {
-                        callback.invoke(origin, false, false)
-                    }
+                    val local = origin.startsWith("http://localhost") || origin.startsWith("https://localhost")
+                    callback.invoke(origin, local, false)
                 }
             }
 
-            setBackgroundColor(android.graphics.Color.parseColor("#0b141a"))
+            setBackgroundColor(Color.parseColor("#0b141a"))
         }
+        rootLayout.addView(webView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
-        setContentView(webView)
+        outerLayout.addView(rootLayout, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
 
-        // Request permissions, then start
+        setContentView(outerLayout)
         requestPermissions()
     }
 
@@ -129,6 +170,9 @@ class MainActivity : AppCompatActivity() {
         val allPerms = BLE_PERMISSIONS.toMutableList()
         allPerms.add(Manifest.permission.RECORD_AUDIO)
         allPerms.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            allPerms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
 
         val missing = allPerms.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -148,63 +192,272 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == BLE_PERMISSION_REQUEST) {
-            val bleGranted = BLE_PERMISSIONS.all {
-                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-            }
-            val audioGranted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-
-            if (bleGranted) Log.i(TAG, "BLE permissions granted")
-            else Log.w(TAG, "Some BLE permissions denied — mesh networking may be limited")
-            if (audioGranted) Log.i(TAG, "Audio permission granted")
-            else Log.w(TAG, "Audio permission denied — voice channels will not work")
-
-            // Start regardless — text chat works without BLE or audio
+            // Start regardless of which permissions were granted
             onPermissionsGranted()
         }
     }
 
     private fun onPermissionsGranted() {
+        if (serverStarted) return
         scope.launch {
             startPeatLink()
         }
     }
 
     private suspend fun startPeatLink() {
-        withContext(Dispatchers.IO) {
-            // ===== START EMBEDDED RUST SERVER =====
-            // Uncomment once UniFFI bindings are available:
-            //
-            // try {
-            //     val dataDir = filesDir.absolutePath + "/peatlink"
-            //     node = MobileNode(dataDir, "Android User")
-            //     serverPort = node!!.start(null).toInt()
-            //     Log.i(TAG, "Rust server started on port $serverPort")
-            //
-            //     // Start BLE mesh
-            //     try {
-            //         node!!.startBle(
-            //             meshId = "peatlink-default",
-            //             callsign = "ANDROID-${node!!.nodeId().take(6)}",
-            //             sharedSecret = null  // or a pre-shared key
-            //         )
-            //         Log.i(TAG, "BLE mesh started")
-            //     } catch (e: Exception) {
-            //         Log.w(TAG, "BLE mesh failed to start: ${e.message}")
-            //     }
-            // } catch (e: Exception) {
-            //     Log.e(TAG, "Failed to start Rust server: ${e.message}")
-            //     serverPort = 8090  // fallback to external server
-            // }
+        updateStatus("Extracting web UI...")
 
-            // TEMPORARY: Use external server until cross-compilation is set up
-            serverPort = 8090
+        var startupError: String? = null
+
+        withContext(Dispatchers.IO) {
+            try {
+                // Step 1: Copy web assets
+                val webDir = copyWebAssetsToFilesDir()
+                Log.i(TAG, "Web UI extracted to $webDir")
+
+                withContext(Dispatchers.Main) { updateStatus("Loading native library...") }
+
+                // Step 2: Load native library and create MobileNode
+                // This is where UnsatisfiedLinkError would be thrown
+                val mobileNode = com.peatlink.ffi.MobileNode(
+                    filesDir.absolutePath + "/peatlink",
+                    prefs.callsign.ifEmpty { "Android User" }
+                )
+                node = mobileNode
+
+                withContext(Dispatchers.Main) { updateStatus("Starting server...") }
+
+                // Step 3: Start the embedded server
+                serverPort = mobileNode.start(webDir).toInt()
+                serverStarted = true
+                Log.i(TAG, "Rust server started on port $serverPort")
+
+                // Save identity
+                val nodeId = mobileNode.nodeId()
+                if (prefs.identity.isEmpty()) {
+                    prefs.identity = nodeId
+                }
+
+                // Apply callsign
+                if (prefs.callsign.isNotEmpty()) {
+                    mobileNode.setDisplayName(prefs.callsign)
+                }
+
+                // Step 4: Start BLE mesh (non-fatal if it fails)
+                try {
+                    mobileNode.startBle(
+                        meshId = "peatlink-default",
+                        callsign = prefs.callsign.ifEmpty { "Android" },
+                        sharedSecret = null
+                    )
+                    Log.i(TAG, "BLE mesh started")
+                } catch (e: Throwable) {
+                    Log.w(TAG, "BLE mesh failed: ${e.message}")
+                }
+
+                // Step 5: Connect upstream relay BEFORE WebView loads
+                // so the passthrough channel has a subscriber when the
+                // WebView sends set_name
+                val savedUrl = prefs.upstreamUrl
+                if (savedUrl.isNotEmpty() && prefs.autoConnect) {
+                    try {
+                        mobileNode.connectUpstream(savedUrl, "general")
+                        Log.i(TAG, "Upstream relay connected to $savedUrl")
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Upstream relay failed: ${e.message}")
+                    }
+                }
+
+            } catch (e: Throwable) {
+                // Catch EVERYTHING — including UnsatisfiedLinkError, NoClassDefFoundError, etc.
+                val msg = "${e.javaClass.simpleName}: ${e.message}"
+                Log.e(TAG, "Startup failed: $msg", e)
+                startupError = msg
+            }
         }
+
+        if (startupError != null) {
+            updateStatus("Startup failed:\n\n$startupError\n\nCheck logcat for details.")
+            return
+        }
+
+        // Success — show WebView
+        statusText.visibility = android.view.View.GONE
+        webView.visibility = android.view.View.VISIBLE
 
         val url = "http://localhost:$serverPort"
         Log.i(TAG, "Loading web UI from $url")
         webView.loadUrl(url)
+
+        prefs.markFirstLaunchDone()
+
+        // Start server discovery (non-fatal)
+        try {
+            startServerDiscovery()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Server discovery failed: ${e.message}")
+        }
+
+        // Show connection bar and start polling status
+        connBar.visibility = View.VISIBLE
+        startConnStatusPolling()
+    }
+
+    private fun updateStatus(msg: String) {
+        statusText.text = msg
+        statusText.visibility = android.view.View.VISIBLE
+    }
+
+    private fun startServerDiscovery() {
+        // Always run mDNS discovery to find/update servers
+        try {
+            discovery = ServerDiscovery(this)
+            discovery?.startDiscovery { host, port ->
+                val wsUrl = "ws://$host:$port/ws"
+                Log.i(TAG, "Discovered PeatLink server at $wsUrl")
+
+                val mobileNode = node as? com.peatlink.ffi.MobileNode ?: return@startDiscovery
+
+                // Save discovered URL
+                prefs.upstreamUrl = wsUrl
+
+                // Connect if not already connected
+                if (!mobileNode.isUpstreamConnected()) {
+                    connectUpstream(wsUrl)
+                    runOnUiThread {
+                        Toast.makeText(this, "Auto-discovered server at $host:$port", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "NSD discovery failed to start: ${e.message}")
+        }
+    }
+
+    private fun connectUpstream(wsUrl: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val mobileNode = node as? com.peatlink.ffi.MobileNode ?: return@launch
+                mobileNode.connectUpstream(wsUrl, "general")
+                Log.i(TAG, "Upstream relay connected to $wsUrl")
+            } catch (e: Throwable) {
+                Log.w(TAG, "Upstream relay failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun startConnStatusPolling() {
+        connStatusJob?.cancel()
+        connStatusJob = scope.launch {
+            while (true) {
+                val mobileNode = node as? com.peatlink.ffi.MobileNode
+                val connected = try {
+                    mobileNode?.isUpstreamConnected() == true
+                } catch (_: Throwable) { false }
+
+                val url = prefs.upstreamUrl
+                if (connected) {
+                    connBar.setBackgroundColor(Color.parseColor("#00a884"))
+                    connBar.setTextColor(Color.parseColor("#0b141a"))
+                    connBar.text = "\u2713 Connected to server"
+                } else if (url.isNotEmpty()) {
+                    connBar.setBackgroundColor(Color.parseColor("#e8a030"))
+                    connBar.setTextColor(Color.parseColor("#0b141a"))
+                    connBar.text = "\u23f3 Connecting to $url..."
+                } else {
+                    connBar.setBackgroundColor(Color.parseColor("#1b2b34"))
+                    connBar.setTextColor(Color.parseColor("#8696a0"))
+                    connBar.text = "\u2699 Tap to connect to a server"
+                }
+                delay(2000)
+            }
+        }
+    }
+
+    private fun showSettingsDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 16)
+        }
+
+        val callsignInput = EditText(this).apply {
+            hint = "Callsign"
+            setText(prefs.callsign)
+        }
+        layout.addView(callsignInput)
+
+        val upstreamInput = EditText(this).apply {
+            hint = "Upstream server URL (auto-discovered)"
+            setText(prefs.upstreamUrl)
+        }
+        layout.addView(upstreamInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("PeatLink Settings")
+            .setView(layout)
+            .setPositiveButton("Save") { _, _ ->
+                val newCallsign = callsignInput.text.toString().trim()
+                val newUpstream = upstreamInput.text.toString().trim()
+
+                if (newCallsign.isNotEmpty() && newCallsign != prefs.callsign) {
+                    prefs.callsign = newCallsign
+                    (node as? com.peatlink.ffi.MobileNode)?.setDisplayName(newCallsign)
+                    Toast.makeText(this, "Callsign updated", Toast.LENGTH_SHORT).show()
+                }
+
+                if (newUpstream != prefs.upstreamUrl) {
+                    prefs.upstreamUrl = newUpstream
+                    if (newUpstream.isNotEmpty()) {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                (node as? com.peatlink.ffi.MobileNode)?.disconnectUpstream()
+                            } catch (_: Throwable) {}
+                            connectUpstream(newUpstream)
+                        }
+                    }
+                }
+            }
+            .setNeutralButton("Reset Identity") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("Reset Identity?")
+                    .setMessage("This generates a new device ID and callsign.")
+                    .setPositiveButton("Reset") { _, _ ->
+                        prefs.resetAll()
+                        prefs.initializeIfNeeded()
+                        (node as? com.peatlink.ffi.MobileNode)?.regenerateIdentity()
+                        (node as? com.peatlink.ffi.MobileNode)?.setDisplayName(prefs.callsign)
+                        Toast.makeText(this, "Identity reset: ${prefs.callsign}", Toast.LENGTH_LONG).show()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun copyWebAssetsToFilesDir(): String {
+        val webDir = File(filesDir, "web")
+        if (webDir.exists()) webDir.deleteRecursively()
+        webDir.mkdirs()
+        copyAssetDir("web", webDir)
+        return webDir.absolutePath
+    }
+
+    private fun copyAssetDir(assetPath: String, destDir: File) {
+        val children = assets.list(assetPath)
+        if (children.isNullOrEmpty()) {
+            destDir.parentFile?.mkdirs()
+            assets.open(assetPath).use { input ->
+                destDir.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } else {
+            destDir.mkdirs()
+            for (child in children) {
+                copyAssetDir("$assetPath/$child", File(destDir, child))
+            }
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -220,11 +473,18 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        try { discovery?.stopDiscovery() } catch (_: Throwable) {}
         webView.destroy()
 
-        // Uncomment once UniFFI bindings available:
-        // scope.launch(Dispatchers.IO) {
-        //     try { node?.stop() } catch (_: Exception) {}
-        // }
+        val n = node as? com.peatlink.ffi.MobileNode
+        node = null
+        if (n != null) {
+            Thread {
+                try { n.stopBle() } catch (_: Throwable) {}
+                try { n.disconnectUpstream() } catch (_: Throwable) {}
+                try { n.stop() } catch (_: Throwable) {}
+                n.destroy()
+            }.start()
+        }
     }
 }

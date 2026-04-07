@@ -19,7 +19,7 @@ async fn main() {
         None
     };
 
-    let port = peatlink_mobile::ws_server::run_server(8090, web_path)
+    let (port, _hub) = peatlink_mobile::ws_server::run_server(8090, web_path, None)
         .await
         .expect("failed to start server");
 

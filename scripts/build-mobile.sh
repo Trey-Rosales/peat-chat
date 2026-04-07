@@ -44,7 +44,27 @@ build_android() {
         build -p peatlink-mobile --release --features bluetooth
 
     echo "=== Native libraries built ==="
+
+    # UniFFI Kotlin bindings expect the library named "uniffi_peatlink_mobile"
+    # but cargo produces "libpeatlink_mobile.so". Rename to match.
+    for abi_dir in "$JNILIBS"/*/; do
+        if [ -f "${abi_dir}libpeatlink_mobile.so" ]; then
+            mv "${abi_dir}libpeatlink_mobile.so" "${abi_dir}libuniffi_peatlink_mobile.so"
+        fi
+    done
+
     find "$JNILIBS" -name "*.so" -exec ls -lh {} \;
+
+    # Bundle web UI into Android assets
+    WEB_DIST="$ROOT_DIR/web/dist"
+    WEB_ASSETS="$ROOT_DIR/mobile/android/app/src/main/assets/web"
+    if [ -d "$WEB_DIST" ]; then
+        rm -rf "$WEB_ASSETS"
+        cp -r "$WEB_DIST" "$WEB_ASSETS"
+        echo "=== Web UI bundled into assets/web ==="
+    else
+        echo "WARNING: web/dist not found — run 'make web-build' first"
+    fi
 }
 
 build_ios() {

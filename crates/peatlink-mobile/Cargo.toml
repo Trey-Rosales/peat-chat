@@ -35,6 +35,8 @@ rand = "0.9"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 # BLE transport (optional, platform-specific)
 peat-btle = { version = "0.2", features = ["legacy-chat"], optional = true }
