@@ -1,17 +1,22 @@
 //! BLE ↔ WS bridge — connects peat-btle mesh messages to the local Hub
 //! so BLE peers' messages appear in the WebView and vice versa.
+//!
+//! Uses peat-btle's chat channel as a transport for all WS message types.
+//! Messages prefixed with `__ws:` carry full JSON envelopes (DMs, reactions,
+//! edits, pins, CoT, etc.). Unprefixed messages are plain text chat.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 
 use crate::upstream_relay::SeenIds;
 use crate::ws_server::{ChatMessage, Hub};
 
 #[cfg(feature = "bluetooth")]
 use crate::ble::{BleManager, BlePeerEvent};
+
+const WS_PREFIX: &str = "__ws:";
 
 /// Handle to shut down the bridge.
 pub struct BridgeHandle {
@@ -24,10 +29,6 @@ impl BridgeHandle {
     }
 }
 
-/// Start the BLE ↔ WS bridge. Spawns background tasks that:
-/// 1. Poll BLE chat messages and inject into the local Hub
-/// 2. Subscribe to Hub room broadcasts and send via BLE
-/// 3. Forward BLE peer events as mesh_state updates
 #[cfg(feature = "bluetooth")]
 pub async fn start_bridge(
     hub: Arc<Hub>,
@@ -40,13 +41,7 @@ pub async fn start_bridge(
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(bridge_loop(
-        hub,
-        ble_manager,
-        ble_event_rx,
-        room_name,
-        seen_ids,
-        self_node_id,
-        shutdown_rx,
+        hub, ble_manager, ble_event_rx, room_name, seen_ids, self_node_id, shutdown_rx,
     ));
 
     BridgeHandle { shutdown_tx }
@@ -62,78 +57,76 @@ async fn bridge_loop(
     self_node_id: String,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
-    // Subscribe to local Hub room broadcasts (for WS → BLE direction)
+    // Subscribe to local Hub room broadcasts (WS → BLE direction)
     let mut room_rx = hub.subscribe_room(&room_name).await;
 
-    // Track which BLE messages we've already processed (watermark by count)
+    // Also subscribe to downstream (catches DMs, reactions, etc. from upstream relay)
+    let mut downstream_rx = hub.downstream_tx.subscribe();
+
+    // Also subscribe to passthrough (catches user-initiated actions: start_dm, CoT, etc.)
+    let mut passthrough_rx = hub.passthrough_tx.subscribe();
+
+    // Track BLE message watermark
     let mut last_ble_msg_count: usize = 0;
 
-    // Poll interval for BLE chat messages
     let mut poll_interval = tokio::time::interval(Duration::from_secs(3));
-
-    // Peer state broadcast interval
     let mut peer_interval = tokio::time::interval(Duration::from_secs(5));
 
     tracing::info!("BLE↔WS bridge started for room '{}'", room_name);
 
     loop {
         tokio::select! {
-            // Poll BLE chat messages → inject into Hub
+            // === BLE → WS: Poll BLE messages and inject into Hub ===
             _ = poll_interval.tick() => {
                 let messages = ble_manager.chat_messages().await;
                 if messages.len() > last_ble_msg_count {
                     let new_msgs = &messages[last_ble_msg_count..];
-                    for (node_id, timestamp, sender_name, content, _reply_node, _reply_ts) in new_msgs {
-                        // Generate a deterministic message ID from BLE fields
-                        let msg_id = format!("ble-{}-{}", node_id, timestamp);
-
-                        // Check dedup
-                        let already_seen = {
-                            let mut ids = seen_ids.write().await;
-                            if ids.contains(&msg_id) {
-                                true
-                            } else {
-                                ids.insert(msg_id.clone());
-                                false
-                            }
-                        };
-
-                        if !already_seen {
-                            let chat_msg = ChatMessage {
-                                id: msg_id,
-                                sender: format!("ble-{}", node_id),
-                                sender_name: sender_name.clone(),
-                                timestamp: *timestamp,
-                                content: content.clone(),
-                                reply_to: None,
+                    for (_node_id, timestamp, sender_name, content, _reply_node, _reply_ts) in new_msgs {
+                        if content.starts_with(WS_PREFIX) {
+                            // Full WS envelope — inject into Hub or forward to WebView
+                            let json = &content[WS_PREFIX.len()..];
+                            handle_ble_ws_message(json, &hub, &room_name, &seen_ids).await;
+                        } else {
+                            // Plain text chat — create ChatMessage and inject into Hub
+                            let msg_id = format!("ble-{}-{}", _node_id, timestamp);
+                            let already_seen = {
+                                let mut ids = seen_ids.write().await;
+                                if ids.contains(&msg_id) { true }
+                                else { ids.insert(msg_id.clone()); false }
                             };
-
-                            tracing::info!(
-                                "BLE→WS: {} says '{}'",
-                                sender_name,
-                                &content[..content.len().min(50)]
-                            );
-                            hub.inject_external_message(&room_name, chat_msg).await;
+                            if !already_seen {
+                                let chat_msg = ChatMessage {
+                                    id: msg_id,
+                                    sender: format!("ble-{}", _node_id),
+                                    sender_name: sender_name.clone(),
+                                    timestamp: *timestamp,
+                                    content: content.clone(),
+                                    reply_to: None,
+                                };
+                                hub.inject_external_message(&room_name, chat_msg).await;
+                            }
                         }
                     }
                     last_ble_msg_count = messages.len();
                 }
             }
 
-            // Hub room broadcast → send via BLE
+            // === WS → BLE: Hub room broadcasts (chat messages in "general") ===
             Ok(broadcast) = room_rx.recv() => {
-                if let Some((sender, content, timestamp)) = extract_chat_for_ble(&broadcast, &seen_ids).await {
-                    tracing::info!(
-                        "WS→BLE: {} says '{}'",
-                        sender,
-                        &content[..content.len().min(50)]
-                    );
-                    // send_chat returns the encrypted doc to broadcast; the tick loop handles actual transmission
-                    let _ = ble_manager.send_chat(&sender, &content, timestamp).await;
-                }
+                forward_ws_to_ble(&broadcast, &ble_manager, &seen_ids, &self_node_id).await;
             }
 
-            // BLE peer events → peer_update in Hub
+            // === WS → BLE: Downstream messages (DMs, peer_updates from upstream) ===
+            Ok(downstream) = downstream_rx.recv() => {
+                forward_ws_to_ble(&downstream, &ble_manager, &seen_ids, &self_node_id).await;
+            }
+
+            // === WS → BLE: Passthrough messages (user actions: start_dm, CoT, voice, etc.) ===
+            Ok(passthrough) = passthrough_rx.recv() => {
+                forward_ws_to_ble(&passthrough, &ble_manager, &seen_ids, &self_node_id).await;
+            }
+
+            // === BLE peer events → peer_update in Hub ===
             Some(event) = ble_event_rx.recv() => {
                 match &event {
                     BlePeerEvent::PeerConnected(info) => {
@@ -147,12 +140,11 @@ async fn bridge_loop(
                 }
             }
 
-            // Periodic BLE peer state → mesh_state
+            // === Periodic BLE peer state → mesh_state ===
             _ = peer_interval.tick() => {
                 broadcast_ble_mesh_state(&hub, &room_name, &ble_manager, &self_node_id).await;
             }
 
-            // Shutdown
             _ = shutdown_rx.recv() => {
                 tracing::info!("BLE↔WS bridge shutting down");
                 return;
@@ -161,37 +153,132 @@ async fn bridge_loop(
     }
 }
 
-/// Extract chat message fields from a Hub broadcast JSON for sending via BLE.
-/// Returns (sender_name, content, timestamp) if it's a chat message we should forward.
-async fn extract_chat_for_ble(
-    broadcast: &str,
+/// Handle a WS JSON envelope received via BLE.
+/// Parse it and route to the appropriate destination (Hub room or downstream).
+async fn handle_ble_ws_message(
+    json: &str,
+    hub: &Arc<Hub>,
+    room_name: &str,
     seen_ids: &SeenIds,
-) -> Option<(String, String, u64)> {
-    let envelope: serde_json::Value = serde_json::from_str(broadcast).ok()?;
-    let msg_type = envelope.get("type")?.as_str()?;
+) {
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(json) else {
+        return;
+    };
 
-    if msg_type != "message" {
-        return None;
+    let msg_type = envelope
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match msg_type {
+        // Chat messages — dedup and inject into the correct room
+        "message" => {
+            if let Some(data) = envelope.get("data") {
+                if let Some(msg_val) = data.get("message") {
+                    let msg_id = msg_val
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if msg_id.is_empty() {
+                        return;
+                    }
+
+                    let mut ids = seen_ids.write().await;
+                    if ids.contains(&msg_id) {
+                        return;
+                    }
+                    ids.insert(msg_id);
+                    drop(ids);
+
+                    // Check if room exists locally
+                    let room_id = data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if hub.find_room_by_hex(room_id).await.is_some() {
+                        if let Ok(chat_msg) =
+                            serde_json::from_value::<ChatMessage>(msg_val.clone())
+                        {
+                            hub.inject_external_message(room_name, chat_msg).await;
+                        }
+                    } else {
+                        // DM or other room — send via downstream
+                        let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
+                    }
+                }
+            }
+        }
+
+        // DM, voice, CoT, reactions, edits, pins — forward to downstream for WebView
+        "dm_opened" | "room_joined" | "room_history" | "peer_update" | "mesh_state"
+        | "message_edited" | "message_deleted" | "reaction_updated"
+        | "message_pinned" | "message_unpinned"
+        | "voice_state" | "voice_channel_created" | "voice_peer_joined"
+        | "voice_peer_left" | "voice_offer_relay" | "voice_answer_relay"
+        | "voice_ice_relay" | "voice_speaking_broadcast"
+        | "cot_state" | "marker_created" | "marker_deleted" => {
+            let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
+        }
+
+        // User-initiated actions from remote BLE peer — forward to passthrough
+        // so the upstream relay sends them to the Go server
+        "send_message" | "start_dm" | "join_dm" | "join_room" | "set_name"
+        | "edit_message" | "delete_message" | "add_reaction" | "remove_reaction"
+        | "pin_message" | "unpin_message"
+        | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer" | "voice_ice"
+        | "cot_position" | "create_marker" | "delete_marker" => {
+            let _ = hub.passthrough_tx.send(Arc::new(json.to_string()));
+        }
+
+        _ => {
+            // Unknown type — forward via downstream as best effort
+            let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
+        }
+    }
+}
+
+/// Forward a WS message to BLE mesh.
+/// Serializes the full JSON envelope with `__ws:` prefix via send_chat().
+#[cfg(feature = "bluetooth")]
+async fn forward_ws_to_ble(
+    broadcast: &str,
+    ble_manager: &Arc<BleManager>,
+    seen_ids: &SeenIds,
+    self_node_id: &str,
+) {
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(broadcast) else {
+        return;
+    };
+
+    let msg_type = envelope
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Skip types that shouldn't be forwarded to BLE peers
+    // (mesh_state and peer_update are generated locally for BLE peers)
+    match msg_type {
+        "mesh_state" | "ble_mesh_state" | "identity" => return,
+        _ => {}
     }
 
-    let data = envelope.get("data")?;
-    let msg = data.get("message")?;
-
-    let msg_id = msg.get("id")?.as_str()?.to_string();
-
-    // Dedup — don't send back messages that came from BLE
-    {
-        let ids = seen_ids.read().await;
-        if ids.contains(&msg_id) {
-            return None;
+    // For chat messages, check dedup
+    if msg_type == "message" {
+        if let Some(data) = envelope.get("data") {
+            if let Some(msg) = data.get("message") {
+                let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if !msg_id.is_empty() {
+                    let ids = seen_ids.read().await;
+                    if ids.contains(msg_id) {
+                        return; // Already seen (came from BLE or already forwarded)
+                    }
+                }
+            }
         }
     }
 
-    let sender_name = msg.get("sender_name")?.as_str()?.to_string();
-    let content = msg.get("content")?.as_str()?.to_string();
-    let timestamp = msg.get("timestamp")?.as_u64()?;
-
-    Some((sender_name, content, timestamp))
+    // Send the full JSON as a chat message with __ws: prefix
+    let payload = format!("{}{}", WS_PREFIX, broadcast);
+    let now = crate::ws_server::now_ms();
+    let _ = ble_manager.send_chat(self_node_id, &payload, now).await;
 }
 
 /// Broadcast a peer_update for a BLE peer event.
@@ -218,7 +305,6 @@ async fn broadcast_ble_peer_update(
         }),
     );
 
-    // Broadcast to room + downstream (so WebView sees it)
     let rooms = hub.rooms.read().await;
     for (id, room_arc) in rooms.iter() {
         if crate::ws_server::chat_id_hex(id) == room_id {
@@ -266,7 +352,6 @@ async fn broadcast_ble_mesh_state(
         return;
     }
 
-    // Send via downstream channel so WebView gets it directly
     let msg = crate::ws_server::make_json(
         "ble_mesh_state",
         &serde_json::json!({
