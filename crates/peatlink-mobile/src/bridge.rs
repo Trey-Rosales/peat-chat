@@ -379,19 +379,20 @@ async fn sync_room_history_to_ble(
         return;
     }
 
-    tracing::info!("Syncing {} messages to BLE peer", messages.len());
+    tracing::info!("Syncing {} messages to BLE peer (one at a time)", messages.len());
 
-    // Send room_history envelope so the receiving peer's bridge injects it
-    let history_msg = serde_json::json!({
-        "type": "room_history",
-        "data": {
-            "room_id": room_id,
-            "messages": messages,
-        }
-    });
-
-    let payload = format!("{}{}", WS_PREFIX, history_msg);
-    let _ = ble_send_tx.send(payload.into_bytes());
+    // Send each message individually so each fits in a single GATT write
+    for msg in &messages {
+        let msg_envelope = serde_json::json!({
+            "type": "message",
+            "data": {
+                "room_id": room_id,
+                "message": msg,
+            }
+        });
+        let payload = format!("{}{}", WS_PREFIX, msg_envelope);
+        let _ = ble_send_tx.send(payload.into_bytes());
+    }
 }
 
 /// Broadcast BLE peers as mesh_state with connected_via field.
