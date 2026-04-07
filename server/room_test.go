@@ -382,25 +382,12 @@ func TestRoom_GetCotContacts(t *testing.T) {
 	c1 := newTestClient(hub, "Alice")
 	c2 := newTestClient(hub, "Bob")
 
-	// Set positions on both clients
-	c1.mu.Lock()
-	c1.cotLat = 38.8977
-	c1.cotLon = -77.0365
-	c1.cotCe = 10.0
-	c1.cotType = "a-f-G-U-C"
-	c1.cotTime = time.Now()
-	c1.mu.Unlock()
-
-	c2.mu.Lock()
-	c2.cotLat = 40.7128
-	c2.cotLon = -74.0060
-	c2.cotCe = 5.0
-	c2.cotType = "a-f-G-U-C"
-	c2.cotTime = time.Now()
-	c2.mu.Unlock()
-
 	room.AddMember(c1)
 	room.AddMember(c2)
+
+	// Set room-scoped positions
+	room.SetCotPosition(c1, &CotPosition{Lat: 38.8977, Lon: -77.0365, Ce: 10.0, Time: time.Now()})
+	room.SetCotPosition(c2, &CotPosition{Lat: 40.7128, Lon: -74.0060, Ce: 5.0, Time: time.Now()})
 
 	// Exclude c1 -- should only get c2's contact
 	contacts := room.GetCotContacts(c1)
@@ -433,17 +420,11 @@ func TestRoom_GetCotContacts_IncludesNoPosition(t *testing.T) {
 	c1 := newTestClient(hub, "Alice")
 	c2 := newTestClient(hub, "Bob")
 
-	// Only c1 has position set; c2 has no cotTime (zero value)
-	c1.mu.Lock()
-	c1.cotLat = 38.8977
-	c1.cotLon = -77.0365
-	c1.cotCe = 10.0
-	c1.cotType = "a-f-G-U-C"
-	c1.cotTime = time.Now()
-	c1.mu.Unlock()
-
 	room.AddMember(c1)
 	room.AddMember(c2)
+
+	// Only c1 has a room-scoped position; c2 does not
+	room.SetCotPosition(c1, &CotPosition{Lat: 38.8977, Lon: -77.0365, Ce: 10.0, Time: time.Now()})
 
 	// Exclude c1 -- c2 has no GPS but should still appear as a contact
 	contacts := room.GetCotContacts(c1)

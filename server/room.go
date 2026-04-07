@@ -2,6 +2,7 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +27,15 @@ func NewVoiceChannel(name string) *VoiceChannel {
 	}
 }
 
+// CotPosition holds a client's GPS position, scoped to a specific room.
+type CotPosition struct {
+	Lat  float64
+	Lon  float64
+	Hae  float64
+	Ce   float64
+	Time time.Time
+}
+
 type Room struct {
 	ID            [32]byte
 	Name          string
@@ -33,6 +43,7 @@ type Room struct {
 	Members       map[*Client]bool
 	VoiceChannels map[string]*VoiceChannel
 	Markers       map[string]*CotMarker
+	CotPositions  map[*Client]*CotPosition
 	mu            sync.RWMutex
 }
 
@@ -45,6 +56,7 @@ func NewRoom(name string) *Room {
 		Members:       make(map[*Client]bool),
 		VoiceChannels: map[string]*VoiceChannel{defaultVC.ID: defaultVC},
 		Markers:       make(map[string]*CotMarker),
+		CotPositions:  make(map[*Client]*CotPosition),
 	}
 }
 
@@ -141,6 +153,18 @@ func (r *Room) GetVoiceChannel(id string) *VoiceChannel {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.VoiceChannels[id]
+}
+
+func (r *Room) VoiceChannelHasMember(channelID string, client *Client) bool {
+	r.mu.RLock()
+	vc, ok := r.VoiceChannels[channelID]
+	r.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	vc.mu.RLock()
+	defer vc.mu.RUnlock()
+	return vc.Members[client]
 }
 
 func (r *Room) JoinVoiceChannel(channelID string, client *Client) bool {
@@ -255,7 +279,20 @@ func (r *Room) GetVoiceChannelMembers(channelID string) []*Client {
 
 // --- CoT methods ---
 
+func (r *Room) SetCotPosition(client *Client, pos *CotPosition) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.CotPositions[client] = pos
+}
+
+func (r *Room) ClearCotPosition(client *Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.CotPositions, client)
+}
+
 // GetCotContacts returns CoT position data for all members except the excluded client.
+// Positions are room-scoped -- only positions shared in THIS room are included.
 func (r *Room) GetCotContacts(exclude *Client) []CotContact {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -264,7 +301,8 @@ func (r *Room) GetCotContacts(exclude *Client) []CotContact {
 		if c == exclude {
 			continue
 		}
-		if ct := c.toCotContact(); ct != nil {
+		pos := r.CotPositions[c] // room-scoped position (may be nil)
+		if ct := c.toCotContact(pos); ct != nil {
 			contacts = append(contacts, *ct)
 		}
 	}

@@ -31,13 +31,8 @@ type Client struct {
 	lastPingSent time.Time
 	latencyMs    int64
 
-	// CoT position
-	cotLat  float64
-	cotLon  float64
-	cotHae  float64
-	cotCe   float64
+	// CoT default type
 	cotType string
-	cotTime time.Time
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, name string) *Client {
@@ -58,33 +53,30 @@ func NewClient(hub *Hub, conn *websocket.Conn, name string) *Client {
 	}
 }
 
-func (c *Client) toCotContact() *CotContact {
+// toCotContact builds a CotContact from the client identity and an optional
+// room-scoped position. Position is nil if the client hasn't shared location
+// in that specific room.
+func (c *Client) toCotContact(pos *CotPosition) *CotContact {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.cotTime.IsZero() {
-		// No position yet -- still return the contact so the mesh knows about them
-		return &CotContact{
-			UID:      c.identity.ID,
-			Callsign: c.name,
-			ShortID:  c.identity.ShortID,
-			CotType:  c.cotType,
-			Time:     uint64(c.connectedAt.UnixMilli()),
-			Stale:    uint64(c.connectedAt.UnixMilli()) + 86400000,
-		}
-	}
-	t := uint64(c.cotTime.UnixMilli())
-	return &CotContact{
+	contact := &CotContact{
 		UID:      c.identity.ID,
 		Callsign: c.name,
 		ShortID:  c.identity.ShortID,
 		CotType:  c.cotType,
-		Lat:      c.cotLat,
-		Lon:      c.cotLon,
-		Hae:      c.cotHae,
-		Ce:       c.cotCe,
-		Time:     t,
-		Stale:    t + 30000,
+		Time:     uint64(c.connectedAt.UnixMilli()),
+		Stale:    uint64(c.connectedAt.UnixMilli()) + 86400000,
 	}
+	if pos != nil {
+		t := uint64(pos.Time.UnixMilli())
+		contact.Lat = pos.Lat
+		contact.Lon = pos.Lon
+		contact.Hae = pos.Hae
+		contact.Ce = pos.Ce
+		contact.Time = t
+		contact.Stale = t + 30000
+	}
+	return contact
 }
 
 func (c *Client) toMeshPeer() MeshPeerData {
@@ -198,21 +190,22 @@ func (c *Client) readPump() {
 		case "cot_position":
 			var d CotPositionData
 			if json.Unmarshal(msg.Data, &d) == nil {
-				// Validate room membership
 				room := c.hub.getRoomByHex(d.RoomID)
 				if room == nil || !room.HasMember(c) {
 					continue
 				}
-				c.mu.Lock()
-				c.cotLat = d.Lat
-				c.cotLon = d.Lon
-				c.cotHae = d.Hae
-				c.cotCe = d.Ce
 				if d.CotType != "" {
+					c.mu.Lock()
 					c.cotType = d.CotType
+					c.mu.Unlock()
 				}
-				c.cotTime = time.Now()
-				c.mu.Unlock()
+				room.SetCotPosition(c, &CotPosition{
+					Lat:  d.Lat,
+					Lon:  d.Lon,
+					Hae:  d.Hae,
+					Ce:   d.Ce,
+					Time: time.Now(),
+				})
 			}
 
 		case "create_marker":

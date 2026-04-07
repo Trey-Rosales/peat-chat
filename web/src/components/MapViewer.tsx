@@ -153,8 +153,11 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         }
       } else {
         const el = buildContactMarkerEl(contact.callsign, isStale)
+        const uid = contact.uid
         el.addEventListener('click', () => {
-          setSelectedContact(contact)
+          // Look up the latest contact data by UID to avoid stale closure
+          const latest = contacts.find((c) => c.uid === uid) || contact
+          setSelectedContact(latest)
           setSelectedMarker(null)
           setMarkerForm(null)
         })

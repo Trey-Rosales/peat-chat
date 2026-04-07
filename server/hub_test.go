@@ -293,8 +293,18 @@ func TestHub_VoiceSignalingRelay(t *testing.T) {
 	room := hub.getOrCreateRoom("general")
 	roomHex := ChatIdHex(room.ID)
 
+	// Get actual voice channel ID and join both clients
+	var vcID string
+	for id := range room.VoiceChannels {
+		vcID = id
+	}
+	hub.JoinVoice(c1, roomHex, vcID)
+	hub.JoinVoice(c2, roomHex, vcID)
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
 	// Relay offer from Alice to Bob
-	hub.RelayVoiceOffer(c1, roomHex, "vc1", c2.identity.ID, `{"type":"offer","sdp":"test-sdp"}`)
+	hub.RelayVoiceOffer(c1, roomHex, vcID, c2.identity.ID, `{"type":"offer","sdp":"test-sdp"}`)
 
 	bobMessages := drainClientSend(c2, 3)
 	var gotOffer bool
@@ -316,7 +326,7 @@ func TestHub_VoiceSignalingRelay(t *testing.T) {
 	}
 
 	// Relay answer from Bob to Alice
-	hub.RelayVoiceAnswer(c2, roomHex, "vc1", c1.identity.ID, `{"type":"answer","sdp":"test-answer"}`)
+	hub.RelayVoiceAnswer(c2, roomHex, vcID, c1.identity.ID, `{"type":"answer","sdp":"test-answer"}`)
 
 	aliceMessages := drainClientSend(c1, 3)
 	var gotAnswer bool
@@ -335,7 +345,7 @@ func TestHub_VoiceSignalingRelay(t *testing.T) {
 	}
 
 	// Relay ICE
-	hub.RelayVoiceIce(c1, roomHex, "vc1", c2.identity.ID, `{"candidate":"test-ice"}`)
+	hub.RelayVoiceIce(c1, roomHex, vcID, c2.identity.ID, `{"candidate":"test-ice"}`)
 
 	bobMessages = drainClientSend(c2, 3)
 	var gotIce bool
@@ -453,15 +463,6 @@ func TestHub_CotBroadcast(t *testing.T) {
 	hub.register <- c2
 	time.Sleep(50 * time.Millisecond)
 
-	// Set position on c1 before joining
-	c1.mu.Lock()
-	c1.cotLat = 38.8977
-	c1.cotLon = -77.0365
-	c1.cotCe = 10.0
-	c1.cotType = "a-f-G-U-C"
-	c1.cotTime = time.Now()
-	c1.mu.Unlock()
-
 	hub.JoinRoom(c1, "general")
 	hub.JoinRoom(c2, "general")
 
@@ -469,17 +470,12 @@ func TestHub_CotBroadcast(t *testing.T) {
 	drainClientSend(c1, 20)
 	drainClientSend(c2, 20)
 
-	// Set position on c2 as well
-	c2.mu.Lock()
-	c2.cotLat = 40.7128
-	c2.cotLon = -74.0060
-	c2.cotCe = 5.0
-	c2.cotType = "a-f-G-U-C"
-	c2.cotTime = time.Now()
-	c2.mu.Unlock()
+	// Set room-scoped positions
+	room := hub.getOrCreateRoom("general")
+	room.SetCotPosition(c1, &CotPosition{Lat: 38.8977, Lon: -77.0365, Ce: 10.0, Time: time.Now()})
+	room.SetCotPosition(c2, &CotPosition{Lat: 40.7128, Lon: -74.0060, Ce: 5.0, Time: time.Now()})
 
 	// Manually trigger a CoT state broadcast
-	room := hub.getOrCreateRoom("general")
 	hub.broadcastCotState(room)
 
 	// c1 should receive cot_state with c2's contact

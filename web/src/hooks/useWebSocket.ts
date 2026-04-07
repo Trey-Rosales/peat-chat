@@ -45,11 +45,15 @@ export function useWebSocket(
 
     ws.onclose = () => {
       store.getState().setConnected(false)
-      // Reset transient state on disconnect
+      // Reset all transient state on disconnect
       store.setState({
         meshPeers: {},
         cotContacts: {},
+        cotMarkers: {},
         voiceState: {},
+        activeVoice: null,
+        localSpeaking: false,
+        selfPosition: null,
       })
       wsRef.current = null
       reconnectTimer.current = setTimeout(connect, 2000)

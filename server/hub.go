@@ -296,6 +296,10 @@ func (h *Hub) LeaveVoice(client *Client, roomHexID, channelID string) {
 	if room == nil {
 		return
 	}
+	// Only leave if actually a member of this voice channel
+	if !room.VoiceChannelHasMember(channelID, client) {
+		return
+	}
 	room.LeaveVoiceChannel(channelID, client)
 	roomID := ChatIdHex(room.ID)
 
@@ -317,15 +321,14 @@ func (h *Hub) LeaveVoice(client *Client, roomHexID, channelID string) {
 }
 
 func (h *Hub) RelayVoiceOffer(client *Client, roomHexID, channelID, targetID, sdp string) {
-	// Verify sender is in the room
 	room := h.getRoomByHex(roomHexID)
-	if room == nil || !room.HasMember(client) {
+	if room == nil || !room.HasMember(client) || !room.VoiceChannelHasMember(channelID, client) {
 		return
 	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil || !room.HasMember(target) {
+	if target == nil || !room.VoiceChannelHasMember(channelID, target) {
 		return
 	}
 	target.sendJSON("voice_offer_relay", VoiceOfferRelayData{
@@ -338,13 +341,13 @@ func (h *Hub) RelayVoiceOffer(client *Client, roomHexID, channelID, targetID, sd
 
 func (h *Hub) RelayVoiceAnswer(client *Client, roomHexID, channelID, targetID, sdp string) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil || !room.HasMember(client) {
+	if room == nil || !room.HasMember(client) || !room.VoiceChannelHasMember(channelID, client) {
 		return
 	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil || !room.HasMember(target) {
+	if target == nil || !room.VoiceChannelHasMember(channelID, target) {
 		return
 	}
 	target.sendJSON("voice_answer_relay", VoiceAnswerRelayData{
@@ -357,13 +360,13 @@ func (h *Hub) RelayVoiceAnswer(client *Client, roomHexID, channelID, targetID, s
 
 func (h *Hub) RelayVoiceIce(client *Client, roomHexID, channelID, targetID, candidate string) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil || !room.HasMember(client) {
+	if room == nil || !room.HasMember(client) || !room.VoiceChannelHasMember(channelID, client) {
 		return
 	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil || !room.HasMember(target) {
+	if target == nil || !room.VoiceChannelHasMember(channelID, target) {
 		return
 	}
 	target.sendJSON("voice_ice_relay", VoiceIceRelayData{
@@ -376,7 +379,7 @@ func (h *Hub) RelayVoiceIce(client *Client, roomHexID, channelID, targetID, cand
 
 func (h *Hub) BroadcastVoiceSpeaking(client *Client, roomHexID, channelID string, speaking bool) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil || !room.HasMember(client) {
+	if room == nil || !room.HasMember(client) || !room.VoiceChannelHasMember(channelID, client) {
 		return
 	}
 	room.SetSpeaking(channelID, client, speaking)
