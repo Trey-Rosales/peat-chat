@@ -29,6 +29,10 @@ class PeatBleService(
         val PEAT_SYNC_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b0003")
         private const val TICK_INTERVAL_MS = 3000L
         private const val TARGET_MTU = 512
+
+        // Manufacturer data for device discovery (more reliable than 128-bit UUID filtering)
+        private const val MFG_COMPANY_ID = 0xFFFF // reserved for testing
+        private val MFG_MAGIC = byteArrayOf(0x50, 0x45, 0x41, 0x54) // "PEAT"
     }
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -46,20 +50,24 @@ class PeatBleService(
     fun start() {
         if (running) return
         val adapter = bluetoothAdapter ?: run {
-            Log.e(TAG, "Bluetooth not available")
+            Log.e(TAG, "Bluetooth adapter not available on this device")
             return
         }
         if (!adapter.isEnabled) {
-            Log.w(TAG, "Bluetooth not enabled")
+            Log.e(TAG, "Bluetooth is OFF — enable it in system settings")
             return
         }
 
         running = true
+        Log.i(TAG, "Starting BLE service...")
+        Log.i(TAG, "  Adapter: ${adapter.name}, address: ${adapter.address}")
+        Log.i(TAG, "  LE supported: ${adapter.isMultipleAdvertisementSupported}")
+
         startGattServer()
         startAdvertising()
         startScanning()
         startTickLoop()
-        Log.i(TAG, "BLE service started")
+        Log.i(TAG, "BLE service started successfully")
     }
 
     fun stop() {
@@ -111,13 +119,18 @@ class PeatBleService(
             val rssi = result.rssi.toByte()
             val now = System.currentTimeMillis().toULong()
 
-            // Check if this is a Peat device by looking for our service UUID
-            val serviceUuids = record.serviceUuids
-            val isPeatDevice = serviceUuids?.any { it.uuid == PEAT_SERVICE_UUID } == true
+            // Check manufacturer data first (most reliable across Android OEMs)
+            val mfgData = record.getManufacturerSpecificData(MFG_COMPANY_ID)
+            val hasMfgMagic = mfgData != null && mfgData.size >= 4 &&
+                mfgData[0] == MFG_MAGIC[0] && mfgData[1] == MFG_MAGIC[1] &&
+                mfgData[2] == MFG_MAGIC[2] && mfgData[3] == MFG_MAGIC[3]
 
-            if (!isPeatDevice) return // Not a Peat device, skip
+            // Fallback: check service UUID
+            val hasServiceUuid = record.serviceUuids?.any { it.uuid == PEAT_SERVICE_UUID } == true
 
-            Log.d(TAG, "Discovered Peat device: $address (${name ?: "unnamed"}) rssi=$rssi")
+            if (!hasMfgMagic && !hasServiceUuid) return // Not a Peat device
+
+            Log.i(TAG, "Discovered Peat device: $address (${name ?: "unnamed"}) rssi=$rssi mfg=$hasMfgMagic uuid=$hasServiceUuid")
 
             // Extract mesh_id from service data if available
             val serviceData = record.getServiceData(ParcelUuid(PEAT_SERVICE_UUID))
@@ -127,12 +140,13 @@ class PeatBleService(
 
             // Auto-connect if not already connected (either direction)
             if (!connectedGattClients.containsKey(address) && !gattServerDevices.contains(address)) {
+                Log.i(TAG, "Auto-connecting to $address")
                 connectToDevice(device)
             }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE scan failed: error $errorCode")
+            Log.e(TAG, "BLE scan failed: error $errorCode (1=already started, 2=app registration failed, 3=internal error, 4=feature unsupported)")
         }
     }
 
@@ -152,19 +166,20 @@ class PeatBleService(
             .setTimeout(0)
             .build()
 
-        // Service UUID in main advertising packet (18 bytes for 128-bit UUID)
+        // Main advertising packet: manufacturer data (6 bytes) — fits easily in 31 bytes
         val advData = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(PEAT_SERVICE_UUID))
-            .setIncludeDeviceName(false) // Name goes in scan response to stay under 31 bytes
+            .addManufacturerData(MFG_COMPANY_ID, MFG_MAGIC)
+            .setIncludeDeviceName(false)
             .build()
 
-        // Device name in scan response (separate 31-byte packet)
+        // Scan response: service UUID + device name
         val scanResponse = AdvertiseData.Builder()
+            .addServiceUuid(ParcelUuid(PEAT_SERVICE_UUID))
             .setIncludeDeviceName(true)
             .build()
 
         advertiser?.startAdvertising(settings, advData, scanResponse, advertiseCallback)
-        Log.i(TAG, "BLE advertising started (UUID in adv, name in scan response)")
+        Log.i(TAG, "BLE advertising started (mfg data in adv, UUID+name in scan response)")
     }
 
     private fun stopAdvertising() {
