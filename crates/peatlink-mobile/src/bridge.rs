@@ -13,6 +13,27 @@ use tokio::sync::mpsc;
 use crate::upstream_relay::SeenIds;
 use crate::ws_server::{ChatMessage, Hub};
 
+/// Filter out our own node from incoming mesh/ble_mesh_state so we don't see ourselves.
+fn filter_self_from_mesh(json: &str, self_node_id: &str) -> Option<String> {
+    let mut envelope: serde_json::Value = serde_json::from_str(json).ok()?;
+    let msg_type = envelope.get("type")?.as_str()?;
+
+    if msg_type != "ble_mesh_state" && msg_type != "mesh_state" {
+        return None; // not a mesh message, no filtering needed
+    }
+
+    let data = envelope.get_mut("data")?;
+    if let Some(peers) = data.get_mut("peers").and_then(|v| v.as_array_mut()) {
+        let self_id = self_node_id;
+        peers.retain(|p| {
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            id != self_id
+        });
+    }
+
+    Some(serde_json::to_string(&envelope).ok()?)
+}
+
 /// Fast content hash for dedup (not cryptographic, just loop prevention).
 fn fxhash(s: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
@@ -109,8 +130,7 @@ async fn bridge_loop(
                 if let Ok(text) = String::from_utf8(data) {
                     if text.starts_with(WS_PREFIX) {
                         let json = &text[WS_PREFIX.len()..];
-                        // Mark content hash so we don't echo it back to BLE
-                        // Use "ble-" prefix so relay's forwarding isn't blocked
+                        // Content hash dedup — prevents echo AND dual-GATT duplicates
                         let hash = format!("ble-echo-{}", fxhash(json));
                         {
                             let mut ids = seen_ids.write().await;
@@ -119,7 +139,12 @@ async fn bridge_loop(
                             }
                             ids.insert(hash);
                         }
-                        handle_ble_ws_message(json, &hub, &room_name, &seen_ids, &voice_incoming_tx, &mut ble_peer_names, &ble_send_tx).await;
+
+                        // Filter out ble_mesh_state entries that refer to ourselves
+                        let filtered = filter_self_from_mesh(json, &self_node_id);
+                        let json_ref = filtered.as_deref().unwrap_or(json);
+
+                        handle_ble_ws_message(json_ref, &hub, &room_name, &seen_ids, &voice_incoming_tx, &mut ble_peer_names, &ble_send_tx).await;
                     }
                 }
             }
@@ -331,13 +356,26 @@ async fn handle_ble_ws_message(
             let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
         }
 
+        // CoT position from BLE peer — inject sender info from peer names
+        "cot_position" => {
+            let mut cot: serde_json::Value = envelope;
+            // Add sender info so the Go server attributes it to the BLE peer, not the relay
+            if let Some(data) = cot.get_mut("data") {
+                // Use the first known peer name as the sender
+                if let Some((id, name)) = ble_peer_names.iter().next() {
+                    data["sender_id"] = serde_json::Value::String(id.clone());
+                    data["sender_name"] = serde_json::Value::String(name.clone());
+                }
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(serde_json::to_string(&cot).unwrap_or_default()));
+        }
+
         // User-initiated actions from remote BLE peer — forward to passthrough
-        // so the upstream relay sends them to the Go server
         "send_message" | "start_dm" | "join_dm" | "join_room" | "set_name"
         | "edit_message" | "delete_message" | "add_reaction" | "remove_reaction"
         | "pin_message" | "unpin_message"
         | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer" | "voice_ice"
-        | "cot_position" | "create_marker" | "delete_marker" => {
+        | "create_marker" | "delete_marker" => {
             let _ = hub.passthrough_tx.send(Arc::new(json.to_string()));
         }
 
@@ -366,7 +404,7 @@ async fn forward_ws_to_ble(
 
     // Skip types that shouldn't be forwarded to BLE peers
     match msg_type {
-        "identity" | "name_assigned" => return,
+        "identity" | "name_assigned" | "ble_mesh_state" => return,
         _ => {}
     }
 

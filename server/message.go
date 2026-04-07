@@ -241,12 +241,14 @@ type VoiceSpeakingBroadcastData struct {
 
 // Incoming: cot_position
 type CotPositionData struct {
-	RoomID  string  `json:"room_id"`
-	Lat     float64 `json:"lat"`
-	Lon     float64 `json:"lon"`
-	Hae     float64 `json:"hae"`
-	Ce      float64 `json:"ce"`
-	CotType string  `json:"cot_type"`
+	RoomID     string  `json:"room_id"`
+	Lat        float64 `json:"lat"`
+	Lon        float64 `json:"lon"`
+	Hae        float64 `json:"hae"`
+	Ce         float64 `json:"ce"`
+	CotType    string  `json:"cot_type"`
+	SenderName string  `json:"sender_name,omitempty"` // override for BLE relay
+	SenderID   string  `json:"sender_id,omitempty"`   // override for BLE relay
 }
 
 // Outgoing: cot_state (periodic broadcast)

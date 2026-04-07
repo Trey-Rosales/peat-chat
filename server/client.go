@@ -203,13 +203,19 @@ func (c *Client) readPump() {
 					c.cotType = d.CotType
 					c.mu.Unlock()
 				}
-				room.SetCotPosition(c, &CotPosition{
+				pos := &CotPosition{
 					Lat:  d.Lat,
 					Lon:  d.Lon,
 					Hae:  d.Hae,
 					Ce:   d.Ce,
 					Time: time.Now(),
-				})
+				}
+				if d.SenderID != "" && d.SenderName != "" {
+					// BLE peer position — register as a separate CoT contact
+					room.SetBleCotPosition(d.SenderID, d.SenderName, pos)
+				} else {
+					room.SetCotPosition(c, pos)
+				}
 			}
 
 		case "create_marker":

@@ -37,17 +37,25 @@ type CotPosition struct {
 }
 
 type Room struct {
-	ID             [32]byte
-	Name           string
-	Messages       []ChatMessage
-	Members        map[*Client]bool
-	VoiceChannels  map[string]*VoiceChannel
-	Markers        map[string]*CotMarker
-	CotPositions   map[*Client]*CotPosition
-	PinnedMessages map[string]bool // message ID -> true
-	IsDM           bool
-	DMParticipants [2]string // two client identity IDs (only for DM rooms)
-	mu             sync.RWMutex
+	ID              [32]byte
+	Name            string
+	Messages        []ChatMessage
+	Members         map[*Client]bool
+	VoiceChannels   map[string]*VoiceChannel
+	Markers         map[string]*CotMarker
+	CotPositions    map[*Client]*CotPosition
+	BleCotPositions map[string]*BleCotContact // BLE peer CoT (sender_id -> contact)
+	PinnedMessages  map[string]bool           // message ID -> true
+	IsDM            bool
+	DMParticipants  [2]string // two client identity IDs (only for DM rooms)
+	mu              sync.RWMutex
+}
+
+// BleCotContact is a CoT contact for a BLE peer routed through a relay.
+type BleCotContact struct {
+	SenderID   string
+	SenderName string
+	Position   *CotPosition
 }
 
 func NewRoom(name string) *Room {
@@ -59,8 +67,9 @@ func NewRoom(name string) *Room {
 		Members:        make(map[*Client]bool),
 		VoiceChannels:  map[string]*VoiceChannel{defaultVC.ID: defaultVC},
 		Markers:        make(map[string]*CotMarker),
-		CotPositions:   make(map[*Client]*CotPosition),
-		PinnedMessages: make(map[string]bool),
+		CotPositions:    make(map[*Client]*CotPosition),
+		BleCotPositions: make(map[string]*BleCotContact),
+		PinnedMessages:  make(map[string]bool),
 	}
 }
 
@@ -437,8 +446,18 @@ func (r *Room) ClearCotPosition(client *Client) {
 	delete(r.CotPositions, client)
 }
 
+func (r *Room) SetBleCotPosition(senderID, senderName string, pos *CotPosition) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.BleCotPositions[senderID] = &BleCotContact{
+		SenderID:   senderID,
+		SenderName: senderName,
+		Position:   pos,
+	}
+}
+
 // GetCotContacts returns CoT position data for all members except the excluded client.
-// Positions are room-scoped -- only positions shared in THIS room are included.
+// Includes both direct WebSocket clients and BLE relay peers.
 func (r *Room) GetCotContacts(exclude *Client) []CotContact {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -447,9 +466,27 @@ func (r *Room) GetCotContacts(exclude *Client) []CotContact {
 		if c == exclude {
 			continue
 		}
-		pos := r.CotPositions[c] // room-scoped position (may be nil)
+		pos := r.CotPositions[c]
 		if ct := c.toCotContact(pos); ct != nil {
 			contacts = append(contacts, *ct)
+		}
+	}
+	// Include BLE peer CoT positions
+	for _, bp := range r.BleCotPositions {
+		if bp.Position != nil {
+			t := uint64(bp.Position.Time.UnixMilli())
+			contacts = append(contacts, CotContact{
+				UID:      bp.SenderID,
+				Callsign: bp.SenderName,
+				ShortID:  bp.SenderID[:min(12, len(bp.SenderID))],
+				CotType:  "a-f-G-U-C",
+				Lat:      bp.Position.Lat,
+				Lon:      bp.Position.Lon,
+				Hae:      bp.Position.Hae,
+				Ce:       bp.Position.Ce,
+				Time:     t,
+				Stale:    t + 30000,
+			})
 		}
 	}
 	return contacts
