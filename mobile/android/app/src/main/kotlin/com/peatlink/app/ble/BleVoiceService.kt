@@ -5,6 +5,7 @@ import android.media.*
 import android.util.Log
 import com.peatlink.ffi.MobileNode
 import kotlinx.coroutines.*
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * BLE voice audio service — captures audio via AudioRecord, encodes with
@@ -17,6 +18,12 @@ import kotlinx.coroutines.*
 @SuppressLint("MissingPermission")
 class BleVoiceService(private val node: MobileNode) {
 
+    data class PendingPcmFrame(
+        val senderId: String,
+        val senderName: String,
+        val pcm: ByteArray,
+    )
+
     companion object {
         private const val TAG = "BleVoice"
         private const val SAMPLE_RATE = 16000 // 16kHz — good balance of quality vs bandwidth
@@ -24,6 +31,7 @@ class BleVoiceService(private val node: MobileNode) {
         private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_SIZE_MS / 1000 // 320 samples
         private const val BITRATE = 24000 // 24kbps — good voice quality, ~3KB/s
         private const val PLAYBACK_POLL_MS = 10L
+        private const val MAX_PENDING_PCM_FRAMES = 64
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -33,7 +41,9 @@ class BleVoiceService(private val node: MobileNode) {
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
     private var encoder: MediaCodec? = null
+    private var bridgeEncoder: MediaCodec? = null
     private var decoder: MediaCodec? = null
+    private val pendingIncomingPcm = ConcurrentLinkedQueue<PendingPcmFrame>()
 
     private var transmitting = false
     private var running = false
@@ -45,6 +55,7 @@ class BleVoiceService(private val node: MobileNode) {
         if (running) return
         running = true
         initPlayback()
+        initBridgeEncoder()
         startPlaybackLoop()
         Log.i(TAG, "BLE voice service started")
     }
@@ -56,6 +67,7 @@ class BleVoiceService(private val node: MobileNode) {
         captureJob?.cancel()
         playbackJob?.cancel()
         releasePlayback()
+        releaseBridgeEncoder()
         Log.i(TAG, "BLE voice service stopped")
     }
 
@@ -105,17 +117,7 @@ class BleVoiceService(private val node: MobileNode) {
         )
 
         // Use MediaCodec for Opus encoding
-        try {
-            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
-            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
-            format.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
-            format.setInteger(MediaFormat.KEY_COMPLEXITY, 5)
-            encoder?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            encoder?.start()
-        } catch (e: Throwable) {
-            Log.w(TAG, "MediaCodec Opus encoder not available: ${e.message}")
-            encoder = null
-        }
+        encoder = createOpusEncoder()
 
         audioRecord?.startRecording()
     }
@@ -127,6 +129,32 @@ class BleVoiceService(private val node: MobileNode) {
         try { encoder?.stop() } catch (_: Throwable) {}
         try { encoder?.release() } catch (_: Throwable) {}
         encoder = null
+    }
+
+    private fun initBridgeEncoder() {
+        if (bridgeEncoder != null) return
+        bridgeEncoder = createOpusEncoder()
+    }
+
+    private fun releaseBridgeEncoder() {
+        try { bridgeEncoder?.stop() } catch (_: Throwable) {}
+        try { bridgeEncoder?.release() } catch (_: Throwable) {}
+        bridgeEncoder = null
+    }
+
+    private fun createOpusEncoder(): MediaCodec? {
+        return try {
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+                val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
+                format.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
+                format.setInteger(MediaFormat.KEY_COMPLEXITY, 5)
+                configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                start()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "MediaCodec Opus encoder not available: ${e.message}")
+            null
+        }
     }
 
     private suspend fun captureLoop(senderId: String, senderName: String) {
@@ -254,14 +282,14 @@ class BleVoiceService(private val node: MobileNode) {
                 val frames = node.recvVoiceFrames()
                 for (frame in frames) {
                     val audioBytes = ByteArray(frame.data.size) { frame.data[it].toByte() }
-                    playFrame(audioBytes)
+                    playFrame(audioBytes, frame.senderId, frame.senderName)
                 }
                 delay(PLAYBACK_POLL_MS)
             }
         }
     }
 
-    private fun playFrame(data: ByteArray) {
+    private fun playFrame(data: ByteArray, senderId: String, senderName: String) {
         val track = audioTrack ?: return
         val dec = decoder
 
@@ -269,12 +297,52 @@ class BleVoiceService(private val node: MobileNode) {
             // Decode Opus frame
             val pcm = decodeFrame(dec, data)
             if (pcm != null) {
+                enqueueIncomingPcm(senderId, senderName, pcm)
                 track.write(pcm, 0, pcm.size)
             }
         } else {
             // Raw PCM fallback
+            enqueueIncomingPcm(senderId, senderName, data)
             track.write(data, 0, data.size)
         }
+    }
+
+    private fun enqueueIncomingPcm(senderId: String, senderName: String, pcm: ByteArray) {
+        pendingIncomingPcm.add(PendingPcmFrame(senderId, senderName, pcm))
+        while (pendingIncomingPcm.size > MAX_PENDING_PCM_FRAMES) {
+            pendingIncomingPcm.poll() ?: break
+        }
+    }
+
+    fun drainIncomingPcmFrames(): List<PendingPcmFrame> {
+        val frames = mutableListOf<PendingPcmFrame>()
+        while (true) {
+            val frame = pendingIncomingPcm.poll() ?: break
+            frames.add(frame)
+        }
+        return frames
+    }
+
+    fun sendPcmFrame(pcmBytes: ByteArray, senderId: String, senderName: String) {
+        if (pcmBytes.isEmpty()) return
+
+        val sampleCount = pcmBytes.size / 2
+        val pcmBuffer = ShortArray(sampleCount)
+        for (i in 0 until sampleCount) {
+            val lo = pcmBytes[i * 2].toInt() and 0xFF
+            val hi = pcmBytes[i * 2 + 1].toInt()
+            pcmBuffer[i] = ((hi shl 8) or lo).toShort()
+        }
+
+        val encoded = synchronized(this) {
+            bridgeEncoder?.let { encodeFrame(it, pcmBuffer, sampleCount) }
+        }
+        if (encoded != null) {
+            node.sendVoiceFrame(encoded.map { it.toUByte() }, senderId, senderName)
+            return
+        }
+
+        node.sendVoiceFrame(pcmBytes.map { it.toUByte() }, senderId, senderName)
     }
 
     private fun decodeFrame(codec: MediaCodec, opus: ByteArray): ByteArray? {

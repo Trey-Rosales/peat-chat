@@ -3427,6 +3427,7 @@ name = "peatlink-mobile"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "blake3",
  "futures-util",
  "hex",

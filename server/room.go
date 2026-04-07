@@ -11,19 +11,23 @@ const maxMessages = 1000
 
 // VoiceChannel tracks members and speaking state for a voice channel within a room.
 type VoiceChannel struct {
-	ID       string
-	Name     string
-	Members  map[*Client]bool
-	Speaking map[*Client]bool
-	mu       sync.RWMutex
+	ID          string
+	Name        string
+	Members     map[*Client]bool
+	Speaking    map[*Client]bool
+	BleMembers  map[string]*BlePeer
+	BleSpeaking map[string]bool
+	mu          sync.RWMutex
 }
 
 func NewVoiceChannel(name string) *VoiceChannel {
 	return &VoiceChannel{
-		ID:       uuid.New().String(),
-		Name:     name,
-		Members:  make(map[*Client]bool),
-		Speaking: make(map[*Client]bool),
+		ID:          uuid.New().String(),
+		Name:        name,
+		Members:     make(map[*Client]bool),
+		Speaking:    make(map[*Client]bool),
+		BleMembers:  make(map[string]*BlePeer),
+		BleSpeaking: make(map[string]bool),
 	}
 }
 
@@ -61,12 +65,12 @@ type BleCotContact struct {
 func NewRoom(name string) *Room {
 	defaultVC := NewVoiceChannel("General")
 	return &Room{
-		ID:             ChatIdFromName(name),
-		Name:           name,
-		Messages:       make([]ChatMessage, 0),
-		Members:        make(map[*Client]bool),
-		VoiceChannels:  map[string]*VoiceChannel{defaultVC.ID: defaultVC},
-		Markers:        make(map[string]*CotMarker),
+		ID:              ChatIdFromName(name),
+		Name:            name,
+		Messages:        make([]ChatMessage, 0),
+		Members:         make(map[*Client]bool),
+		VoiceChannels:   map[string]*VoiceChannel{defaultVC.ID: defaultVC},
+		Markers:         make(map[string]*CotMarker),
 		CotPositions:    make(map[*Client]*CotPosition),
 		BleCotPositions: make(map[string]*BleCotContact),
 		PinnedMessages:  make(map[string]bool),
@@ -76,6 +80,11 @@ func NewRoom(name string) *Room {
 func (r *Room) AddMessage(msg ChatMessage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == msg.ID {
+			return
+		}
+	}
 	r.Messages = append(r.Messages, msg)
 	if len(r.Messages) > maxMessages {
 		r.Messages = r.Messages[len(r.Messages)-maxMessages:]
@@ -348,6 +357,61 @@ func (r *Room) LeaveVoiceChannel(channelID string, client *Client) {
 	delete(vc.Speaking, client)
 }
 
+func (r *Room) JoinBleVoiceChannel(channelID string, peer *BlePeer) bool {
+	r.mu.RLock()
+	vc, ok := r.VoiceChannels[channelID]
+	r.mu.RUnlock()
+	if !ok || peer == nil {
+		return false
+	}
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	vc.BleMembers[peer.PeerID] = peer
+	return true
+}
+
+func (r *Room) LeaveBleVoiceChannel(channelID, peerID string) {
+	r.mu.RLock()
+	vc, ok := r.VoiceChannels[channelID]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	delete(vc.BleMembers, peerID)
+	delete(vc.BleSpeaking, peerID)
+}
+
+func (r *Room) VoiceChannelHasBleMember(channelID, peerID string) bool {
+	r.mu.RLock()
+	vc, ok := r.VoiceChannels[channelID]
+	r.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	vc.mu.RLock()
+	defer vc.mu.RUnlock()
+	_, exists := vc.BleMembers[peerID]
+	return exists
+}
+
+func (r *Room) SetBleSpeaking(channelID, peerID string, speaking bool) {
+	r.mu.RLock()
+	vc, ok := r.VoiceChannels[channelID]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	if speaking {
+		vc.BleSpeaking[peerID] = true
+	} else {
+		delete(vc.BleSpeaking, peerID)
+	}
+}
+
 // LeaveAllVoiceChannels removes the client from every voice channel in this room.
 // Returns the channel IDs they were in.
 func (r *Room) LeaveAllVoiceChannels(client *Client) []string {
@@ -405,6 +469,14 @@ func (r *Room) GetVoiceState() []VoiceChannelInfo {
 			})
 			c.mu.RUnlock()
 		}
+		for peerID, peer := range vc.BleMembers {
+			members = append(members, VoiceMemberInfo{
+				ID:       peerID,
+				Name:     peer.PeerName,
+				ShortID:  peer.PeerID[:min(12, len(peer.PeerID))],
+				Speaking: vc.BleSpeaking[peerID],
+			})
+		}
 		infos = append(infos, VoiceChannelInfo{
 			ID:      vc.ID,
 			Name:    vc.Name,
@@ -444,6 +516,12 @@ func (r *Room) ClearCotPosition(client *Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.CotPositions, client)
+}
+
+func (r *Room) ClearBleCotPosition(senderID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.BleCotPositions, senderID)
 }
 
 func (r *Room) SetBleCotPosition(senderID, senderName string, pos *CotPosition) {

@@ -17,6 +17,7 @@ const mockStream = {
 const mockGainNode = {
   gain: { value: 1.0 },
   connect: vi.fn(),
+  disconnect: vi.fn(),
 }
 
 const mockDestinationStream = {
@@ -32,10 +33,34 @@ const mockSourceNode = {
   disconnect: vi.fn(),
 }
 
+const mockBuffer = {
+  duration: 0.02,
+  getChannelData: vi.fn().mockReturnValue(new Float32Array(320)),
+}
+
+const mockBufferSource = {
+  buffer: null as any,
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  start: vi.fn(),
+  onended: null as any,
+}
+
+const mockScriptProcessor = {
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  onaudioprocess: null as any,
+}
+
 vi.stubGlobal('AudioContext', vi.fn().mockImplementation(() => ({
+  currentTime: 0,
   createMediaStreamSource: vi.fn().mockReturnValue(mockSourceNode),
   createGain: vi.fn().mockReturnValue(mockGainNode),
   createMediaStreamDestination: vi.fn().mockReturnValue(mockDestinationNode),
+  createScriptProcessor: vi.fn().mockReturnValue(mockScriptProcessor),
+  createBuffer: vi.fn().mockReturnValue(mockBuffer),
+  createBufferSource: vi.fn().mockReturnValue(mockBufferSource),
+  resume: vi.fn().mockResolvedValue(undefined),
   close: vi.fn(),
 })))
 

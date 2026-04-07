@@ -40,6 +40,12 @@ pub struct VoiceFrame {
     pub timestamp: u64,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BleInboundPacket {
+    pub peer_id: String,
+    pub data: Vec<u8>,
+}
+
 pub struct MobileNode {
     data_dir: String,
     display_name: RwLock<String>,
@@ -59,8 +65,8 @@ pub struct MobileNode {
     voice_incoming_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>,
 
     /// Direct BLE data transport (bypasses peat-btle)
-    ble_recv_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    ble_recv_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>,
+    ble_recv_tx: tokio::sync::mpsc::UnboundedSender<BleInboundPacket>,
+    ble_recv_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<BleInboundPacket>>>,
     ble_send_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ble_send_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
 
@@ -136,7 +142,11 @@ impl MobileNode {
 
         let web_path = web_dir.map(PathBuf::from);
         let (actual_port, hub) = rt
-            .block_on(ws_server::run_server(0, web_path, Some(self.data_dir.clone())))
+            .block_on(ws_server::run_server(
+                0,
+                web_path,
+                Some(self.data_dir.clone()),
+            ))
             .map_err(|e| PeatLinkError::startup(e))?;
 
         rt.block_on(async {
@@ -233,9 +243,8 @@ impl MobileNode {
         let rt = self.runtime.clone();
 
         let hub = rt.block_on(self.hub.read()).clone();
-        let hub = hub.ok_or_else(|| {
-            PeatLinkError::startup("server not running — call start() first")
-        })?;
+        let hub =
+            hub.ok_or_else(|| PeatLinkError::startup("server not running — call start() first"))?;
 
         let display_name = rt.block_on(self.display_name.read()).clone();
 
@@ -304,7 +313,11 @@ impl MobileNode {
                     if let Some(event_rx) = self.ble_event_rx.write().await.take() {
                         let node_id = self.identity.read().await.clone();
                         let voice_rx = self.voice_outgoing_rx.write().await.take();
-                        let ble_recv_rx = self.ble_recv_rx.write().await.take()
+                        let ble_recv_rx = self
+                            .ble_recv_rx
+                            .write()
+                            .await
+                            .take()
                             .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1);
                         let handle = bridge::start_bridge(
                             hub,
@@ -313,9 +326,7 @@ impl MobileNode {
                             "general".to_string(),
                             self.seen_ids.clone(),
                             node_id,
-                            voice_rx.unwrap_or_else(|| {
-                                tokio::sync::mpsc::unbounded_channel().1
-                            }),
+                            voice_rx.unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1),
                             self.voice_incoming_tx.clone(),
                             ble_recv_rx,
                             self.ble_send_tx.clone(),
@@ -431,8 +442,11 @@ impl MobileNode {
     pub fn on_ble_data_received(&self, identifier: String, data: Vec<u8>, now_ms: u64) {
         #[cfg(feature = "bluetooth")]
         {
-            self.runtime
-                .block_on(self.ble_manager.on_ble_data_received(&identifier, &data, now_ms));
+            self.runtime.block_on(self.ble_manager.on_ble_data_received(
+                &identifier,
+                &data,
+                now_ms,
+            ));
         }
     }
 
@@ -475,11 +489,19 @@ impl MobileNode {
         let _ = self.voice_outgoing_tx.send(frame);
     }
 
-    /// Receive all pending voice frames from BLE peers.
-    /// Called by Kotlin to get audio data for playback.
-    // --- Direct BLE peer notifications ---
+    // --- Direct BLE data transport ---
 
-    /// Notify that a verified Peat BLE peer connected (called by Kotlin).
+    /// Push data received from a BLE GATT peer (called by Kotlin).
+    pub fn push_ble_recv_from(&self, peer_id: String, data: Vec<u8>) {
+        let _ = self.ble_recv_tx.send(BleInboundPacket { peer_id, data });
+    }
+
+    /// Backward-compatible helper for callers that don't know the source peer.
+    pub fn push_ble_recv(&self, data: Vec<u8>) {
+        self.push_ble_recv_from(String::new(), data);
+    }
+
+    /// Notify that a verified or provisional BLE peer connected (called by Kotlin).
     pub fn notify_ble_peer_connected(&self, peer_id: String, peer_name: String) {
         #[cfg(feature = "bluetooth")]
         {
@@ -491,7 +513,9 @@ impl MobileNode {
                 last_seen_ms: 0,
                 transport: "btle".to_string(),
             };
-            let _ = self.ble_peer_event_tx.send(ble::BlePeerEvent::PeerConnected(info));
+            let _ = self
+                .ble_peer_event_tx
+                .send(ble::BlePeerEvent::PeerConnected(info));
         }
     }
 
@@ -507,23 +531,16 @@ impl MobileNode {
                 last_seen_ms: 0,
                 transport: "btle".to_string(),
             };
-            let _ = self.ble_peer_event_tx.send(ble::BlePeerEvent::PeerDisconnected(info));
+            let _ = self
+                .ble_peer_event_tx
+                .send(ble::BlePeerEvent::PeerDisconnected(info));
         }
-    }
-
-    // --- Direct BLE data transport ---
-
-    /// Push data received from a BLE GATT peer (called by Kotlin).
-    pub fn push_ble_recv(&self, data: Vec<u8>) {
-        let _ = self.ble_recv_tx.send(data);
     }
 
     /// Pop outgoing data for BLE GATT broadcast (called by Kotlin tick loop).
     pub fn pop_ble_send(&self) -> Option<Vec<u8>> {
         let rt = self.runtime.clone();
-        rt.block_on(async {
-            self.ble_send_rx.write().await.try_recv().ok()
-        })
+        rt.block_on(async { self.ble_send_rx.write().await.try_recv().ok() })
     }
 
     pub fn recv_voice_frames(&self) -> Vec<VoiceFrame> {

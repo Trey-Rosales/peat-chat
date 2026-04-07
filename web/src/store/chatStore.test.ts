@@ -90,6 +90,34 @@ describe('chatStore - rooms', () => {
     expect(useChatStore.getState().rooms['r2'].unread).toBe(1)
   })
 
+  it('deduplicates room history by message id', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'first' },
+    ])
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'updated' },
+    ])
+
+    const messages = useChatStore.getState().rooms['r1'].messages
+    expect(messages).toHaveLength(1)
+    expect(messages[0].content).toBe('updated')
+  })
+
+  it('deduplicates addMessage by message id', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().addMessage('r1', {
+      id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello',
+    })
+    useChatStore.getState().addMessage('r1', {
+      id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello again',
+    })
+
+    const room = useChatStore.getState().rooms['r1']
+    expect(room.messages).toHaveLength(1)
+    expect(room.messages[0].content).toBe('hello again')
+  })
+
   it('does not increment unread for self messages', () => {
     useChatStore.getState().setIdentity('self', 's')
     useChatStore.getState().addRoom('r1', 'general', 1)

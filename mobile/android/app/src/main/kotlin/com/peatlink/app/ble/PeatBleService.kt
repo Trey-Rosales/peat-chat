@@ -305,7 +305,6 @@ class PeatBleService(
                     gattServerDevices.remove(address)
                     if (knownPeatDevices.remove(address)) {
                         node.onBleDisconnected(address)
-                        node.notifyBlePeerDisconnected(address)
                         connectedCount = knownPeatDevices.size
                     }
                     if (connectedCount == 0 && knownPeatDevices.isEmpty()) {
@@ -358,7 +357,7 @@ class PeatBleService(
                 Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
                 node.onBleDataReceived(address, value.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecv(value.map { it.toUByte() })
+                node.pushBleRecvFrom(address, value.map { it.toUByte() })
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -526,7 +525,7 @@ class PeatBleService(
                 Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecv(data.map { it.toUByte() })
+                node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
             }
         }
 
@@ -537,7 +536,7 @@ class PeatBleService(
                 Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecv(data.map { it.toUByte() })
+                node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
             }
         }
     }

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use peat_btle::observer::{PeatEvent, PeatObserver};
 use peat_btle::peat_mesh::{PeatMesh, PeatMeshConfig};
 use peat_btle::peer::PeatPeer;
-use peat_btle::PeatDisconnectReason as DisconnectReason;
 use peat_btle::DeviceIdentity;
 use peat_btle::NodeId;
+use peat_btle::PeatDisconnectReason as DisconnectReason;
 use tokio::sync::{mpsc, RwLock};
 
 use crate::error::PeatLinkError;
@@ -54,14 +54,16 @@ impl PeatObserver for ChatObserver {
                 }));
             }
             PeatEvent::PeerDisconnected { node_id, .. } => {
-                let _ = self.event_tx.send(BlePeerEvent::PeerDisconnected(BlePeerInfo {
-                    id: format!("{}", node_id),
-                    name: format!("BLE-{}", node_id),
-                    rssi: 0,
-                    is_connected: false,
-                    last_seen_ms: 0,
-                    transport: "btle".to_string(),
-                }));
+                let _ = self
+                    .event_tx
+                    .send(BlePeerEvent::PeerDisconnected(BlePeerInfo {
+                        id: format!("{}", node_id),
+                        name: format!("BLE-{}", node_id),
+                        rssi: 0,
+                        is_connected: false,
+                        last_seen_ms: 0,
+                        transport: "btle".to_string(),
+                    }));
             }
             _ => {}
         }
@@ -141,7 +143,11 @@ impl BleManager {
     pub async fn peers(&self) -> Vec<BlePeerInfo> {
         let mesh = self.mesh.read().await;
         match mesh.as_ref() {
-            Some(m) => m.get_peers().into_iter().map(|p| peer_to_info(&p)).collect(),
+            Some(m) => m
+                .get_peers()
+                .into_iter()
+                .map(|p| peer_to_info(&p))
+                .collect(),
             None => Vec::new(),
         }
     }

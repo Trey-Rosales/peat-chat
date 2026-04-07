@@ -105,7 +105,9 @@ export function useWebSocket(
           state.addMessage(msg.data.room_id, msg.data.message)
           break
         case 'peer_update':
-          state.updateRoomMembers(msg.data.room_id, msg.data.members)
+          if (typeof msg.data.members === 'number') {
+            state.updateRoomMembers(msg.data.room_id, msg.data.members)
+          }
           break
 
         // --- Message editing / deletion / reactions / pins ---
@@ -156,7 +158,7 @@ export function useWebSocket(
             short_id: '',
             speaking: false,
           })
-          signalingRef?.current?.handlePeerJoined(msg.data.peer_id)
+          signalingRef?.current?.handlePeerJoined(msg.data.peer_id, msg.data.name)
           break
         case 'voice_peer_left':
           state.removeVoicePeer(

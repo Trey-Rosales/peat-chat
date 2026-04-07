@@ -59,6 +59,101 @@ use crate::ble::{BleManager, BlePeerEvent};
 
 const WS_PREFIX: &str = "__ws:";
 
+#[derive(Default)]
+struct BlePeerDirectory {
+    names_by_id: std::collections::HashMap<String, String>,
+    source_to_node: std::collections::HashMap<String, String>,
+}
+
+impl BlePeerDirectory {
+    fn upsert_peer(&mut self, node_id: String, name: String) {
+        self.names_by_id.insert(node_id, name);
+    }
+
+    fn upsert_source(&mut self, source_peer_id: &str, name: String) {
+        if source_peer_id.is_empty() {
+            return;
+        }
+        self.names_by_id.insert(source_peer_id.to_string(), name);
+    }
+
+    fn bind_source(&mut self, source_peer_id: &str, node_id: &str) {
+        if source_peer_id.is_empty() {
+            return;
+        }
+        self.source_to_node
+            .insert(source_peer_id.to_string(), node_id.to_string());
+    }
+
+    fn remove_peer(&mut self, node_id: &str) {
+        self.names_by_id.remove(node_id);
+        self.source_to_node.retain(|_, mapped| mapped != node_id);
+    }
+
+    fn promote_source(
+        &mut self,
+        source_peer_id: &str,
+        node_id: String,
+        name: String,
+    ) -> Option<String> {
+        let provisional = if !source_peer_id.is_empty() && source_peer_id != node_id {
+            self.names_by_id
+                .remove(source_peer_id)
+                .map(|_| source_peer_id.to_string())
+        } else {
+            None
+        };
+        self.bind_source(source_peer_id, &node_id);
+        self.upsert_peer(node_id, name);
+        provisional
+    }
+
+    fn disconnect_source(&mut self, source_peer_id: &str) -> Vec<String> {
+        let mut removed = Vec::new();
+        if source_peer_id.is_empty() {
+            return removed;
+        }
+
+        if let Some(node_id) = self.source_to_node.remove(source_peer_id) {
+            if self.names_by_id.remove(&node_id).is_some() {
+                removed.push(node_id);
+            }
+        }
+
+        if self.names_by_id.remove(source_peer_id).is_some() {
+            let source = source_peer_id.to_string();
+            if !removed.iter().any(|id| id == &source) {
+                removed.push(source);
+            }
+        }
+
+        removed
+    }
+
+    fn resolve_sender(&self, source_peer_id: &str) -> Option<(String, String)> {
+        if !source_peer_id.is_empty() {
+            if let Some(name) = self.names_by_id.get(source_peer_id) {
+                return Some((source_peer_id.to_string(), name.clone()));
+            }
+            if let Some(node_id) = self.source_to_node.get(source_peer_id) {
+                if let Some(name) = self.names_by_id.get(node_id) {
+                    return Some((node_id.clone(), name.clone()));
+                }
+            }
+        }
+
+        if self.names_by_id.len() == 1 {
+            return self
+                .names_by_id
+                .iter()
+                .next()
+                .map(|(id, name)| (id.clone(), name.clone()));
+        }
+
+        None
+    }
+}
+
 /// Handle to shut down the bridge.
 pub struct BridgeHandle {
     shutdown_tx: mpsc::Sender<()>,
@@ -71,23 +166,32 @@ impl BridgeHandle {
 }
 
 #[cfg(feature = "bluetooth")]
-pub async fn start_bridge(
+pub(crate) async fn start_bridge(
     hub: Arc<Hub>,
-    ble_manager: Arc<BleManager>,
+    _ble_manager: Arc<BleManager>,
     ble_event_rx: mpsc::UnboundedReceiver<BlePeerEvent>,
     room_name: String,
     seen_ids: SeenIds,
     self_node_id: String,
     voice_outgoing_rx: mpsc::UnboundedReceiver<crate::VoiceFrame>,
     voice_incoming_tx: mpsc::UnboundedSender<crate::VoiceFrame>,
-    ble_recv_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    ble_recv_rx: mpsc::UnboundedReceiver<crate::BleInboundPacket>,
     ble_send_tx: mpsc::UnboundedSender<Vec<u8>>,
 ) -> BridgeHandle {
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(bridge_loop(
-        hub, ble_manager, ble_event_rx, room_name, seen_ids, self_node_id, shutdown_rx,
-        voice_outgoing_rx, voice_incoming_tx, ble_recv_rx, ble_send_tx,
+        hub,
+        _ble_manager,
+        ble_event_rx,
+        room_name,
+        seen_ids,
+        self_node_id,
+        shutdown_rx,
+        voice_outgoing_rx,
+        voice_incoming_tx,
+        ble_recv_rx,
+        ble_send_tx,
     ));
 
     BridgeHandle { shutdown_tx }
@@ -96,7 +200,7 @@ pub async fn start_bridge(
 #[cfg(feature = "bluetooth")]
 async fn bridge_loop(
     hub: Arc<Hub>,
-    ble_manager: Arc<BleManager>,
+    _ble_manager: Arc<BleManager>,
     mut ble_event_rx: mpsc::UnboundedReceiver<BlePeerEvent>,
     room_name: String,
     seen_ids: SeenIds,
@@ -104,7 +208,7 @@ async fn bridge_loop(
     mut shutdown_rx: mpsc::Receiver<()>,
     mut voice_outgoing_rx: mpsc::UnboundedReceiver<crate::VoiceFrame>,
     voice_incoming_tx: mpsc::UnboundedSender<crate::VoiceFrame>,
-    mut ble_recv_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut ble_recv_rx: mpsc::UnboundedReceiver<crate::BleInboundPacket>,
     ble_send_tx: mpsc::UnboundedSender<Vec<u8>>,
 ) {
     // Subscribe to local Hub room broadcasts (WS → BLE direction)
@@ -119,15 +223,15 @@ async fn bridge_loop(
     let mut peer_interval = tokio::time::interval(Duration::from_secs(5));
 
     // Track BLE peers locally (since peat-btle's peer list may be empty)
-    let mut ble_peer_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut ble_peers = BlePeerDirectory::default();
 
     tracing::info!("BLE↔WS bridge started for room '{}'", room_name);
 
     loop {
         tokio::select! {
             // === BLE → WS: Direct data from GATT peers ===
-            Some(data) = ble_recv_rx.recv() => {
-                if let Ok(text) = String::from_utf8(data) {
+            Some(packet) = ble_recv_rx.recv() => {
+                if let Ok(text) = String::from_utf8(packet.data) {
                     if text.starts_with(WS_PREFIX) {
                         let json = &text[WS_PREFIX.len()..];
                         // Content hash dedup — prevents echo AND dual-GATT duplicates
@@ -144,7 +248,16 @@ async fn bridge_loop(
                         let filtered = filter_self_from_mesh(json, &self_node_id);
                         let json_ref = filtered.as_deref().unwrap_or(json);
 
-                        handle_ble_ws_message(json_ref, &hub, &room_name, &seen_ids, &voice_incoming_tx, &mut ble_peer_names, &ble_send_tx).await;
+                        handle_ble_ws_message(
+                            json_ref,
+                            &packet.peer_id,
+                            &hub,
+                            &room_name,
+                            &seen_ids,
+                            &voice_incoming_tx,
+                            &mut ble_peers,
+                        )
+                        .await;
                     }
                 }
             }
@@ -169,7 +282,7 @@ async fn bridge_loop(
                 match &event {
                     BlePeerEvent::PeerConnected(info) => {
                         tracing::info!("BLE peer connected: {} ({})", info.name, info.id);
-                        ble_peer_names.insert(info.id.clone(), info.name.clone());
+                        ble_peers.upsert_source(&info.id, info.name.clone());
                         broadcast_ble_peer_update(&hub, &room_name, info, "joined", &self_node_id).await;
 
                         // Register BLE peer with Go server (initial name, will be updated by hello)
@@ -195,13 +308,26 @@ async fn bridge_loop(
                     }
                     BlePeerEvent::PeerDisconnected(info) => {
                         tracing::info!("BLE peer disconnected: {} ({})", info.name, info.id);
-                        ble_peer_names.remove(&info.id);
-                        broadcast_ble_peer_update(&hub, &room_name, info, "left", &self_node_id).await;
+                        let effective = ble_peers
+                            .resolve_sender(&info.id)
+                            .unwrap_or_else(|| (info.id.clone(), info.name.clone()));
+                        let effective_info = crate::ble::BlePeerInfo {
+                            id: effective.0.clone(),
+                            name: effective.1.clone(),
+                            rssi: info.rssi,
+                            is_connected: false,
+                            last_seen_ms: info.last_seen_ms,
+                            transport: info.transport.clone(),
+                        };
+                        let removed_ids = ble_peers.disconnect_source(&info.id);
+                        broadcast_ble_peer_update(&hub, &room_name, &effective_info, "left", &self_node_id).await;
 
-                        let unreg = crate::ws_server::make_json("unregister_ble_peer", &serde_json::json!({
-                            "peer_id": info.id,
-                        }));
-                        let _ = hub.passthrough_tx.send(Arc::new(unreg));
+                        for peer_id in removed_ids {
+                            let unreg = crate::ws_server::make_json("unregister_ble_peer", &serde_json::json!({
+                                "peer_id": peer_id,
+                            }));
+                            let _ = hub.passthrough_tx.send(Arc::new(unreg));
+                        }
                     }
                 }
             }
@@ -223,8 +349,8 @@ async fn bridge_loop(
 
             // === Periodic BLE peer state → mesh_state ===
             _ = peer_interval.tick() => {
-                if !ble_peer_names.is_empty() {
-                    broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peer_names, &self_node_id).await;
+                if !ble_peers.names_by_id.is_empty() {
+                    broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peers.names_by_id, &self_node_id).await;
                 }
             }
 
@@ -240,21 +366,18 @@ async fn bridge_loop(
 /// Parse it and route to the appropriate destination (Hub room or downstream).
 async fn handle_ble_ws_message(
     json: &str,
+    source_peer_id: &str,
     hub: &Arc<Hub>,
     room_name: &str,
     seen_ids: &SeenIds,
     voice_incoming_tx: &mpsc::UnboundedSender<crate::VoiceFrame>,
-    ble_peer_names: &mut std::collections::HashMap<String, String>,
-    ble_send_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    ble_peers: &mut BlePeerDirectory,
 ) {
     let Ok(envelope) = serde_json::from_str::<serde_json::Value>(json) else {
         return;
     };
 
-    let msg_type = envelope
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     match msg_type {
         // Chat messages — dedup and inject into the correct room
@@ -281,9 +404,15 @@ async fn handle_ble_ws_message(
                     // Check if room exists locally
                     let room_id = data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
                     if hub.find_room_by_hex(room_id).await.is_some() {
-                        if let Ok(chat_msg) =
+                        if let Ok(mut chat_msg) =
                             serde_json::from_value::<ChatMessage>(msg_val.clone())
                         {
+                            if let Some((sender_id, sender_name)) =
+                                ble_peers.resolve_sender(source_peer_id)
+                            {
+                                chat_msg.sender = sender_id;
+                                chat_msg.sender_name = sender_name;
+                            }
                             hub.inject_external_message(room_name, chat_msg).await;
                         }
                     } else {
@@ -297,29 +426,42 @@ async fn handle_ble_ws_message(
         // BLE handshake — remote peer is telling us their callsign and node_id
         "ble_hello" => {
             if let Some(data) = envelope.get("data") {
-                let node_id = data.get("node_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let callsign = data.get("callsign").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let node_id = data
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let callsign = data
+                    .get("callsign")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
 
                 if !node_id.is_empty() && !callsign.is_empty() {
-                    tracing::info!("BLE hello from {} ({})", callsign, &node_id[..node_id.len().min(12)]);
-
-                    // Unregister ALL old MAC-based peer entries first
-                    let old_keys: Vec<String> = ble_peer_names.keys().cloned().collect();
-                    for key in &old_keys {
-                        let unreg = crate::ws_server::make_json("unregister_ble_peer", &serde_json::json!({
-                            "peer_id": key,
-                        }));
+                    tracing::info!(
+                        "BLE hello from {} ({})",
+                        callsign,
+                        &node_id[..node_id.len().min(12)]
+                    );
+                    if let Some(provisional_id) =
+                        ble_peers.promote_source(source_peer_id, node_id.clone(), callsign.clone())
+                    {
+                        let unreg = crate::ws_server::make_json(
+                            "unregister_ble_peer",
+                            &serde_json::json!({
+                                "peer_id": provisional_id,
+                            }),
+                        );
                         let _ = hub.passthrough_tx.send(Arc::new(unreg));
                     }
-                    ble_peer_names.clear();
 
-                    // Register with real callsign and node_id
-                    ble_peer_names.insert(node_id.clone(), callsign.clone());
-
-                    let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
-                        "peer_id": node_id,
-                        "peer_name": callsign,
-                    }));
+                    let reg = crate::ws_server::make_json(
+                        "register_ble_peer",
+                        &serde_json::json!({
+                            "peer_id": node_id,
+                            "peer_name": callsign,
+                        }),
+                    );
                     let _ = hub.passthrough_tx.send(Arc::new(reg));
                 }
             }
@@ -329,8 +471,16 @@ async fn handle_ble_ws_message(
         "voice_audio" => {
             if let Some(data) = envelope.get("data") {
                 let audio_b64 = data.get("audio").and_then(|v| v.as_str()).unwrap_or("");
-                let sender_id = data.get("sender_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let sender_name = data.get("sender_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let sender_id = data
+                    .get("sender_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let sender_name = data
+                    .get("sender_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let timestamp = data.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 if let Some(audio_data) = base64_decode(audio_b64) {
@@ -346,37 +496,59 @@ async fn handle_ble_ws_message(
         }
 
         // DM, voice, CoT, reactions, edits, pins — forward to downstream for WebView
-        "dm_opened" | "room_joined" | "room_history" | "peer_update" | "mesh_state"
-        | "message_edited" | "message_deleted" | "reaction_updated"
-        | "message_pinned" | "message_unpinned"
-        | "voice_state" | "voice_channel_created" | "voice_peer_joined"
-        | "voice_peer_left" | "voice_offer_relay" | "voice_answer_relay"
-        | "voice_ice_relay" | "voice_speaking_broadcast"
-        | "cot_state" | "marker_created" | "marker_deleted" => {
+        "dm_opened"
+        | "room_joined"
+        | "room_history"
+        | "peer_update"
+        | "mesh_state"
+        | "message_edited"
+        | "message_deleted"
+        | "reaction_updated"
+        | "message_pinned"
+        | "message_unpinned"
+        | "voice_state"
+        | "voice_channel_created"
+        | "voice_peer_joined"
+        | "voice_peer_left"
+        | "voice_offer_relay"
+        | "voice_answer_relay"
+        | "voice_ice_relay"
+        | "voice_speaking_broadcast"
+        | "cot_state"
+        | "marker_created"
+        | "marker_deleted" => {
             let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
         }
 
         // CoT position from BLE peer — inject sender info from peer names
         "cot_position" => {
             let mut cot: serde_json::Value = envelope;
-            // Add sender info so the Go server attributes it to the BLE peer, not the relay
             if let Some(data) = cot.get_mut("data") {
-                // Use the first known peer name as the sender
-                if let Some((id, name)) = ble_peer_names.iter().next() {
-                    data["sender_id"] = serde_json::Value::String(id.clone());
-                    data["sender_name"] = serde_json::Value::String(name.clone());
+                if let Some((id, name)) = ble_peers.resolve_sender(source_peer_id) {
+                    data["sender_id"] = serde_json::Value::String(id);
+                    data["sender_name"] = serde_json::Value::String(name);
                 }
             }
-            let _ = hub.passthrough_tx.send(Arc::new(serde_json::to_string(&cot).unwrap_or_default()));
+            let _ = hub
+                .passthrough_tx
+                .send(Arc::new(serde_json::to_string(&cot).unwrap_or_default()));
         }
 
         // User-initiated actions from remote BLE peer — forward to passthrough
-        "send_message" | "start_dm" | "join_dm" | "join_room" | "set_name"
-        | "edit_message" | "delete_message" | "add_reaction" | "remove_reaction"
-        | "pin_message" | "unpin_message"
-        | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer" | "voice_ice"
-        | "create_marker" | "delete_marker" => {
-            let _ = hub.passthrough_tx.send(Arc::new(json.to_string()));
+        "send_message" | "start_dm" | "join_dm" | "join_room" | "set_name" | "edit_message"
+        | "delete_message" | "add_reaction" | "remove_reaction" | "pin_message"
+        | "unpin_message" | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer"
+        | "voice_ice" | "create_marker" | "delete_marker" | "voice_speaking" => {
+            let mut outbound = envelope;
+            if let Some(data) = outbound.get_mut("data") {
+                if let Some((id, name)) = ble_peers.resolve_sender(source_peer_id) {
+                    data["sender_id"] = serde_json::Value::String(id);
+                    data["sender_name"] = serde_json::Value::String(name);
+                }
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(
+                serde_json::to_string(&outbound).unwrap_or_default(),
+            ));
         }
 
         _ => {
@@ -397,10 +569,7 @@ async fn forward_ws_to_ble(
         return;
     };
 
-    let msg_type = envelope
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     // Skip types that shouldn't be forwarded to BLE peers
     match msg_type {
@@ -481,7 +650,10 @@ async fn sync_room_history_to_ble(
         return;
     }
 
-    tracing::info!("Syncing {} messages to BLE peer (one at a time)", messages.len());
+    tracing::info!(
+        "Syncing {} messages to BLE peer (one at a time)",
+        messages.len()
+    );
 
     // Send each message individually so each fits in a single GATT write
     for msg in &messages {

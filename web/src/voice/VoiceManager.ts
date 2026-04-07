@@ -5,8 +5,40 @@ const ICE_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 }
 
+const BLE_SAMPLE_RATE = 16000
+const BLE_FRAME_SAMPLES = 320
+const BLE_POLL_MS = 20
+
+type BleRelayChain = {
+  source: MediaStreamAudioSourceNode
+  processor: ScriptProcessorNode
+  silentGain: GainNode
+  pendingSamples: number[]
+  resampleOffset: number
+}
+
+type IncomingBleFrame = {
+  sender_id?: string
+  sender_name?: string
+  pcm?: string
+}
+
+declare global {
+  interface Window {
+    PeatLinkVoice?: {
+      startPtt(senderId: string, senderName: string): void
+      stopPtt(): void
+      isTransmitting(): boolean
+      hasBleVoice(): boolean
+      pollIncomingFrames?(): string
+      sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
+    }
+  }
+}
+
 export class VoiceManager {
   private peers = new Map<string, RTCPeerConnection>()
+  private peerNames = new Map<string, string>()
   private audioElements = new Map<string, HTMLAudioElement>()
   private pendingIce = new Map<string, RTCIceCandidateInit[]>()
   private localStream: MediaStream | null = null
@@ -14,9 +46,13 @@ export class VoiceManager {
   private gainNode: GainNode | null = null
   private sourceNode: MediaStreamAudioSourceNode | null = null
   private destinationNode: MediaStreamAudioDestinationNode | null = null
+  private bleIncomingGain: GainNode | null = null
+  private bleRelayChains = new Map<string, BleRelayChain>()
+  private bleBridgeTimer: ReturnType<typeof setInterval> | null = null
+  private blePlaybackCursor = 0
   private send: (type: string, data: any) => void
-  private roomId: string = ''
-  private channelId: string = ''
+  private roomId = ''
+  private channelId = ''
   private active = false
   private _listenOnly = false
 
@@ -53,10 +89,23 @@ export class VoiceManager {
     this.channelId = channelId
     this.active = true
     this._listenOnly = false
+    this.peerNames.clear()
+    for (const member of existingMembers) {
+      this.peerNames.set(member.id, member.name)
+    }
 
     const settings = useSettingsStore.getState()
+    this.audioContext = new AudioContext()
+    this.gainNode = this.audioContext.createGain()
+    this.gainNode.gain.value = settings.inputVolume
+    this.destinationNode = this.audioContext.createMediaStreamDestination()
+    this.gainNode.connect(this.destinationNode)
+    this.bleIncomingGain = this.audioContext.createGain()
+    this.bleIncomingGain.connect(this.destinationNode)
+    this.bleIncomingGain.connect(this.audioContext.destination)
+    this.blePlaybackCursor = this.audioContext.currentTime
+    await this.audioContext.resume().catch(() => {})
 
-    // Try to get microphone access; fall back to listen-only if unavailable
     const constraints: MediaStreamConstraints = {
       audio: settings.micDeviceId
         ? { deviceId: { exact: settings.micDeviceId } }
@@ -64,34 +113,26 @@ export class VoiceManager {
     }
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
-
-      // Set up audio processing chain for volume control
-      this.audioContext = new AudioContext()
       this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
-      this.gainNode = this.audioContext.createGain()
-      this.gainNode.gain.value = settings.inputVolume
-      this.destinationNode = this.audioContext.createMediaStreamDestination()
       this.sourceNode.connect(this.gainNode)
-      this.gainNode.connect(this.destinationNode)
-
-      // Start muted (push-to-talk)
-      const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
-      processedTrack.enabled = false
     } catch {
-      // No mic available — continue in listen-only mode
       this._listenOnly = true
     }
 
-    // Tell the server we're joining
+    const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
+    if (processedTrack) {
+      processedTrack.enabled = false
+    }
+
+    this.startBleBridge()
+
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
 
-    // Create peer connections to all existing members (newcomer sends offers)
     try {
       for (const member of existingMembers) {
         await this.createPeerConnection(member.id, true)
       }
     } catch (err) {
-      // If offer setup fails, send compensating leave_voice
       this.send('leave_voice', { room_id: roomId, channel_id: channelId })
       this.cleanup()
       throw err
@@ -112,34 +153,45 @@ export class VoiceManager {
   private cleanup(): void {
     this.active = false
 
-    // Close all peer connections
     for (const [id, pc] of this.peers) {
       pc.close()
       this.peers.delete(id)
     }
     this.pendingIce.clear()
+    this.peerNames.clear()
+    this.stopBleBridge()
 
-    // Remove audio elements
+    for (const [id, chain] of this.bleRelayChains) {
+      chain.processor.disconnect()
+      chain.silentGain.disconnect()
+      chain.source.disconnect()
+      this.bleRelayChains.delete(id)
+    }
+
     for (const [id, el] of this.audioElements) {
       el.srcObject = null
       el.remove()
       this.audioElements.delete(id)
     }
 
-    // Stop local stream
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop())
       this.localStream = null
     }
 
-    // Close audio context
+    if (this.sourceNode) {
+      this.sourceNode.disconnect()
+      this.sourceNode = null
+    }
+
     if (this.audioContext) {
       this.audioContext.close()
       this.audioContext = null
-      this.sourceNode = null
-      this.gainNode = null
-      this.destinationNode = null
     }
+    this.gainNode = null
+    this.destinationNode = null
+    this.bleIncomingGain = null
+    this.blePlaybackCursor = 0
 
     this.roomId = ''
     this.channelId = ''
@@ -153,7 +205,6 @@ export class VoiceManager {
     const pc = new RTCPeerConnection(ICE_CONFIG)
     this.peers.set(peerId, pc)
 
-    // Add our processed audio track
     if (this.destinationNode) {
       const track = this.destinationNode.stream.getAudioTracks()[0]
       if (track) {
@@ -161,7 +212,6 @@ export class VoiceManager {
       }
     }
 
-    // Handle incoming audio
     pc.ontrack = (event) => {
       const audio = document.createElement('audio')
       audio.autoplay = true
@@ -173,9 +223,9 @@ export class VoiceManager {
       }
 
       this.audioElements.set(peerId, audio)
+      this.attachRemoteBleRelay(peerId, event.streams[0])
     }
 
-    // ICE candidate exchange
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.send('voice_ice', {
@@ -189,6 +239,7 @@ export class VoiceManager {
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        this.detachRemoteBleRelay(peerId)
         this.peers.delete(peerId)
         const el = this.audioElements.get(peerId)
         if (el) {
@@ -213,16 +264,12 @@ export class VoiceManager {
     return pc
   }
 
-  // --- Signaling handlers (called from useWebSocket) ---
-
   async handleOffer(fromId: string, sdp: string): Promise<void> {
     if (!this.active) return
 
     const pc = await this.createPeerConnection(fromId, false)
     const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
     await pc.setRemoteDescription(desc)
-
-    // Flush any ICE candidates that arrived before remote description was set
     await this.flushPendingIce(fromId, pc)
 
     const answer = await pc.createAnswer()
@@ -241,8 +288,6 @@ export class VoiceManager {
     if (!pc) return
     const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
     await pc.setRemoteDescription(desc)
-
-    // Flush any ICE candidates that arrived before remote description was set
     await this.flushPendingIce(fromId, pc)
   }
 
@@ -250,7 +295,6 @@ export class VoiceManager {
     const pc = this.peers.get(fromId)
     const ice = JSON.parse(candidate) as RTCIceCandidateInit
 
-    // Queue ICE if peer connection doesn't exist or remote description not yet set
     if (!pc || !pc.remoteDescription) {
       const queue = this.pendingIce.get(fromId) || []
       queue.push(ice)
@@ -270,12 +314,16 @@ export class VoiceManager {
     }
   }
 
-  handlePeerJoined(_peerId: string): void {
-    // The newcomer will send us an offer; nothing to do here
+  handlePeerJoined(peerId: string, name?: string): void {
+    if (name) {
+      this.peerNames.set(peerId, name)
+    }
   }
 
   handlePeerLeft(peerId: string): void {
     this.pendingIce.delete(peerId)
+    this.detachRemoteBleRelay(peerId)
+    this.peerNames.delete(peerId)
     const pc = this.peers.get(peerId)
     if (pc) {
       pc.close()
@@ -289,8 +337,6 @@ export class VoiceManager {
     }
   }
 
-  // --- PTT ---
-
   setMuted(muted: boolean): void {
     if (!this.destinationNode) return
     const track = this.destinationNode.stream.getAudioTracks()[0]
@@ -298,8 +344,6 @@ export class VoiceManager {
       track.enabled = !muted
     }
   }
-
-  // --- Settings ---
 
   setInputVolume(vol: number): void {
     if (this.gainNode) {
@@ -310,29 +354,24 @@ export class VoiceManager {
   async switchMicrophone(deviceId: string): Promise<void> {
     if (!this.active || !this.audioContext || !this.gainNode || !this.destinationNode) return
 
-    // Get new stream
     const newStream = await navigator.mediaDevices.getUserMedia({
       audio: deviceId ? { deviceId: { exact: deviceId } } : true,
     })
 
-    // Stop old stream
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop())
     }
     this.localStream = newStream
 
-    // Reconnect audio processing chain
     if (this.sourceNode) {
       this.sourceNode.disconnect()
     }
     this.sourceNode = this.audioContext.createMediaStreamSource(newStream)
     this.sourceNode.connect(this.gainNode)
 
-    // Get the current mute state
     const oldTrack = this.destinationNode.stream.getAudioTracks()[0]
     const wasMuted = oldTrack ? !oldTrack.enabled : true
 
-    // Replace track on all peer connections
     const newTrack = this.destinationNode.stream.getAudioTracks()[0]
     if (newTrack) {
       newTrack.enabled = !wasMuted
@@ -358,4 +397,189 @@ export class VoiceManager {
       this.leaveChannel()
     }
   }
+
+  private startBleBridge(): void {
+    if (
+      !this.audioContext ||
+      !window.PeatLinkVoice?.hasBleVoice?.() ||
+      !window.PeatLinkVoice.pollIncomingFrames
+    ) {
+      return
+    }
+
+    this.stopBleBridge()
+    this.blePlaybackCursor = this.audioContext.currentTime
+    this.bleBridgeTimer = setInterval(() => {
+      this.drainIncomingBleFrames()
+    }, BLE_POLL_MS)
+  }
+
+  private stopBleBridge(): void {
+    if (this.bleBridgeTimer) {
+      clearInterval(this.bleBridgeTimer)
+      this.bleBridgeTimer = null
+    }
+  }
+
+  private drainIncomingBleFrames(): void {
+    if (!this.audioContext || !this.bleIncomingGain || !window.PeatLinkVoice?.pollIncomingFrames) {
+      return
+    }
+
+    let frames: IncomingBleFrame[] = []
+    try {
+      const raw = window.PeatLinkVoice.pollIncomingFrames()
+      frames = raw ? JSON.parse(raw) : []
+    } catch {
+      return
+    }
+
+    for (const frame of frames) {
+      if (!frame.pcm) continue
+      const pcmBytes = decodeBase64(frame.pcm)
+      if (pcmBytes.length < 2) continue
+      this.scheduleIncomingBleFrame(pcmBytes)
+    }
+  }
+
+  private scheduleIncomingBleFrame(pcmBytes: Uint8Array): void {
+    if (!this.audioContext || !this.bleIncomingGain) return
+
+    const sampleCount = Math.floor(pcmBytes.length / 2)
+    const buffer = this.audioContext.createBuffer(1, sampleCount, BLE_SAMPLE_RATE)
+    const channel = buffer.getChannelData(0)
+    for (let i = 0; i < sampleCount; i++) {
+      const lo = pcmBytes[i * 2]
+      const hi = pcmBytes[i * 2 + 1]
+      const sample = (hi << 8) | lo
+      const signed = sample >= 0x8000 ? sample - 0x10000 : sample
+      channel[i] = signed / 32768
+    }
+
+    const source = this.audioContext.createBufferSource()
+    source.buffer = buffer
+    source.connect(this.bleIncomingGain)
+
+    const startAt = Math.max(this.audioContext.currentTime, this.blePlaybackCursor)
+    source.start(startAt)
+    this.blePlaybackCursor = startAt + buffer.duration
+    source.onended = () => source.disconnect()
+  }
+
+  private attachRemoteBleRelay(peerId: string, stream: MediaStream): void {
+    if (
+      !this.audioContext ||
+      !window.PeatLinkVoice?.hasBleVoice?.() ||
+      !window.PeatLinkVoice.sendPcmFrame
+    ) {
+      return
+    }
+
+    this.detachRemoteBleRelay(peerId)
+
+    const source = this.audioContext.createMediaStreamSource(stream)
+    const processor = this.audioContext.createScriptProcessor(1024, 1, 1)
+    const silentGain = this.audioContext.createGain()
+    silentGain.gain.value = 0
+
+    const chain: BleRelayChain = {
+      source,
+      processor,
+      silentGain,
+      pendingSamples: [],
+      resampleOffset: 0,
+    }
+
+    processor.onaudioprocess = (event) => {
+      if (!this.active || !window.PeatLinkVoice?.sendPcmFrame || !this.audioContext) {
+        return
+      }
+
+      const input = event.inputBuffer.getChannelData(0)
+      appendResampledPcm16(
+        chain.pendingSamples,
+        input,
+        this.audioContext.sampleRate,
+        chain
+      )
+
+      while (chain.pendingSamples.length >= BLE_FRAME_SAMPLES) {
+        const frame = chain.pendingSamples.splice(0, BLE_FRAME_SAMPLES)
+        const pcmBytes = int16SamplesToBytes(frame)
+        const senderName = this.peerNames.get(peerId) || peerId
+        window.PeatLinkVoice.sendPcmFrame(
+          encodeBase64(pcmBytes),
+          peerId,
+          senderName
+        )
+      }
+    }
+
+    source.connect(processor)
+    processor.connect(silentGain)
+    silentGain.connect(this.audioContext.destination)
+    this.bleRelayChains.set(peerId, chain)
+  }
+
+  private detachRemoteBleRelay(peerId: string): void {
+    const chain = this.bleRelayChains.get(peerId)
+    if (!chain) return
+    chain.processor.disconnect()
+    chain.silentGain.disconnect()
+    chain.source.disconnect()
+    this.bleRelayChains.delete(peerId)
+  }
+}
+
+function appendResampledPcm16(
+  target: number[],
+  input: Float32Array,
+  inputRate: number,
+  chain: BleRelayChain
+) {
+  const ratio = inputRate / BLE_SAMPLE_RATE
+  let pos = chain.resampleOffset
+  while (pos < input.length) {
+    const idx = Math.floor(pos)
+    const next = Math.min(idx + 1, input.length - 1)
+    const frac = pos - idx
+    const sample = input[idx] * (1 - frac) + input[next] * frac
+    target.push(floatToInt16(sample))
+    pos += ratio
+  }
+  chain.resampleOffset = pos - input.length
+}
+
+function floatToInt16(sample: number): number {
+  const clamped = Math.max(-1, Math.min(1, sample))
+  return clamped < 0
+    ? Math.round(clamped * 32768)
+    : Math.round(clamped * 32767)
+}
+
+function int16SamplesToBytes(samples: number[]): Uint8Array {
+  const bytes = new Uint8Array(samples.length * 2)
+  for (let i = 0; i < samples.length; i++) {
+    const value = samples[i] < 0 ? samples[i] + 0x10000 : samples[i]
+    bytes[i * 2] = value & 0xff
+    bytes[i * 2 + 1] = (value >> 8) & 0xff
+  }
+  return bytes
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
 }

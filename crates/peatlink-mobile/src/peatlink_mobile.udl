@@ -71,6 +71,7 @@ interface MobileNode {
     sequence<VoiceFrame> recv_voice_frames();
 
     // Direct BLE data transport (bypasses peat-btle document sync)
+    void push_ble_recv_from(string peer_id, sequence<u8> data);
     void push_ble_recv(sequence<u8> data);
     sequence<u8>? pop_ble_send();
 

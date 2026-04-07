@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let web_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -15,7 +13,10 @@ async fn main() {
     let web_path = if web_dir.exists() {
         Some(web_dir)
     } else {
-        eprintln!("Web UI not found at {}. Run 'cd web && npm run build' first.", web_dir.display());
+        eprintln!(
+            "Web UI not found at {}. Run 'cd web && npm run build' first.",
+            web_dir.display()
+        );
         None
     };
 
@@ -23,7 +24,10 @@ async fn main() {
         .await
         .expect("failed to start server");
 
-    println!("PeatLink mobile server running on http://localhost:{}", port);
+    println!(
+        "PeatLink mobile server running on http://localhost:{}",
+        port
+    );
     println!("Press Ctrl+C to stop");
 
     tokio::signal::ctrl_c().await.ok();

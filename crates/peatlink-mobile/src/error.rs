@@ -14,10 +14,14 @@ pub enum PeatLinkError {
 
 impl PeatLinkError {
     pub fn startup(msg: impl fmt::Display) -> Self {
-        Self::StartupError { msg: msg.to_string() }
+        Self::StartupError {
+            msg: msg.to_string(),
+        }
     }
 
     pub fn internal(msg: impl fmt::Display) -> Self {
-        Self::InternalError { msg: msg.to_string() }
+        Self::InternalError {
+            msg: msg.to_string(),
+        }
     }
 }

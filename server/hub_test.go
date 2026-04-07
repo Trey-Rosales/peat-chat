@@ -433,6 +433,172 @@ func TestHub_RelayToNonexistentPeer(t *testing.T) {
 	// If we get here without panic, test passes
 }
 
+func TestHub_BroadcastMessageFromRelay_PreservesIdentity(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "Relay")
+	observer := newTestClient(hub, "Observer")
+	hub.register <- relay
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(relay, "general")
+	hub.JoinRoom(observer, "general")
+	drainClientSend(relay, 20)
+	drainClientSend(observer, 20)
+
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+
+	room := hub.getOrCreateRoom("general")
+	replyTo := "parent-1"
+	if ok := hub.BroadcastMessageFromRelay(relay, room, "ble-peer-1", "", "msg-1", "hello from BLE", &replyTo); !ok {
+		t.Fatal("expected relay chat message to be accepted")
+	}
+
+	msgs := drainClientSend(observer, 5)
+	for _, msg := range msgs {
+		if msg.Type == "message" {
+			var data MessageData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				t.Fatalf("failed to unmarshal message: %v", err)
+			}
+			if data.Message.ID != "msg-1" {
+				t.Fatalf("expected preserved message id, got %q", data.Message.ID)
+			}
+			if data.Message.Sender != "ble-peer-1" {
+				t.Fatalf("expected BLE sender id, got %q", data.Message.Sender)
+			}
+			if data.Message.SenderName != "Charlie" {
+				t.Fatalf("expected BLE sender name, got %q", data.Message.SenderName)
+			}
+			if data.Message.ReplyTo == nil || *data.Message.ReplyTo != "parent-1" {
+				t.Fatal("expected reply_to to be preserved")
+			}
+			return
+		}
+	}
+
+	t.Fatal("observer should receive relayed BLE message")
+}
+
+func TestHub_CreateMapMarkerFromRelay_PreservesCreator(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "Relay")
+	observer := newTestClient(hub, "Observer")
+	hub.register <- relay
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(relay, "general")
+	hub.JoinRoom(observer, "general")
+	drainClientSend(relay, 20)
+	drainClientSend(observer, 20)
+
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	ok := hub.CreateMapMarkerFromRelay(relay, roomHex, CreateMarkerData{
+		RoomID:     roomHex,
+		Lat:        38.89,
+		Lon:        -77.03,
+		Name:       "Relay Point",
+		Icon:       "rally",
+		Color:      "green",
+		SenderID:   "ble-peer-1",
+		SenderName: "Charlie",
+	})
+	if !ok {
+		t.Fatal("expected relay marker to be accepted")
+	}
+
+	msgs := drainClientSend(observer, 5)
+	for _, msg := range msgs {
+		if msg.Type == "marker_created" {
+			var data MarkerCreatedData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				t.Fatalf("failed to unmarshal marker_created: %v", err)
+			}
+			if data.Marker.CreatorID != "ble-peer-1" {
+				t.Fatalf("expected BLE creator id, got %q", data.Marker.CreatorID)
+			}
+			if data.Marker.CreatorName != "Charlie" {
+				t.Fatalf("expected BLE creator name, got %q", data.Marker.CreatorName)
+			}
+			return
+		}
+	}
+
+	t.Fatal("observer should receive relayed marker")
+}
+
+func TestHub_JoinVoiceFromRelay_ShowsSeparateBleMember(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "Relay")
+	observer := newTestClient(hub, "Observer")
+	hub.register <- relay
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(relay, "general")
+	hub.JoinRoom(observer, "general")
+	drainClientSend(relay, 20)
+	drainClientSend(observer, 20)
+
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+	var vcID string
+	for id := range room.VoiceChannels {
+		vcID = id
+		break
+	}
+	hub.JoinVoice(observer, roomHex, vcID)
+	drainClientSend(observer, 10)
+
+	hub.JoinVoiceFromRelay(relay, roomHex, vcID, "ble-peer-1", "Charlie")
+
+	msgs := drainClientSend(observer, 10)
+	var sawJoin bool
+	var sawState bool
+	for _, msg := range msgs {
+		switch msg.Type {
+		case "voice_peer_joined":
+			var data VoicePeerJoinedData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				t.Fatalf("failed to unmarshal voice_peer_joined: %v", err)
+			}
+			if data.PeerID == "ble-peer-1" && data.Name == "Charlie" {
+				sawJoin = true
+			}
+		case "voice_state":
+			var data VoiceStateData
+			if err := json.Unmarshal(msg.Data, &data); err != nil {
+				t.Fatalf("failed to unmarshal voice_state: %v", err)
+			}
+			for _, ch := range data.Channels {
+				for _, member := range ch.Members {
+					if member.ID == "ble-peer-1" && member.Name == "Charlie" {
+						sawState = true
+					}
+				}
+			}
+		}
+	}
+
+	if !sawJoin {
+		t.Fatal("observer should receive voice_peer_joined for BLE member")
+	}
+	if !sawState {
+		t.Fatal("voice_state should include BLE member separately from relay")
+	}
+}
+
 // drainClientSend collects up to n messages from the client's send channel
 // with a short timeout per message.
 func drainClientSend(client *Client, n int) []WSMessage {

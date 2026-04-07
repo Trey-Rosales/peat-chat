@@ -11,6 +11,8 @@ declare global {
       stopPtt(): void
       isTransmitting(): boolean
       hasBleVoice(): boolean
+      pollIncomingFrames?(): string
+      sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
     }
   }
 }

@@ -209,10 +209,7 @@ impl ClientSession {
 
 // ---------- WebSocket handler ----------
 
-async fn ws_upgrade(
-    ws: WebSocketUpgrade,
-    State(hub): State<Arc<Hub>>,
-) -> impl IntoResponse {
+async fn ws_upgrade(ws: WebSocketUpgrade, State(hub): State<Arc<Hub>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, hub))
 }
 
@@ -232,10 +229,14 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
     };
 
     // Send identity
-    let _ = send_json(&mut socket, "identity", &serde_json::json!({
-        "id": identity,
-        "short_id": short_id,
-    }))
+    let _ = send_json(
+        &mut socket,
+        "identity",
+        &serde_json::json!({
+            "id": identity,
+            "short_id": short_id,
+        }),
+    )
     .await;
 
     // If a default display name is configured (from MobileNode callsign),
@@ -245,14 +246,21 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
         if !default_name.is_empty() {
             session.name = default_name.clone();
             // Tell the WebView what the callsign is so the React store uses it
-            let _ = send_json(&mut socket, "name_assigned", &serde_json::json!({
-                "name": *default_name,
-            }))
+            let _ = send_json(
+                &mut socket,
+                "name_assigned",
+                &serde_json::json!({
+                    "name": *default_name,
+                }),
+            )
             .await;
             // Forward to upstream relay
-            let set_name_msg = make_json("set_name", &serde_json::json!({
-                "name": *default_name,
-            }));
+            let set_name_msg = make_json(
+                "set_name",
+                &serde_json::json!({
+                    "name": *default_name,
+                }),
+            );
             let _ = hub.passthrough_tx.send(Arc::new(set_name_msg));
         }
     }
@@ -300,13 +308,16 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
         room.members.remove(&session.client_id);
         let room_id = chat_id_hex(chat_id);
         let count = room.member_count();
-        let msg = make_json("peer_update", &serde_json::json!({
-            "room_id": room_id,
-            "peer_id": session.identity,
-            "name": session.name,
-            "event": "left",
-            "members": count,
-        }));
+        let msg = make_json(
+            "peer_update",
+            &serde_json::json!({
+                "room_id": room_id,
+                "peer_id": session.identity,
+                "name": session.name,
+                "event": "left",
+                "members": count,
+            }),
+        );
         let _ = room.tx.send(Arc::new(msg));
         broadcast_mesh_state(&room, &room_id);
     }
@@ -322,7 +333,12 @@ async fn handle_message(
     fwd_tx: &mpsc::Sender<Arc<String>>,
 ) -> bool {
     let Ok(env) = serde_json::from_str::<WsEnvelope>(text) else {
-        let _ = send_json(socket, "error", &serde_json::json!({"message": "invalid JSON"})).await;
+        let _ = send_json(
+            socket,
+            "error",
+            &serde_json::json!({"message": "invalid JSON"}),
+        )
+        .await;
         return true;
     };
 
@@ -381,28 +397,39 @@ async fn handle_message(
 
                 // Send room_joined
                 let room = room_arc.read().await;
-                let _ = send_json(socket, "room_joined", &serde_json::json!({
-                    "room_id": room_id,
-                    "name": room.name,
-                    "members": room.member_count(),
-                }))
+                let _ = send_json(
+                    socket,
+                    "room_joined",
+                    &serde_json::json!({
+                        "room_id": room_id,
+                        "name": room.name,
+                        "members": room.member_count(),
+                    }),
+                )
                 .await;
 
                 // Send history
-                let _ = send_json(socket, "room_history", &serde_json::json!({
-                    "room_id": room_id,
-                    "messages": room.messages,
-                }))
+                let _ = send_json(
+                    socket,
+                    "room_history",
+                    &serde_json::json!({
+                        "room_id": room_id,
+                        "messages": room.messages,
+                    }),
+                )
                 .await;
 
                 // Broadcast peer_update to others
-                let msg = make_json("peer_update", &serde_json::json!({
-                    "room_id": room_id,
-                    "peer_id": session.identity,
-                    "name": session.name,
-                    "event": "joined",
-                    "members": room.member_count(),
-                }));
+                let msg = make_json(
+                    "peer_update",
+                    &serde_json::json!({
+                        "room_id": room_id,
+                        "peer_id": session.identity,
+                        "name": session.name,
+                        "event": "joined",
+                        "members": room.member_count(),
+                    }),
+                );
                 let _ = room.tx.send(Arc::new(msg));
 
                 // Broadcast mesh state
@@ -411,8 +438,16 @@ async fn handle_message(
         }
 
         "send_message" => {
-            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
-            let content = env.data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let room_id_str = env
+                .data
+                .get("room_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = env
+                .data
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if content.is_empty() {
                 return true;
             }
@@ -424,7 +459,11 @@ async fn handle_message(
                     sender_name: session.name.clone(),
                     timestamp: now_ms(),
                     content: content.to_string(),
-                    reply_to: env.data.get("reply_to").and_then(|v| v.as_str()).map(String::from),
+                    reply_to: env
+                        .data
+                        .get("reply_to")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 };
 
                 let mut room = room_arc.write().await;
@@ -434,10 +473,13 @@ async fn handle_message(
                     room.messages.drain(..excess);
                 }
 
-                let broadcast = make_json("message", &serde_json::json!({
-                    "room_id": room_id_str,
-                    "message": msg,
-                }));
+                let broadcast = make_json(
+                    "message",
+                    &serde_json::json!({
+                        "room_id": room_id_str,
+                        "message": msg,
+                    }),
+                );
                 let _ = room.tx.send(Arc::new(broadcast));
             } else {
                 // Room not found locally — forward to upstream (DM rooms, etc.)
@@ -489,11 +531,14 @@ fn broadcast_mesh_state(room: &Room, room_id: &str) {
             })
             .collect();
 
-        let msg = make_json("mesh_state", &serde_json::json!({
-            "room_id": room_id,
-            "self_id": room.members.get(cid).map(|i| &i.id).unwrap_or(&String::new()),
-            "peers": peers,
-        }));
+        let msg = make_json(
+            "mesh_state",
+            &serde_json::json!({
+                "room_id": room_id,
+                "self_id": room.members.get(cid).map(|i| &i.id).unwrap_or(&String::new()),
+                "peers": peers,
+            }),
+        );
         let _ = room.tx.send(Arc::new(msg));
     }
 }

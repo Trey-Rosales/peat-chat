@@ -135,11 +135,10 @@ impl PeatLinkNode {
                                     // Emit the latest message if it's from someone else
                                     if let Some(msg) = messages.last() {
                                         if msg.sender != my_node_id {
-                                            let _ =
-                                                event_tx2.send(NodeEvent::MessageReceived {
-                                                    chat_id,
-                                                    message: msg.clone(),
-                                                });
+                                            let _ = event_tx2.send(NodeEvent::MessageReceived {
+                                                chat_id,
+                                                message: msg.clone(),
+                                            });
                                         }
                                     }
                                 }
@@ -174,11 +173,7 @@ impl PeatLinkNode {
     }
 
     /// Send a text message to a chat room.
-    pub async fn send_message(
-        &self,
-        chat_id: &ChatId,
-        content: String,
-    ) -> Result<ChatMessage> {
+    pub async fn send_message(&self, chat_id: &ChatId, content: String) -> Result<ChatMessage> {
         let msg = ChatMessage::new(self.node_id(), self.display_name.clone(), content);
 
         self.store.add_message(chat_id, &msg)?;

@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -28,6 +29,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
 
 import com.peatlink.app.ble.BleVoiceService
 import com.peatlink.app.ble.PeatBleService
@@ -178,6 +181,30 @@ class MainActivity : AppCompatActivity() {
                 @JavascriptInterface
                 fun hasBleVoice(): Boolean {
                     return bleVoice != null
+                }
+
+                @JavascriptInterface
+                fun pollIncomingFrames(): String {
+                    val frames = bleVoice?.drainIncomingPcmFrames() ?: emptyList()
+                    val arr = JSONArray()
+                    for (frame in frames) {
+                        arr.put(JSONObject().apply {
+                            put("sender_id", frame.senderId)
+                            put("sender_name", frame.senderName)
+                            put("pcm", Base64.encodeToString(frame.pcm, Base64.NO_WRAP))
+                        })
+                    }
+                    return arr.toString()
+                }
+
+                @JavascriptInterface
+                fun sendPcmFrame(base64Pcm: String, senderId: String, senderName: String) {
+                    try {
+                        val pcm = Base64.decode(base64Pcm, Base64.DEFAULT)
+                        bleVoice?.sendPcmFrame(pcm, senderId, senderName)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "sendPcmFrame failed: ${e.message}")
+                    }
                 }
             }, "PeatLinkVoice")
         }

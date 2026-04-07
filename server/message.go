@@ -51,6 +51,8 @@ type SendMessageData struct {
 	RoomID     string  `json:"room_id"`
 	Content    string  `json:"content"`
 	ReplyTo    *string `json:"reply_to,omitempty"`
+	MessageID  string  `json:"message_id,omitempty"`
+	SenderID   string  `json:"sender_id,omitempty"`   // override sender ID (for BLE relay)
 	SenderName string  `json:"sender_name,omitempty"` // override sender name (for BLE relay)
 }
 
@@ -123,14 +125,17 @@ type CreateVoiceChannelData struct {
 
 // Incoming: join_voice
 type JoinVoiceData struct {
-	RoomID    string `json:"room_id"`
-	ChannelID string `json:"channel_id"`
+	RoomID     string `json:"room_id"`
+	ChannelID  string `json:"channel_id"`
+	SenderID   string `json:"sender_id,omitempty"`   // override sender ID (for BLE relay)
+	SenderName string `json:"sender_name,omitempty"` // override sender name (for BLE relay)
 }
 
 // Incoming: leave_voice
 type LeaveVoiceData struct {
 	RoomID    string `json:"room_id"`
 	ChannelID string `json:"channel_id"`
+	SenderID  string `json:"sender_id,omitempty"` // override sender ID (for BLE relay)
 }
 
 // Incoming: voice_offer
@@ -162,6 +167,7 @@ type VoiceSpeakingData struct {
 	RoomID    string `json:"room_id"`
 	ChannelID string `json:"channel_id"`
 	Speaking  bool   `json:"speaking"`
+	SenderID  string `json:"sender_id,omitempty"` // override sender ID (for BLE relay)
 }
 
 // Outgoing: voice_channel_created
@@ -295,14 +301,16 @@ type CotMarker struct {
 
 // Incoming: create_marker
 type CreateMarkerData struct {
-	RoomID  string  `json:"room_id"`
-	Lat     float64 `json:"lat"`
-	Lon     float64 `json:"lon"`
-	Name    string  `json:"name"`
-	Icon    string  `json:"icon"`
-	Color   string  `json:"color"`
-	CotType string  `json:"cot_type"`
-	Remarks string  `json:"remarks"`
+	RoomID     string  `json:"room_id"`
+	Lat        float64 `json:"lat"`
+	Lon        float64 `json:"lon"`
+	Name       string  `json:"name"`
+	Icon       string  `json:"icon"`
+	Color      string  `json:"color"`
+	CotType    string  `json:"cot_type"`
+	Remarks    string  `json:"remarks"`
+	SenderID   string  `json:"sender_id,omitempty"`   // override creator ID (for BLE relay)
+	SenderName string  `json:"sender_name,omitempty"` // override creator name (for BLE relay)
 }
 
 // Incoming: delete_marker

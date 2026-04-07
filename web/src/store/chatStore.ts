@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import type { ChatMessage, CotContact, CotMarker, MeshPeer, Room, VoiceChannel, VoiceMember } from '../types'
 
+function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const byId = new Map(existing.map((msg) => [msg.id, msg]))
+  for (const msg of incoming) {
+    const prev = byId.get(msg.id)
+    byId.set(msg.id, prev ? { ...prev, ...msg } : msg)
+  }
+  return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp)
+}
+
 interface ChatStore {
   userId: string
   shortId: string
@@ -108,7 +117,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setRoomHistory: (roomId, messages) => {
     const rooms = { ...get().rooms }
     if (rooms[roomId]) {
-      rooms[roomId] = { ...rooms[roomId], messages }
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: mergeMessages(rooms[roomId].messages, messages),
+      }
     }
     set({ rooms })
   },
@@ -118,10 +130,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (rooms[roomId]) {
       const isActive = get().activeRoomId === roomId
       const isSelf = message.sender === get().userId
+      const alreadyExists = rooms[roomId].messages.some((m) => m.id === message.id)
       rooms[roomId] = {
         ...rooms[roomId],
-        messages: [...rooms[roomId].messages, message],
-        unread: isActive || isSelf ? rooms[roomId].unread : rooms[roomId].unread + 1,
+        messages: mergeMessages(rooms[roomId].messages, [message]),
+        unread: alreadyExists || isActive || isSelf ? rooms[roomId].unread : rooms[roomId].unread + 1,
       }
     }
     set({ rooms })
