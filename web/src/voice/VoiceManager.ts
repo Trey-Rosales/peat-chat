@@ -135,8 +135,12 @@ export class VoiceManager {
 
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
 
-    // Create WebRTC peer connections — each independently guarded
+    // Create WebRTC peer connections — skip BLE peers (they use BLE audio bridge)
     for (const member of existingMembers) {
+      if (member.id.startsWith('ble-')) {
+        console.log(`Skipping WebRTC for BLE peer: ${member.name}`)
+        continue
+      }
       try {
         await this.createPeerConnection(member.id, true)
       } catch (err) {
@@ -272,6 +276,7 @@ export class VoiceManager {
 
   async handleOffer(fromId: string, sdp: string): Promise<void> {
     if (!this.active) return
+    if (fromId.startsWith('ble-')) return // BLE peers use BLE audio, not WebRTC
 
     try {
       const pc = await this.createPeerConnection(fromId, false)

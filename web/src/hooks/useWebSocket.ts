@@ -158,7 +158,7 @@ export function useWebSocket(
             short_id: '',
             speaking: false,
           })
-          signalingRef?.current?.handlePeerJoined(msg.data.peer_id, msg.data.name)
+          try { signalingRef?.current?.handlePeerJoined(msg.data.peer_id, msg.data.name) } catch {}
           break
         case 'voice_peer_left':
           state.removeVoicePeer(
@@ -166,16 +166,16 @@ export function useWebSocket(
             msg.data.channel_id,
             msg.data.peer_id
           )
-          signalingRef?.current?.handlePeerLeft(msg.data.peer_id)
+          try { signalingRef?.current?.handlePeerLeft(msg.data.peer_id) } catch {}
           break
         case 'voice_offer_relay':
-          signalingRef?.current?.handleOffer(msg.data.from_id, msg.data.sdp)
+          try { signalingRef?.current?.handleOffer(msg.data.from_id, msg.data.sdp)?.catch?.(() => {}) } catch {}
           break
         case 'voice_answer_relay':
-          signalingRef?.current?.handleAnswer(msg.data.from_id, msg.data.sdp)
+          try { signalingRef?.current?.handleAnswer(msg.data.from_id, msg.data.sdp)?.catch?.(() => {}) } catch {}
           break
         case 'voice_ice_relay':
-          signalingRef?.current?.handleIce(msg.data.from_id, msg.data.candidate)
+          try { signalingRef?.current?.handleIce(msg.data.from_id, msg.data.candidate)?.catch?.(() => {}) } catch {}
           break
         case 'voice_speaking_broadcast':
           state.updateSpeaking(

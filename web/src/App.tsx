@@ -28,6 +28,8 @@ export default function App() {
   sendRef.current = send
 
   // Initialize VoiceManager with the real send function
+  // Note: VoiceManager is always created but voice_offer/answer handlers are
+  // guarded against crashes. BLE-only devices skip joinChannel entirely.
   useEffect(() => {
     voiceManagerRef.current = new VoiceManager((...args) => sendRef.current(...args))
     return () => {
