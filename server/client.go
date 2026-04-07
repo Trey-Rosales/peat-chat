@@ -171,7 +171,7 @@ func (c *Client) readPump() {
 				continue
 			}
 			room := c.hub.getRoomByHex(d.RoomID)
-			if room == nil {
+			if room == nil || !room.HasMember(c) {
 				c.sendJSON("error", ErrorData{Message: "room not found"})
 				continue
 			}
@@ -198,6 +198,11 @@ func (c *Client) readPump() {
 		case "cot_position":
 			var d CotPositionData
 			if json.Unmarshal(msg.Data, &d) == nil {
+				// Validate room membership
+				room := c.hub.getRoomByHex(d.RoomID)
+				if room == nil || !room.HasMember(c) {
+					continue
+				}
 				c.mu.Lock()
 				c.cotLat = d.Lat
 				c.cotLon = d.Lon

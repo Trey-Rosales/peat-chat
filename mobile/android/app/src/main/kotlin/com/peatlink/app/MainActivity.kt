@@ -72,10 +72,27 @@ class MainActivity : AppCompatActivity() {
             settings.cacheMode = WebSettings.LOAD_DEFAULT
             settings.setGeolocationEnabled(true)
 
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest
+                ): Boolean {
+                    val host = request.url.host ?: ""
+                    // Only allow localhost navigation -- block external origins
+                    if (host == "localhost" || host == "127.0.0.1") {
+                        return false
+                    }
+                    return true // block non-localhost navigation
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest) {
-                    // Grant audio permission to WebView for getUserMedia
+                    // Only grant permissions for localhost origins
+                    val origin = request.origin.toString()
+                    if (!origin.startsWith("http://localhost") && !origin.startsWith("https://localhost")) {
+                        request.deny()
+                        return
+                    }
                     val granted = request.resources.filter { res ->
                         res == PermissionRequest.RESOURCE_AUDIO_CAPTURE
                     }.toTypedArray()
@@ -90,8 +107,12 @@ class MainActivity : AppCompatActivity() {
                     origin: String,
                     callback: GeolocationPermissions.Callback
                 ) {
-                    // Auto-grant geolocation for localhost (our own server)
-                    callback.invoke(origin, true, false)
+                    // Only grant geolocation for localhost
+                    if (origin.startsWith("http://localhost") || origin.startsWith("https://localhost")) {
+                        callback.invoke(origin, true, false)
+                    } else {
+                        callback.invoke(origin, false, false)
+                    }
                 }
             }
 

@@ -45,6 +45,12 @@ export function useWebSocket(
 
     ws.onclose = () => {
       store.getState().setConnected(false)
+      // Reset transient state on disconnect
+      store.setState({
+        meshPeers: {},
+        cotContacts: {},
+        voiceState: {},
+      })
       wsRef.current = null
       reconnectTimer.current = setTimeout(connect, 2000)
     }
@@ -54,7 +60,14 @@ export function useWebSocket(
     }
 
     ws.onmessage = (event) => {
-      const msg: WSMessage = JSON.parse(event.data)
+      let msg: WSMessage
+      try {
+        msg = JSON.parse(event.data)
+      } catch {
+        console.warn('Received malformed WebSocket frame')
+        return
+      }
+      if (!msg || typeof msg.type !== 'string') return
       const state = store.getState()
 
       switch (msg.type) {

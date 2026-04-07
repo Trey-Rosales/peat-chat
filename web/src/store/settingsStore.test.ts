@@ -8,7 +8,9 @@ beforeEach(() => {
     pttKey: ' ',
     inputVolume: 1.0,
     preferredTransport: 'tcp',
+    voiceMode: 'ptt',
     protomapsApiKey: '',
+    mapStyle: 'dark',
     locationEnabled: false,
   })
 })

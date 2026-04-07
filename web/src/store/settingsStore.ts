@@ -19,7 +19,7 @@ interface SettingsStore {
   setInputVolume: (vol: number) => void
   setPreferredTransport: (t: string) => void
   setProtomapsApiKey: (key: string) => void
-  setMapStyle: (style: 'dark' | 'light' | 'topo') => void
+  setMapStyle: (style: 'dark' | 'light' | 'topo' | 'satellite') => void
   setLocationEnabled: (enabled: boolean) => void
 }
 

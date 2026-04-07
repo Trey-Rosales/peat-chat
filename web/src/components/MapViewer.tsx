@@ -111,15 +111,7 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     if (!map || !selfPosition) return
 
     if (!selfMarkerRef.current) {
-      const el = document.createElement('div')
-      el.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-          <span style="font-size:10px;color:#e9edef;background:#111b21;padding:1px 6px;border-radius:4px;white-space:nowrap;font-weight:600">${selfName}</span>
-          <div style="width:28px;height:28px;border-radius:50%;background:#00a884;display:flex;align-items:center;justify-content:center;border:3px solid rgba(0,168,132,0.3);box-shadow:0 0 12px rgba(0,168,132,0.4)">
-            <span style="color:white;font-size:8px;font-weight:700">YOU</span>
-          </div>
-        </div>
-      `
+      const el = buildSelfMarkerEl(selfName)
       selfMarkerRef.current = new maplibregl.Marker({ element: el })
         .setLngLat([selfPosition.lon, selfPosition.lat])
         .addTo(map)
@@ -154,16 +146,13 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         existing.setLngLat([contact.lon, contact.lat])
         const el = existing.getElement()
         el.style.opacity = isStale ? '0.4' : '1'
+        // Update callsign text in case name changed
+        const label = el.querySelector('span')
+        if (label && label.textContent !== contact.callsign) {
+          label.textContent = contact.callsign
+        }
       } else {
-        const el = document.createElement('div')
-        el.style.cursor = 'pointer'
-        el.style.opacity = isStale ? '0.4' : '1'
-        el.innerHTML = `
-          <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-            <span style="font-size:10px;color:#e9edef;background:#111b21;padding:1px 6px;border-radius:4px;white-space:nowrap">${contact.callsign}</span>
-            <div style="width:20px;height:20px;border-radius:50%;background:#3b82f6;border:2px solid #60a5fa"></div>
-          </div>
-        `
+        const el = buildContactMarkerEl(contact.callsign, isStale)
         el.addEventListener('click', () => {
           setSelectedContact(contact)
           setSelectedMarker(null)
@@ -198,15 +187,7 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     for (const m of markers) {
       if (userMarkersRef.current.has(m.id)) continue
 
-      const color = MARKER_COLORS[m.color] || MARKER_COLORS.blue
-      const el = document.createElement('div')
-      el.style.cursor = 'pointer'
-      el.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-          <span style="font-size:10px;color:#e9edef;background:${color}33;padding:1px 6px;border-radius:4px;white-space:nowrap;border:1px solid ${color}66">${m.name}</span>
-          <div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid ${color}99"></div>
-        </div>
-      `
+      const el = buildUserMarkerEl(m.name, m.color)
       el.addEventListener('click', () => {
         setSelectedMarker(m)
         setSelectedContact(null)
@@ -404,6 +385,72 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
       </div>
     </div>
   )
+}
+
+// --- Safe marker DOM builders (no innerHTML -- prevents XSS) ---
+
+function buildSelfMarkerEl(name: string): HTMLDivElement {
+  const el = document.createElement('div')
+  const wrapper = document.createElement('div')
+  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+
+  const label = document.createElement('span')
+  label.textContent = name
+  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: '#111b21', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap', fontWeight: '600' })
+
+  const dot = document.createElement('div')
+  Object.assign(dot.style, { width: '28px', height: '28px', borderRadius: '50%', background: '#00a884', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid rgba(0,168,132,0.3)', boxShadow: '0 0 12px rgba(0,168,132,0.4)' })
+  const youLabel = document.createElement('span')
+  youLabel.textContent = 'YOU'
+  Object.assign(youLabel.style, { color: 'white', fontSize: '8px', fontWeight: '700' })
+  dot.appendChild(youLabel)
+
+  wrapper.appendChild(label)
+  wrapper.appendChild(dot)
+  el.appendChild(wrapper)
+  return el
+}
+
+function buildContactMarkerEl(callsign: string, isStale: boolean): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.cursor = 'pointer'
+  el.style.opacity = isStale ? '0.4' : '1'
+
+  const wrapper = document.createElement('div')
+  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+
+  const label = document.createElement('span')
+  label.textContent = callsign
+  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: '#111b21', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap' })
+
+  const dot = document.createElement('div')
+  Object.assign(dot.style, { width: '20px', height: '20px', borderRadius: '50%', background: '#3b82f6', border: '2px solid #60a5fa' })
+
+  wrapper.appendChild(label)
+  wrapper.appendChild(dot)
+  el.appendChild(wrapper)
+  return el
+}
+
+function buildUserMarkerEl(name: string, colorKey: string): HTMLDivElement {
+  const color = MARKER_COLORS[colorKey] || MARKER_COLORS.blue
+  const el = document.createElement('div')
+  el.style.cursor = 'pointer'
+
+  const wrapper = document.createElement('div')
+  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+
+  const label = document.createElement('span')
+  label.textContent = name
+  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: `${color}33`, padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap', border: `1px solid ${color}66` })
+
+  const dot = document.createElement('div')
+  Object.assign(dot.style, { width: '16px', height: '16px', borderRadius: '50%', background: color, border: `2px solid ${color}99` })
+
+  wrapper.appendChild(label)
+  wrapper.appendChild(dot)
+  el.appendChild(wrapper)
+  return el
 }
 
 // --- Map style builders ---

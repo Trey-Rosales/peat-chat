@@ -8,6 +8,7 @@ const ICE_CONFIG: RTCConfiguration = {
 export class VoiceManager {
   private peers = new Map<string, RTCPeerConnection>()
   private audioElements = new Map<string, HTMLAudioElement>()
+  private pendingIce = new Map<string, RTCIceCandidateInit[]>()
   private localStream: MediaStream | null = null
   private audioContext: AudioContext | null = null
   private gainNode: GainNode | null = null
@@ -85,8 +86,15 @@ export class VoiceManager {
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
 
     // Create peer connections to all existing members (newcomer sends offers)
-    for (const member of existingMembers) {
-      await this.createPeerConnection(member.id, true)
+    try {
+      for (const member of existingMembers) {
+        await this.createPeerConnection(member.id, true)
+      }
+    } catch (err) {
+      // If offer setup fails, send compensating leave_voice
+      this.send('leave_voice', { room_id: roomId, channel_id: channelId })
+      this.cleanup()
+      throw err
     }
   }
 
@@ -109,6 +117,7 @@ export class VoiceManager {
       pc.close()
       this.peers.delete(id)
     }
+    this.pendingIce.clear()
 
     // Remove audio elements
     for (const [id, el] of this.audioElements) {
@@ -213,6 +222,9 @@ export class VoiceManager {
     const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
     await pc.setRemoteDescription(desc)
 
+    // Flush any ICE candidates that arrived before remote description was set
+    await this.flushPendingIce(fromId, pc)
+
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
@@ -229,13 +241,33 @@ export class VoiceManager {
     if (!pc) return
     const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
     await pc.setRemoteDescription(desc)
+
+    // Flush any ICE candidates that arrived before remote description was set
+    await this.flushPendingIce(fromId, pc)
   }
 
   async handleIce(fromId: string, candidate: string): Promise<void> {
     const pc = this.peers.get(fromId)
-    if (!pc) return
     const ice = JSON.parse(candidate) as RTCIceCandidateInit
+
+    // Queue ICE if peer connection doesn't exist or remote description not yet set
+    if (!pc || !pc.remoteDescription) {
+      const queue = this.pendingIce.get(fromId) || []
+      queue.push(ice)
+      this.pendingIce.set(fromId, queue)
+      return
+    }
+
     await pc.addIceCandidate(ice)
+  }
+
+  private async flushPendingIce(peerId: string, pc: RTCPeerConnection): Promise<void> {
+    const queued = this.pendingIce.get(peerId)
+    if (!queued || queued.length === 0) return
+    this.pendingIce.delete(peerId)
+    for (const ice of queued) {
+      await pc.addIceCandidate(ice)
+    }
   }
 
   handlePeerJoined(_peerId: string): void {
@@ -243,6 +275,7 @@ export class VoiceManager {
   }
 
   handlePeerLeft(peerId: string): void {
+    this.pendingIce.delete(peerId)
     const pc = this.peers.get(peerId)
     if (pc) {
       pc.close()

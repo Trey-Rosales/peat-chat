@@ -15,9 +15,11 @@ beforeEach(() => {
     voiceState: {},
     activeVoice: null,
     localSpeaking: false,
+    selfPosition: null,
     cotContacts: {},
     cotMarkers: {},
     mapViewerOpen: false,
+    voiceError: null,
     settingsOpen: false,
   })
 })
@@ -239,7 +241,7 @@ describe('chatStore - CoT contacts', () => {
 describe('chatStore - CoT markers', () => {
   it('sets markers', () => {
     useChatStore.getState().setCotMarkers('r1', [
-      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 },
+      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, hae: 0, ce: 999999, le: 999999, name: 'Rally', icon: 'rally', color: 'green', cot_type: 'b-m-p-s-m', how: 'h-e', created_at: 1000, stale: 87400000, remarks: '' },
     ])
     expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
   })
@@ -247,13 +249,13 @@ describe('chatStore - CoT markers', () => {
   it('adds a marker', () => {
     useChatStore.getState().setCotMarkers('r1', [])
     useChatStore.getState().addCotMarker('r1', {
-      id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000,
+      id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, hae: 0, ce: 999999, le: 999999, name: 'Rally', icon: 'rally', color: 'green', cot_type: 'b-m-p-s-m', how: 'h-e', created_at: 1000, stale: 87400000, remarks: '',
     })
     expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
   })
 
   it('does not duplicate markers', () => {
-    const marker = { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 }
+    const marker = { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, hae: 0, ce: 999999, le: 999999, name: 'Rally', icon: 'rally', color: 'green', cot_type: 'b-m-p-s-m', how: 'h-e', created_at: 1000, stale: 87400000, remarks: '' }
     useChatStore.getState().setCotMarkers('r1', [marker])
     useChatStore.getState().addCotMarker('r1', marker)
     expect(useChatStore.getState().cotMarkers['r1']).toHaveLength(1)
@@ -261,8 +263,8 @@ describe('chatStore - CoT markers', () => {
 
   it('removes a marker', () => {
     useChatStore.getState().setCotMarkers('r1', [
-      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, name: 'Rally', icon: 'rally', color: 'green', created_at: 1000 },
-      { id: 'm2', creator_id: 'p2', creator_name: 'Bob', lat: 39.0, lon: -77.1, name: 'Objective', icon: 'objective', color: 'red', created_at: 2000 },
+      { id: 'm1', creator_id: 'p1', creator_name: 'Alice', lat: 38.89, lon: -77.03, hae: 0, ce: 999999, le: 999999, name: 'Rally', icon: 'rally', color: 'green', cot_type: 'b-m-p-s-m', how: 'h-e', created_at: 1000, stale: 87400000, remarks: '' },
+      { id: 'm2', creator_id: 'p2', creator_name: 'Bob', lat: 39.0, lon: -77.1, hae: 0, ce: 999999, le: 999999, name: 'Objective', icon: 'objective', color: 'red', cot_type: 'b-r-.-O', how: 'h-e', created_at: 2000, stale: 87402000, remarks: '' },
     ])
     useChatStore.getState().removeCotMarker('r1', 'm1')
     const markers = useChatStore.getState().cotMarkers['r1']

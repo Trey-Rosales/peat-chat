@@ -41,6 +41,9 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 		case client := <-h.unregister:
+			// Remove from all rooms BEFORE closing send channel
+			// to prevent broadcast goroutines from sending on a closed channel
+			h.removeFromAllRooms(client)
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
@@ -48,7 +51,6 @@ func (h *Hub) Run() {
 				close(client.send)
 			}
 			h.mu.Unlock()
-			h.removeFromAllRooms(client)
 
 		case <-meshTicker.C:
 			h.mu.RLock()
@@ -235,7 +237,7 @@ func (h *Hub) removeFromAllRooms(client *Client) {
 
 func (h *Hub) CreateVoiceChannel(client *Client, roomHexID string, name string) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil {
+	if room == nil || !room.HasMember(client) {
 		client.sendJSON("error", ErrorData{Message: "room not found"})
 		return
 	}
@@ -253,7 +255,7 @@ func (h *Hub) CreateVoiceChannel(client *Client, roomHexID string, name string) 
 
 func (h *Hub) JoinVoice(client *Client, roomHexID, channelID string) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil {
+	if room == nil || !room.HasMember(client) {
 		client.sendJSON("error", ErrorData{Message: "room not found"})
 		return
 	}
@@ -315,10 +317,15 @@ func (h *Hub) LeaveVoice(client *Client, roomHexID, channelID string) {
 }
 
 func (h *Hub) RelayVoiceOffer(client *Client, roomHexID, channelID, targetID, sdp string) {
+	// Verify sender is in the room
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil {
+	if target == nil || !room.HasMember(target) {
 		return
 	}
 	target.sendJSON("voice_offer_relay", VoiceOfferRelayData{
@@ -330,10 +337,14 @@ func (h *Hub) RelayVoiceOffer(client *Client, roomHexID, channelID, targetID, sd
 }
 
 func (h *Hub) RelayVoiceAnswer(client *Client, roomHexID, channelID, targetID, sdp string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil {
+	if target == nil || !room.HasMember(target) {
 		return
 	}
 	target.sendJSON("voice_answer_relay", VoiceAnswerRelayData{
@@ -345,10 +356,14 @@ func (h *Hub) RelayVoiceAnswer(client *Client, roomHexID, channelID, targetID, s
 }
 
 func (h *Hub) RelayVoiceIce(client *Client, roomHexID, channelID, targetID, candidate string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
 	h.mu.RLock()
 	target := h.clientsByID[targetID]
 	h.mu.RUnlock()
-	if target == nil {
+	if target == nil || !room.HasMember(target) {
 		return
 	}
 	target.sendJSON("voice_ice_relay", VoiceIceRelayData{
@@ -361,7 +376,7 @@ func (h *Hub) RelayVoiceIce(client *Client, roomHexID, channelID, targetID, cand
 
 func (h *Hub) BroadcastVoiceSpeaking(client *Client, roomHexID, channelID string, speaking bool) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil {
+	if room == nil || !room.HasMember(client) {
 		return
 	}
 	room.SetSpeaking(channelID, client, speaking)
@@ -414,7 +429,7 @@ func (h *Hub) broadcastCotState(room *Room) {
 
 func (h *Hub) CreateMapMarker(client *Client, roomHexID string, d CreateMarkerData) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil {
+	if room == nil || !room.HasMember(client) {
 		client.sendJSON("error", ErrorData{Message: "room not found"})
 		return
 	}
@@ -473,7 +488,7 @@ func (h *Hub) CreateMapMarker(client *Client, roomHexID string, d CreateMarkerDa
 
 func (h *Hub) DeleteMapMarker(client *Client, roomHexID string, markerID string) {
 	room := h.getRoomByHex(roomHexID)
-	if room == nil {
+	if room == nil || !room.HasMember(client) {
 		return
 	}
 

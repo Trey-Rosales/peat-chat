@@ -65,6 +65,12 @@ func (r *Room) GetHistory() []ChatMessage {
 	return out
 }
 
+func (r *Room) HasMember(c *Client) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Members[c]
+}
+
 func (r *Room) AddMember(c *Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
