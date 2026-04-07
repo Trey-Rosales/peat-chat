@@ -128,14 +128,16 @@ export class VoiceManager {
 
     this.send('join_voice', { room_id: roomId, channel_id: channelId })
 
-    try {
-      for (const member of existingMembers) {
+    // Create WebRTC peer connections for existing members.
+    // Each connection is independent — one failure shouldn't crash the channel.
+    // On BLE-only devices, WebRTC may fail entirely (no STUN), which is fine
+    // since audio flows through the BLE bridge instead.
+    for (const member of existingMembers) {
+      try {
         await this.createPeerConnection(member.id, true)
+      } catch (err) {
+        console.warn(`WebRTC peer connection to ${member.name} failed (may be BLE-only):`, err)
       }
-    } catch (err) {
-      this.send('leave_voice', { room_id: roomId, channel_id: channelId })
-      this.cleanup()
-      throw err
     }
   }
 
@@ -267,20 +269,24 @@ export class VoiceManager {
   async handleOffer(fromId: string, sdp: string): Promise<void> {
     if (!this.active) return
 
-    const pc = await this.createPeerConnection(fromId, false)
-    const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
-    await pc.setRemoteDescription(desc)
-    await this.flushPendingIce(fromId, pc)
+    try {
+      const pc = await this.createPeerConnection(fromId, false)
+      const desc = JSON.parse(sdp) as RTCSessionDescriptionInit
+      await pc.setRemoteDescription(desc)
+      await this.flushPendingIce(fromId, pc)
 
-    const answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
 
-    this.send('voice_answer', {
-      room_id: this.roomId,
-      channel_id: this.channelId,
-      target_id: fromId,
-      sdp: JSON.stringify(pc.localDescription),
-    })
+      this.send('voice_answer', {
+        room_id: this.roomId,
+        channel_id: this.channelId,
+        target_id: fromId,
+        sdp: JSON.stringify(pc.localDescription),
+      })
+    } catch (err) {
+      console.warn(`WebRTC offer handling failed for ${fromId} (may be BLE-only):`, err)
+    }
   }
 
   async handleAnswer(fromId: string, sdp: string): Promise<void> {
