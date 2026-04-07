@@ -304,6 +304,7 @@ class PeatBleService(
                     gattServerDevices.remove(address)
                     if (knownPeatDevices.remove(address)) {
                         node.onBleDisconnected(address)
+                        node.notifyBlePeerDisconnected(address)
                         connectedCount = knownPeatDevices.size
                     }
                     if (connectedCount == 0 && knownPeatDevices.isEmpty()) {
@@ -343,6 +344,7 @@ class PeatBleService(
                     val name = try { device.name } catch (_: Throwable) { null }
                     node.onBleDiscovered(address, name, 0, "peatlink-default", now)
                     node.onBleConnected(address, now)
+                    node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
                     knownPeatDevices.add(address)
                     connectedCount = knownPeatDevices.size
                     this@PeatBleService.status = "peer verified: ${address.takeLast(5)}"
@@ -415,17 +417,20 @@ class PeatBleService(
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    knownPeatDevices.add(address) // We only connect to verified Peat devices
+                    knownPeatDevices.add(address)
                     connectedCount = knownPeatDevices.size
                     this@PeatBleService.status = "connected: ${address.takeLast(5)}"
                     Log.i(TAG, "GATT client: connected to $address (status=$status_code)")
                     node.onBleConnected(address, now)
+                    val name = try { gatt.device.name } catch (_: Throwable) { null }
+                    node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
                     gatt.requestMtu(TARGET_MTU)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "GATT client: disconnected from $address (status=$status_code)")
                     if (knownPeatDevices.remove(address)) {
                         node.onBleDisconnected(address)
+                        node.notifyBlePeerDisconnected(address)
                         connectedCount = knownPeatDevices.size
                     }
                     connectedGattClients.remove(address)

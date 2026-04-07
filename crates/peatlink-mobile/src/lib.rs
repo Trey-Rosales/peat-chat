@@ -69,6 +69,8 @@ pub struct MobileNode {
     #[cfg(feature = "bluetooth")]
     ble_event_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<ble::BlePeerEvent>>>,
     #[cfg(feature = "bluetooth")]
+    ble_peer_event_tx: tokio::sync::mpsc::UnboundedSender<ble::BlePeerEvent>,
+    #[cfg(feature = "bluetooth")]
     bridge_handle: RwLock<Option<bridge::BridgeHandle>>,
 }
 
@@ -82,6 +84,8 @@ impl MobileNode {
 
         #[cfg(feature = "bluetooth")]
         let (ble_event_tx, ble_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        #[cfg(feature = "bluetooth")]
+        let ble_peer_event_tx = ble_event_tx.clone();
         #[cfg(feature = "bluetooth")]
         let ble_manager = Arc::new(ble::BleManager::new(ble_event_tx));
 
@@ -110,6 +114,8 @@ impl MobileNode {
             ble_send_rx: RwLock::new(ble_send_rx),
             #[cfg(feature = "bluetooth")]
             ble_manager,
+            #[cfg(feature = "bluetooth")]
+            ble_peer_event_tx,
             #[cfg(feature = "bluetooth")]
             bridge_handle: RwLock::new(None),
             #[cfg(feature = "bluetooth")]
@@ -471,6 +477,40 @@ impl MobileNode {
 
     /// Receive all pending voice frames from BLE peers.
     /// Called by Kotlin to get audio data for playback.
+    // --- Direct BLE peer notifications ---
+
+    /// Notify that a verified Peat BLE peer connected (called by Kotlin).
+    pub fn notify_ble_peer_connected(&self, peer_id: String, peer_name: String) {
+        #[cfg(feature = "bluetooth")]
+        {
+            let info = ble::BlePeerInfo {
+                id: peer_id,
+                name: peer_name,
+                rssi: 0,
+                is_connected: true,
+                last_seen_ms: 0,
+                transport: "btle".to_string(),
+            };
+            let _ = self.ble_peer_event_tx.send(ble::BlePeerEvent::PeerConnected(info));
+        }
+    }
+
+    /// Notify that a BLE peer disconnected (called by Kotlin).
+    pub fn notify_ble_peer_disconnected(&self, peer_id: String) {
+        #[cfg(feature = "bluetooth")]
+        {
+            let info = ble::BlePeerInfo {
+                id: peer_id.clone(),
+                name: peer_id,
+                rssi: 0,
+                is_connected: false,
+                last_seen_ms: 0,
+                transport: "btle".to_string(),
+            };
+            let _ = self.ble_peer_event_tx.send(ble::BlePeerEvent::PeerDisconnected(info));
+        }
+    }
+
     // --- Direct BLE data transport ---
 
     /// Push data received from a BLE GATT peer (called by Kotlin).
