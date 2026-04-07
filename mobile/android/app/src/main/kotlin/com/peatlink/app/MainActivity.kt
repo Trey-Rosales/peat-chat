@@ -391,15 +391,33 @@ class MainActivity : AppCompatActivity() {
         connStatusJob = scope.launch {
             while (true) {
                 val mobileNode = node as? com.peatlink.ffi.MobileNode
-                val connected = try {
+                val upstreamConnected = try {
                     mobileNode?.isUpstreamConnected() == true
                 } catch (_: Throwable) { false }
 
+                val bleRunning = try {
+                    mobileNode?.isBleRunning() == true
+                } catch (_: Throwable) { false }
+
+                val blePeerCount = try {
+                    mobileNode?.blePeers()?.count { it.isConnected } ?: 0
+                } catch (_: Throwable) { 0 }
+
                 val url = prefs.upstreamUrl
-                if (connected) {
-                    connBar.setBackgroundColor(Color.parseColor("#00a884"))
+
+                val parts = mutableListOf<String>()
+                if (upstreamConnected) parts.add("Server \u2713")
+                if (bleRunning) {
+                    if (blePeerCount > 0) parts.add("BLE: $blePeerCount peer${if (blePeerCount != 1) "s" else ""}")
+                    else parts.add("BLE scanning...")
+                }
+
+                if (parts.isNotEmpty()) {
+                    connBar.setBackgroundColor(Color.parseColor(
+                        if (upstreamConnected) "#00a884" else "#8b5cf6" // green for server, purple for BLE-only
+                    ))
                     connBar.setTextColor(Color.parseColor("#0b141a"))
-                    connBar.text = "\u2713 Connected to server"
+                    connBar.text = parts.joinToString(" | ")
                 } else if (url.isNotEmpty()) {
                     connBar.setBackgroundColor(Color.parseColor("#e8a030"))
                     connBar.setTextColor(Color.parseColor("#0b141a"))
@@ -409,6 +427,15 @@ class MainActivity : AppCompatActivity() {
                     connBar.setTextColor(Color.parseColor("#8696a0"))
                     connBar.text = "\u2699 Tap to connect to a server"
                 }
+
+                // Periodically re-send callsign to keep it synced
+                try {
+                    val callsign = prefs.callsign
+                    if (callsign.isNotEmpty() && mobileNode != null) {
+                        mobileNode.setDisplayName(callsign)
+                    }
+                } catch (_: Throwable) {}
+
                 delay(2000)
             }
         }

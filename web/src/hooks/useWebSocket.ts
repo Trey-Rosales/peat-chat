@@ -28,23 +28,24 @@ export function useWebSocket(
     ws.onopen = () => {
       store.getState().setConnected(true)
       const { displayName, rooms } = store.getState()
+
+      // Send callsign if we have one (server also auto-assigns via name_assigned)
       if (displayName) {
         ws.send(JSON.stringify({ type: 'set_name', data: { name: displayName } }))
-        // Rejoin all rooms from store (handles reconnection), or join
-        // the default "general" room if this is the first connection
-        const roomList = Object.values(rooms)
-        if (roomList.length > 0) {
-          for (const room of roomList) {
-            if (room.isDM) {
-              // DM rooms rejoin by room ID, not by display name
-              ws.send(JSON.stringify({ type: 'join_dm', data: { room_id: room.id } }))
-            } else {
-              ws.send(JSON.stringify({ type: 'join_room', data: { name: room.name } }))
-            }
+      }
+
+      // Rejoin rooms (always, regardless of whether displayName is set)
+      const roomList = Object.values(rooms)
+      if (roomList.length > 0) {
+        for (const room of roomList) {
+          if (room.isDM) {
+            ws.send(JSON.stringify({ type: 'join_dm', data: { room_id: room.id } }))
+          } else {
+            ws.send(JSON.stringify({ type: 'join_room', data: { name: room.name } }))
           }
-        } else {
-          ws.send(JSON.stringify({ type: 'join_room', data: { name: 'general' } }))
         }
+      } else {
+        ws.send(JSON.stringify({ type: 'join_room', data: { name: 'general' } }))
       }
     }
 
@@ -82,6 +83,14 @@ export function useWebSocket(
       switch (msg.type) {
         case 'identity':
           state.setIdentity(msg.data.id, msg.data.short_id)
+          break
+        case 'name_assigned':
+          // Server assigned a callsign (from Android prefs) — use it
+          if (msg.data.name) {
+            state.setDisplayName(msg.data.name)
+            // Re-send set_name so the server session is updated
+            ws.send(JSON.stringify({ type: 'set_name', data: { name: msg.data.name } }))
+          }
           break
         case 'room_joined':
           state.addRoom(msg.data.room_id, msg.data.name, msg.data.members, msg.data.is_dm)

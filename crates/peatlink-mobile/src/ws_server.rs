@@ -234,11 +234,17 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
     .await;
 
     // If a default display name is configured (from MobileNode callsign),
-    // auto-apply it and forward to upstream relay
+    // auto-apply it, notify the WebView, and forward to upstream relay
     {
         let default_name = hub.default_display_name.read().await;
         if !default_name.is_empty() {
             session.name = default_name.clone();
+            // Tell the WebView what the callsign is so the React store uses it
+            let _ = send_json(&mut socket, "name_assigned", &serde_json::json!({
+                "name": *default_name,
+            }))
+            .await;
+            // Forward to upstream relay
             let set_name_msg = make_json("set_name", &serde_json::json!({
                 "name": *default_name,
             }));
