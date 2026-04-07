@@ -83,17 +83,16 @@ class PeatBleService(
             return
         }
 
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(PEAT_SERVICE_UUID))
-            .build()
-
+        // Don't use a ScanFilter for the 128-bit UUID — some Android devices
+        // silently fail to match 128-bit UUIDs in advertising packets.
+        // Instead, scan for all connectable devices and filter in the callback.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
             .build()
 
-        scanner?.startScan(listOf(filter), settings, scanCallback)
-        Log.i(TAG, "BLE scanning started")
+        scanner?.startScan(null, settings, scanCallback)
+        Log.i(TAG, "BLE scanning started (unfiltered, checking in callback)")
     }
 
     private fun stopScanning() {
@@ -107,18 +106,27 @@ class PeatBleService(
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
             val address = device.address
-            val name = result.scanRecord?.deviceName
+            val record = result.scanRecord ?: return
+            val name = record.deviceName
             val rssi = result.rssi.toByte()
             val now = System.currentTimeMillis().toULong()
 
+            // Check if this is a Peat device by looking for our service UUID
+            val serviceUuids = record.serviceUuids
+            val isPeatDevice = serviceUuids?.any { it.uuid == PEAT_SERVICE_UUID } == true
+
+            if (!isPeatDevice) return // Not a Peat device, skip
+
+            Log.d(TAG, "Discovered Peat device: $address (${name ?: "unnamed"}) rssi=$rssi")
+
             // Extract mesh_id from service data if available
-            val serviceData = result.scanRecord?.getServiceData(ParcelUuid(PEAT_SERVICE_UUID))
+            val serviceData = record.getServiceData(ParcelUuid(PEAT_SERVICE_UUID))
             val meshId = serviceData?.let { String(it, Charsets.UTF_8) }
 
             node.onBleDiscovered(address, name, rssi, meshId, now)
 
-            // Auto-connect if not already connected
-            if (!connectedGattClients.containsKey(address)) {
+            // Auto-connect if not already connected (either direction)
+            if (!connectedGattClients.containsKey(address) && !gattServerDevices.contains(address)) {
                 connectToDevice(device)
             }
         }
@@ -141,16 +149,22 @@ class PeatBleService(
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(true)
-            .setTimeout(0) // advertise indefinitely
+            .setTimeout(0)
             .build()
 
-        val data = AdvertiseData.Builder()
+        // Service UUID in main advertising packet (18 bytes for 128-bit UUID)
+        val advData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(PEAT_SERVICE_UUID))
+            .setIncludeDeviceName(false) // Name goes in scan response to stay under 31 bytes
+            .build()
+
+        // Device name in scan response (separate 31-byte packet)
+        val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
             .build()
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
-        Log.i(TAG, "BLE advertising started")
+        advertiser?.startAdvertising(settings, advData, scanResponse, advertiseCallback)
+        Log.i(TAG, "BLE advertising started (UUID in adv, name in scan response)")
     }
 
     private fun stopAdvertising() {
