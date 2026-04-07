@@ -149,10 +149,13 @@ async fn run_relay(
     // Our identity on the upstream server (set by their `identity` message)
     let upstream_self_id: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
 
-    // Send set_name
+    // Send set_name — use Hub's current display name (most up-to-date)
+    let current_name = hub.default_display_name.read().await;
+    let name_to_send = if current_name.is_empty() { display_name.to_string() } else { current_name.clone() };
+    drop(current_name);
     let set_name = serde_json::json!({
         "type": "set_name",
-        "data": { "name": display_name }
+        "data": { "name": name_to_send }
     });
     if ws_tx
         .send(Message::Text(set_name.to_string()))
@@ -200,7 +203,7 @@ async fn run_relay(
             // Outgoing from local Hub room → forward to upstream
             Ok(broadcast) = local_rx.recv() => {
                 if let Some(fwd) = filter_for_upstream(
-                    &broadcast, seen_ids, &upstream_self_id, display_name
+                    &broadcast, seen_ids, &upstream_self_id, hub
                 ).await {
                     if ws_tx.send(Message::Text(fwd)).await.is_err() {
                         return RelayResult::Disconnected;
@@ -415,7 +418,7 @@ async fn filter_for_upstream(
     broadcast: &str,
     seen_ids: &SeenIds,
     _upstream_self_id: &Arc<RwLock<String>>,
-    relay_display_name: &str,
+    hub: &Arc<Hub>,
 ) -> Option<String> {
     let envelope: serde_json::Value = serde_json::from_str(broadcast).ok()?;
     let msg_type = envelope.get("type")?.as_str()?;
@@ -440,11 +443,14 @@ async fn filter_for_upstream(
             let room_id = data.get("room_id")?.as_str()?;
             let content = msg.get("content")?.as_str()?;
             let reply_to = msg.get("reply_to").and_then(|v| v.as_str());
-            // Always include sender_name — use message's sender_name or fallback to relay's own
+            // Always include sender_name — use message's or fallback to Hub's current display name
+            let hub_name = hub.default_display_name.read().await;
             let sender_name = msg.get("sender_name")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .unwrap_or(relay_display_name);
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| hub_name.clone());
+            drop(hub_name);
 
             let mut send = serde_json::json!({
                 "type": "send_message",
@@ -452,7 +458,7 @@ async fn filter_for_upstream(
                     "room_id": room_id,
                     "message_id": msg_id,
                     "content": content,
-                    "sender_name": sender_name,
+                    "sender_name": &sender_name,
                 }
             });
             if let Some(rt) = reply_to {
