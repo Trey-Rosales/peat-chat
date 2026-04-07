@@ -4,7 +4,7 @@
 
 **Decentralized tactical mesh chat**
 
-P2P messaging over iroh gossip | CRDT persistence | Push-to-talk voice | Tactical map with CoT | Native mobile
+P2P mesh networking via peat-mesh | CRDT sync & persistence | Push-to-talk voice | Tactical map with CoT | Native mobile
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
@@ -23,7 +23,7 @@ Three ways to run it:
 
 | Mode | Server | Transport | Storage |
 |:-----|:-------|:----------|:--------|
-| **CLI** | None (direct P2P) | iroh gossip | Automerge CRDT files |
+| **CLI** | None (direct P2P) | peat-mesh (QUIC + mDNS) | AutomergeStore (redb) |
 | **Web** | Go WebSocket relay | TCP / WebSocket | In-memory |
 | **Mobile** | Embedded Rust (axum) | WS + optional BLE | In-memory + BLE mesh |
 
