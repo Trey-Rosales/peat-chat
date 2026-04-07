@@ -278,16 +278,19 @@ async fn handle_ble_ws_message(
                 if !node_id.is_empty() && !callsign.is_empty() {
                     tracing::info!("BLE hello from {} ({})", callsign, &node_id[..node_id.len().min(12)]);
 
-                    // Update peer name in our local map
-                    // Find the peer by checking existing entries (may be registered under MAC address)
+                    // Unregister ALL old MAC-based peer entries first
                     let old_keys: Vec<String> = ble_peer_names.keys().cloned().collect();
-                    for key in old_keys {
-                        ble_peer_names.insert(key, callsign.clone());
+                    for key in &old_keys {
+                        let unreg = crate::ws_server::make_json("unregister_ble_peer", &serde_json::json!({
+                            "peer_id": key,
+                        }));
+                        let _ = hub.passthrough_tx.send(Arc::new(unreg));
                     }
-                    // Also add by node_id
+                    ble_peer_names.clear();
+
+                    // Register with real callsign and node_id
                     ble_peer_names.insert(node_id.clone(), callsign.clone());
 
-                    // Re-register with Go server using the real callsign
                     let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
                         "peer_id": node_id,
                         "peer_name": callsign,

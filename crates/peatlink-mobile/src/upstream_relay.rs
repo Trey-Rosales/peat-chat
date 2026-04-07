@@ -383,6 +383,7 @@ async fn filter_for_upstream(
             let room_id = data.get("room_id")?.as_str()?;
             let content = msg.get("content")?.as_str()?;
             let reply_to = msg.get("reply_to").and_then(|v| v.as_str());
+            let sender_name = msg.get("sender_name").and_then(|v| v.as_str());
 
             let mut send = serde_json::json!({
                 "type": "send_message",
@@ -393,6 +394,10 @@ async fn filter_for_upstream(
             });
             if let Some(rt) = reply_to {
                 send["data"]["reply_to"] = serde_json::Value::String(rt.to_string());
+            }
+            // Pass through sender_name so Go server preserves the original author
+            if let Some(sn) = sender_name {
+                send["data"]["sender_name"] = serde_json::Value::String(sn.to_string());
             }
             Some(send.to_string())
         }

@@ -170,6 +170,10 @@ func (c *Client) readPump() {
 			c.mu.RLock()
 			name := c.name
 			c.mu.RUnlock()
+			// Use sender_name override if provided (for BLE relay forwarding)
+			if d.SenderName != "" {
+				name = d.SenderName
+			}
 			chatMsg := NewChatMessage(c.identity.ID, name, d.Content)
 			if d.ReplyTo != nil {
 				chatMsg.ReplyTo = d.ReplyTo

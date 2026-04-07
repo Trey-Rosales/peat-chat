@@ -48,9 +48,10 @@ type JoinRoomData struct {
 }
 
 type SendMessageData struct {
-	RoomID  string  `json:"room_id"`
-	Content string  `json:"content"`
-	ReplyTo *string `json:"reply_to,omitempty"`
+	RoomID     string  `json:"room_id"`
+	Content    string  `json:"content"`
+	ReplyTo    *string `json:"reply_to,omitempty"`
+	SenderName string  `json:"sender_name,omitempty"` // override sender name (for BLE relay)
 }
 
 // Outgoing message data types

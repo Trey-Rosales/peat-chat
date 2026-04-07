@@ -151,11 +151,16 @@ impl Hub {
     }
 
     /// Inject an externally-sourced message (from upstream relay or BLE bridge) into a room.
+    /// Deduplicates by message ID to prevent duplicates from multiple sources.
     pub async fn inject_external_message(&self, room_name: &str, msg: ChatMessage) {
         let room_arc = self.get_or_create_room(room_name).await;
         let chat_id = chat_id_from_name(room_name);
         let room_id = chat_id_hex(&chat_id);
         let mut room = room_arc.write().await;
+        // Check if this message ID already exists in the room
+        if room.messages.iter().any(|m| m.id == msg.id) {
+            return; // duplicate
+        }
         room.messages.push(msg.clone());
         if room.messages.len() > 1000 {
             let excess = room.messages.len() - 1000;
