@@ -497,27 +497,31 @@ export class VoiceManager {
     }
 
     processor.onaudioprocess = (event) => {
-      if (!this.active || !window.PeatLinkVoice?.sendPcmFrame || !this.audioContext) {
-        return
-      }
+      try {
+        if (!this.active || !window.PeatLinkVoice?.sendPcmFrame || !this.audioContext) {
+          return
+        }
 
-      const input = event.inputBuffer.getChannelData(0)
-      appendResampledPcm16(
-        chain.pendingSamples,
-        input,
-        this.audioContext.sampleRate,
-        chain
-      )
-
-      while (chain.pendingSamples.length >= BLE_FRAME_SAMPLES) {
-        const frame = chain.pendingSamples.splice(0, BLE_FRAME_SAMPLES)
-        const pcmBytes = int16SamplesToBytes(frame)
-        const senderName = this.peerNames.get(peerId) || peerId
-        window.PeatLinkVoice.sendPcmFrame(
-          encodeBase64(pcmBytes),
-          peerId,
-          senderName
+        const input = event.inputBuffer.getChannelData(0)
+        appendResampledPcm16(
+          chain.pendingSamples,
+          input,
+          this.audioContext.sampleRate,
+          chain
         )
+
+        while (chain.pendingSamples.length >= BLE_FRAME_SAMPLES) {
+          const frame = chain.pendingSamples.splice(0, BLE_FRAME_SAMPLES)
+          const pcmBytes = int16SamplesToBytes(frame)
+          const senderName = this.peerNames.get(peerId) || peerId
+          window.PeatLinkVoice.sendPcmFrame(
+            encodeBase64(pcmBytes),
+            peerId,
+            senderName
+          )
+        }
+      } catch (err) {
+        console.warn('BLE audio relay error:', err)
       }
     }
 

@@ -549,8 +549,29 @@ async fn handle_ble_ws_message(
                 .send(Arc::new(serde_json::to_string(&cot).unwrap_or_default()));
         }
 
+        // BLE peer set_name — update peer directory only, do NOT forward to Go server
+        // (forwarding would overwrite the relay's own name on the Go server)
+        "set_name" => {
+            if let Some(data) = envelope.get("data") {
+                if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
+                    if !name.is_empty() {
+                        if let Some((id, _)) = ble_peers.resolve_sender(source_peer_id) {
+                            tracing::info!("BLE peer {} set name to '{}'", &id[..id.len().min(12)], name);
+                            ble_peers.upsert_peer(id.clone(), name.to_string());
+                            // Re-register with Go server using updated name
+                            let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
+                                "peer_id": id,
+                                "peer_name": name,
+                            }));
+                            let _ = hub.passthrough_tx.send(Arc::new(reg));
+                        }
+                    }
+                }
+            }
+        }
+
         // User-initiated actions from remote BLE peer — forward to passthrough
-        "send_message" | "start_dm" | "join_dm" | "join_room" | "set_name" | "edit_message"
+        "send_message" | "start_dm" | "join_dm" | "edit_message"
         | "delete_message" | "add_reaction" | "remove_reaction" | "pin_message"
         | "unpin_message" | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer"
         | "voice_ice" | "create_marker" | "delete_marker" | "voice_speaking" => {
