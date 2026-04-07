@@ -524,6 +524,19 @@ func (r *Room) ClearBleCotPosition(senderID string) {
 	delete(r.BleCotPositions, senderID)
 }
 
+// UpdateBlePeerName updates the name of a BLE peer in all voice channels.
+func (r *Room) UpdateBlePeerName(peerID, newName string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, vc := range r.VoiceChannels {
+		vc.mu.Lock()
+		if peer, ok := vc.BleMembers[peerID]; ok {
+			peer.PeerName = newName
+		}
+		vc.mu.Unlock()
+	}
+}
+
 func (r *Room) SetBleCotPosition(senderID, senderName string, pos *CotPosition) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

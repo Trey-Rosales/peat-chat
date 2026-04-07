@@ -300,22 +300,46 @@ func min(a, b int) int {
 // RegisterBlePeer makes a BLE peer visible to other clients via the relay.
 func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
 	h.mu.Lock()
+	oldPeer := h.blePeers[peerID]
 	h.blePeers[peerID] = &BlePeer{
 		PeerID:   peerID,
 		PeerName: peerName,
 		Relay:    relay,
 	}
-	// Also register in clientsByID so DMs can target this peer
-	// DMs to this peer will be routed through the relay
 	h.mu.Unlock()
 	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:min(12, len(peerID))], relay.name)
 
-	// Broadcast updated mesh state
+	// Update name in any voice channels this peer is in
+	relay.mu.RLock()
+	for roomID := range relay.rooms {
+		h.mu.RLock()
+		if room, ok := h.rooms[roomID]; ok {
+			room.UpdateBlePeerName(peerID, peerName)
+			// Also update old provisional ID if it changed
+			if oldPeer != nil && oldPeer.PeerID != peerID {
+				room.UpdateBlePeerName(oldPeer.PeerID, peerName)
+			}
+		}
+		h.mu.RUnlock()
+	}
+	relay.mu.RUnlock()
+
+	// Broadcast updated mesh state and voice state
 	relay.mu.RLock()
 	for roomID := range relay.rooms {
 		h.mu.RLock()
 		if room, ok := h.rooms[roomID]; ok {
 			h.broadcastMeshStateLocked(room)
+			// Also broadcast voice state so the name updates in voice UI
+			roomHexID := ChatIdHex(room.ID)
+			members := room.GetMembers()
+			voiceInfo := room.GetVoiceState()
+			for _, c := range members {
+				c.sendJSON("voice_state", VoiceStateData{
+					RoomID:   roomHexID,
+					Channels: voiceInfo,
+				})
+			}
 		}
 		h.mu.RUnlock()
 	}
