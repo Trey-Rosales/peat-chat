@@ -286,8 +286,9 @@ class PeatBleService(
     }
 
     // Track which addresses are confirmed Peat devices
-    // Only added after: scan callback verifies mfg data, OR server receives a Peat characteristic write
     private val knownPeatDevices = mutableSetOf<String>()
+    // Track notified peer names to prevent duplicate registration from dual connections
+    private val notifiedPeerNames = mutableSetOf<String>()
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status_code: Int, newState: Int) {
@@ -344,10 +345,14 @@ class PeatBleService(
                     val name = try { device.name } catch (_: Throwable) { null }
                     node.onBleDiscovered(address, name, 0, "peatlink-default", now)
                     node.onBleConnected(address, now)
-                    node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
+                    val peerKey = name ?: address
+                    if (notifiedPeerNames.add(peerKey)) {
+                        connectedCount = notifiedPeerNames.size
+                        node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
+                        this@PeatBleService.status = "peer verified: ${name ?: address.takeLast(5)}"
+                        Log.i(TAG, "GATT server: verified NEW PeatLink peer $address ($name)")
+                    }
                     knownPeatDevices.add(address)
-                    connectedCount = knownPeatDevices.size
-                    this@PeatBleService.status = "peer verified: ${address.takeLast(5)}"
                 }
 
                 Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
@@ -472,11 +477,18 @@ class PeatBleService(
 
             // Service verified — THIS is a real PeatLink peer
             knownPeatDevices.add(address)
-            connectedCount = knownPeatDevices.size
             val name = try { gatt.device.name } catch (_: Throwable) { null }
-            node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
-            this@PeatBleService.status = "verified peer: ${address.takeLast(5)}"
-            Log.i(TAG, "GATT client: verified PeatLink peer $address ($name)")
+            val peerKey = name ?: address // dedup by name (same device may have different addresses)
+
+            if (notifiedPeerNames.add(peerKey)) {
+                // First time seeing this physical device
+                connectedCount = notifiedPeerNames.size
+                node.notifyBlePeerConnected(address, name ?: "BLE-${address.takeLast(5)}")
+                this@PeatBleService.status = "verified peer: ${name ?: address.takeLast(5)}"
+                Log.i(TAG, "GATT client: verified NEW PeatLink peer $address ($name)")
+            } else {
+                Log.i(TAG, "GATT client: verified PeatLink peer $address ($name) — already registered")
+            }
 
             // Enable notifications
             gatt.setCharacteristicNotification(syncChar, true)
