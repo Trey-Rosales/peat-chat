@@ -183,6 +183,49 @@ class MainActivity : AppCompatActivity() {
                     return bleVoice != null
                 }
 
+                /** Set voice mode: "ptt", "noise_gate", or "auto" */
+                @JavascriptInterface
+                fun setVoiceMode(mode: String) {
+                    bleVoice?.voiceMode = when (mode) {
+                        "noise_gate" -> BleVoiceService.VoiceMode.NOISE_GATE
+                        "auto" -> BleVoiceService.VoiceMode.AUTO
+                        else -> BleVoiceService.VoiceMode.PTT
+                    }
+                    // Start/stop continuous capture based on mode
+                    if (mode == "noise_gate" || mode == "auto") {
+                        bleVoice?.startContinuous()
+                    } else {
+                        bleVoice?.stopContinuous()
+                    }
+                }
+
+                /** Set noise gate threshold in dB (typically -60 to -20) */
+                @JavascriptInterface
+                fun setNoiseGateThreshold(db: Float) {
+                    bleVoice?.noiseGateThresholdDb = db
+                }
+
+                /** Get current mic level in dB for visual meter */
+                @JavascriptInterface
+                fun getMicLevelDb(): Float {
+                    return bleVoice?.currentMicLevelDb ?: -96f
+                }
+
+                /** Get whether voice is currently detected */
+                @JavascriptInterface
+                fun isVoiceDetected(): Boolean {
+                    return bleVoice?.voiceDetected ?: false
+                }
+
+                @JavascriptInterface
+                fun getVoiceMode(): String {
+                    return when (bleVoice?.voiceMode) {
+                        BleVoiceService.VoiceMode.NOISE_GATE -> "noise_gate"
+                        BleVoiceService.VoiceMode.AUTO -> "auto"
+                        else -> "ptt"
+                    }
+                }
+
                 @JavascriptInterface
                 fun pollIncomingFrames(): String {
                     // Return decoded PCM from BLE peers for WebRTC injection

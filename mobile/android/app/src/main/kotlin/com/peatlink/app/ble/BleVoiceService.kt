@@ -19,23 +19,34 @@ import java.util.concurrent.ConcurrentLinkedQueue
 @SuppressLint("MissingPermission")
 class BleVoiceService {
 
+    enum class VoiceMode { PTT, NOISE_GATE, AUTO }
+
     companion object {
         private const val TAG = "BleVoice"
-        const val AUDIO_FRAME_PREFIX: Byte = 0xAA.toByte() // distinguishes audio from data
-        private const val SAMPLE_RATE = 8000  // 8kHz narrowband — minimum for voice
+        const val AUDIO_FRAME_PREFIX: Byte = 0xAA.toByte()
+        private const val SAMPLE_RATE = 8000
         private const val FRAME_SIZE_MS = 20
         private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_SIZE_MS / 1000 // 160 samples
-        private const val BITRATE = 8000 // 8kbps Opus — ~1KB/s, leaves headroom for mesh
-        private const val FRAMES_PER_BATCH = 3 // batch 3 frames = 60ms per GATT write
-        private const val JITTER_BUFFER_MS = 80L
+        private const val BITRATE = 8000
+        private const val FRAMES_PER_BATCH = 3
+        private const val SILENCE_TIMEOUT_MS = 300L // stop sending after 300ms of silence
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Voice mode settings
+    var voiceMode: VoiceMode = VoiceMode.PTT
+    var noiseGateThresholdDb: Float = -40f // dB threshold for noise gate mode
+    @Volatile var currentMicLevelDb: Float = -96f // current mic level for UI meter
+        private set
+    @Volatile var voiceDetected: Boolean = false
+        private set
 
     // Capture
     private var audioRecord: AudioRecord? = null
     private var encoder: MediaCodec? = null
     private var captureJob: Job? = null
+    private var continuousCaptureJob: Job? = null
     @Volatile var transmitting = false
         private set
 
@@ -142,6 +153,92 @@ class BleVoiceService {
         captureJob?.cancel()
         releaseCapture()
         Log.i(TAG, "PTT: stopped")
+    }
+
+    /** Start continuous voice-activated transmission (noise gate or auto mode) */
+    fun startContinuous() {
+        if (continuousCaptureJob != null) return
+        initCapture()
+        continuousCaptureJob = scope.launch { continuousCaptureLoop() }
+        Log.i(TAG, "Continuous capture started (mode=$voiceMode, threshold=${noiseGateThresholdDb}dB)")
+    }
+
+    fun stopContinuous() {
+        continuousCaptureJob?.cancel()
+        continuousCaptureJob = null
+        releaseCapture()
+        voiceDetected = false
+        Log.i(TAG, "Continuous capture stopped")
+    }
+
+    private suspend fun continuousCaptureLoop() {
+        val pcmBuf = ShortArray(FRAME_SAMPLES)
+        val batchBuffer = mutableListOf<ByteArray>()
+        var silenceSince = 0L
+
+        while (true) {
+            val read = audioRecord?.read(pcmBuf, 0, FRAME_SAMPLES) ?: -1
+            if (read <= 0) { delay(5); continue }
+
+            // Compute RMS energy in dB
+            var sumSq = 0.0
+            for (i in 0 until read) {
+                val s = pcmBuf[i].toDouble()
+                sumSq += s * s
+            }
+            val rms = Math.sqrt(sumSq / read)
+            val db = if (rms > 0) (20 * Math.log10(rms / 32768.0)).toFloat() else -96f
+            currentMicLevelDb = db
+
+            // Determine if voice is active
+            val isVoice = when (voiceMode) {
+                VoiceMode.NOISE_GATE -> db > noiseGateThresholdDb
+                VoiceMode.AUTO -> db > noiseGateThresholdDb // TODO: replace with WebRTC VAD
+                VoiceMode.PTT -> transmitting
+            }
+
+            if (isVoice) {
+                voiceDetected = true
+                silenceSince = 0L
+
+                val enc = encoder
+                if (enc != null) {
+                    val encoded = encodeOpusFrame(enc, pcmBuf, read)
+                    if (encoded != null) {
+                        batchBuffer.add(encoded)
+                        if (batchBuffer.size >= FRAMES_PER_BATCH) {
+                            outgoingAudioFrames.add(buildBatchPacket(batchBuffer))
+                            batchBuffer.clear()
+                        }
+                    }
+                }
+            } else {
+                if (voiceDetected) {
+                    if (silenceSince == 0L) silenceSince = System.currentTimeMillis()
+                    if (System.currentTimeMillis() - silenceSince > SILENCE_TIMEOUT_MS) {
+                        // Flush remaining frames
+                        if (batchBuffer.isNotEmpty()) {
+                            outgoingAudioFrames.add(buildBatchPacket(batchBuffer))
+                            batchBuffer.clear()
+                        }
+                        voiceDetected = false
+                    } else {
+                        // Keep sending during grace period
+                        val enc = encoder
+                        if (enc != null) {
+                            val encoded = encodeOpusFrame(enc, pcmBuf, read)
+                            if (encoded != null) {
+                                batchBuffer.add(encoded)
+                                if (batchBuffer.size >= FRAMES_PER_BATCH) {
+                                    outgoingAudioFrames.add(buildBatchPacket(batchBuffer))
+                                    batchBuffer.clear()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
