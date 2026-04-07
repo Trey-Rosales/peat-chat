@@ -18,6 +18,10 @@
 - [x] Persistent Ed25519 identity via peat-mesh DeviceKeypair
 - [x] Android app with embedded Rust server, upstream WS relay, and LAN auto-discovery
 - [x] Go server mDNS service registration (`_peatlink._tcp`) via zeroconf
+- [x] BLE platform layer — Android dual-role BLE driver (PeatBleService.kt): scanner, advertiser, GATT server/client, MTU 512, 3s tick loop
+- [x] BLE ↔ WS bridge (bridge.rs) — tunnels all WS message types over BLE via `__ws:` prefix protocol with shared dedup
+- [x] BLE voice relay — native Opus encode/decode (BleVoiceService.kt): 16kHz mono, 24kbps, 20ms frames over BLE mesh
+- [x] Hierarchical mesh topology viewer — `connected_via` field, BLE relay peers in outer ring, transport colors (btle = purple)
 
 ---
 
@@ -59,6 +63,7 @@
 - [ ] Snapshot capture from stream → shared as image in chat
 
 ### Voice Improvements
+- [x] BLE voice relay — Opus over mesh (BleVoiceService.kt, ~3KB/s per speaker, PTT via PeatLinkVoice JS bridge)
 - [ ] VOX (voice-activated transmission) with adjustable threshold
 - [ ] Per-channel volume controls
 - [ ] Noise suppression (WebAudio API or RNNoise WASM)
@@ -93,7 +98,8 @@
 
 ### Transport Hardening
 - [ ] Full peat-mesh AutomergeSyncCoordinator integration (delta sync, negentropy reconciliation)
-- [ ] Multi-transport failover (QUIC + BLE + LoRa simultaneously)
+- [x] Multi-transport operation (WS + BLE running simultaneously via bridge.rs, with shared dedup)
+- [ ] Multi-transport failover (automatic QUIC + BLE + LoRa fallover)
 - [ ] FormationKey-based room authentication (challenge-response join)
 - [ ] Offline message queue — store-and-forward when peers reconnect
 - [ ] Bandwidth estimation and adaptive sync frequency
@@ -194,8 +200,10 @@ and overlays — with no central server required.
   - [x] Connection status bar with settings dialog
   - [x] Sideload page for APK distribution
 - [ ] iOS app (Swift shell + embedded Rust server)
-- [ ] Background BLE mesh operation
+- [x] BLE mesh operation (PeatBleService.kt dual-role driver + bridge.rs WS tunnel + BleVoiceService.kt voice relay)
+- [ ] Background BLE mesh operation (Android foreground service for persistent BLE)
 - [ ] Native push notifications
+- [x] PTT over BLE voice (PeatLinkVoice JS bridge, touch PTT on mobile)
 - [ ] Hardware PTT button support (Bluetooth HID)
 
 ### Desktop App
