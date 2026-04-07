@@ -53,6 +53,18 @@ interface MobileNode {
     boolean is_ble_running();
 
     sequence<BlePeerInfo> ble_peers();
+
+    // BLE platform callbacks (called from Android/iOS native code)
+    void on_ble_discovered(string identifier, string? name, i8 rssi, string? mesh_id, u64 now_ms);
+    void on_ble_connected(string identifier, u64 now_ms);
+    void on_ble_disconnected(string identifier);
+    void on_ble_data_received(string identifier, sequence<u8> data, u64 now_ms);
+
+    // BLE tick — call periodically (~3s). Returns data to broadcast to peers, if any.
+    sequence<u8>? ble_tick(u64 now_ms);
+
+    // Build current mesh document for new connections
+    sequence<u8>? ble_build_document();
 };
 
 namespace peatlink_mobile {

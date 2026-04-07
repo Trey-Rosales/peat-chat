@@ -28,6 +28,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.io.File
 
+import com.peatlink.app.ble.PeatBleService
 import com.peatlink.app.net.ServerDiscovery
 
 /**
@@ -63,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private var node: Any? = null
     private var serverPort: Int = 0
     private var discovery: ServerDiscovery? = null
+    private var bleService: PeatBleService? = null
     private var serverStarted = false
     private var connStatusJob: Job? = null
 
@@ -243,7 +245,7 @@ class MainActivity : AppCompatActivity() {
                     mobileNode.setDisplayName(prefs.callsign)
                 }
 
-                // Step 4: Start BLE mesh (non-fatal if it fails)
+                // Step 4: Start BLE mesh + platform BLE service (non-fatal if fails)
                 try {
                     mobileNode.startBle(
                         meshId = "peatlink-default",
@@ -251,8 +253,14 @@ class MainActivity : AppCompatActivity() {
                         sharedSecret = null
                     )
                     Log.i(TAG, "BLE mesh started")
+
+                    // Start Android BLE platform driver (scanner, advertiser, GATT)
+                    val svc = PeatBleService(this@MainActivity, mobileNode)
+                    svc.start()
+                    bleService = svc
+                    Log.i(TAG, "BLE platform service started")
                 } catch (e: Throwable) {
-                    Log.w(TAG, "BLE mesh failed: ${e.message}")
+                    Log.w(TAG, "BLE mesh/service failed: ${e.message}")
                 }
 
                 // Step 5: Connect upstream relay BEFORE WebView loads
@@ -475,6 +483,9 @@ class MainActivity : AppCompatActivity() {
         scope.cancel()
         try { discovery?.stopDiscovery() } catch (_: Throwable) {}
         webView.destroy()
+
+        try { bleService?.stop() } catch (_: Throwable) {}
+        bleService = null
 
         val n = node as? com.peatlink.ffi.MobileNode
         node = null

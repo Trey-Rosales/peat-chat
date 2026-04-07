@@ -34,16 +34,64 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
 
   const cx = dims.width / 2
   const cy = dims.height / 2
-  const radius = Math.min(cx, cy) * 0.6
+  const innerRadius = Math.min(cx, cy) * 0.55
+  const outerOffset = Math.min(cx, cy) * 0.22
 
-  const positions = peers.map((peer, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(peers.length, 1) - Math.PI / 2
+  // Separate direct peers from relay (BLE) peers
+  const directPeers = peers.filter((p) => !p.connected_via)
+  const relayPeers = peers.filter((p) => !!p.connected_via)
+
+  // Position direct peers in the inner ring around self
+  const directPositions = directPeers.map((peer, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(directPeers.length, 1) - Math.PI / 2
     return {
       peer,
-      x: cx + radius * Math.cos(angle),
-      y: cy + radius * Math.sin(angle),
+      x: cx + innerRadius * Math.cos(angle),
+      y: cy + innerRadius * Math.sin(angle),
     }
   })
+
+  // Build a lookup from peer ID to position for parent resolution
+  const posById = new Map<string, { x: number; y: number }>()
+  posById.set('self', { x: cx, y: cy })
+  for (const dp of directPositions) {
+    posById.set(dp.peer.id, { x: dp.x, y: dp.y })
+  }
+
+  // Position relay peers near their parent node, fanned out slightly further
+  const childrenOf = new Map<string, MeshPeer[]>()
+  for (const rp of relayPeers) {
+    const list = childrenOf.get(rp.connected_via!) || []
+    list.push(rp)
+    childrenOf.set(rp.connected_via!, list)
+  }
+
+  const relayPositions = relayPeers.map((peer) => {
+    const parentPos = posById.get(peer.connected_via!) || { x: cx, y: cy }
+    const siblings = childrenOf.get(peer.connected_via!) || [peer]
+    const idx = siblings.indexOf(peer)
+    const count = siblings.length
+
+    // Fan angle: spread children in a 120-degree arc away from center
+    const parentAngle = Math.atan2(parentPos.y - cy, parentPos.x - cx)
+    const spreadAngle = Math.PI * 0.66 // 120 degrees
+    const startAngle = parentAngle - spreadAngle / 2
+    const step = count > 1 ? spreadAngle / (count - 1) : 0
+    const childAngle = count === 1 ? parentAngle : startAngle + step * idx
+
+    return {
+      peer,
+      x: parentPos.x + outerOffset * Math.cos(childAngle),
+      y: parentPos.y + outerOffset * Math.sin(childAngle),
+      parentPos,
+    }
+  })
+
+  // Merge all positions for node rendering
+  const positions = [
+    ...directPositions.map((dp) => ({ ...dp, parentPos: null as { x: number; y: number } | null })),
+    ...relayPositions,
+  ]
 
   // Find unique transports in use for legend
   const activeTransports = [...new Set(peers.map((p) => p.transport))]
@@ -52,19 +100,25 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
     <div ref={containerRef} className="flex-1 relative bg-pl-bg overflow-hidden">
       <svg width={dims.width} height={dims.height} className="absolute inset-0">
         {/* Connection lines */}
-        {positions.map(({ peer, x, y }) => {
+        {positions.map(({ peer, x, y, parentPos }) => {
           const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
           const isDegraded = peer.state === 'degraded'
-          const mx = (cx + x) / 2
-          const my = (cy + y) / 2
+          const isRelay = !!peer.connected_via
+          // Direct peers connect to self (center); relay peers connect to parent
+          const fromX = isRelay && parentPos ? parentPos.x : cx
+          const fromY = isRelay && parentPos ? parentPos.y : cy
+          const mx = (fromX + x) / 2
+          const my = (fromY + y) / 2
+          // Relay links are always dashed; direct links are dashed only when degraded
+          const dashed = isRelay || isDegraded
           return (
             <g key={`line-${peer.id}`}>
               <line
-                x1={cx} y1={cy} x2={x} y2={y}
+                x1={fromX} y1={fromY} x2={x} y2={y}
                 stroke={color}
-                strokeWidth={2}
+                strokeWidth={isRelay ? 1.5 : 2}
                 opacity={isDegraded ? 0.3 : 0.6}
-                strokeDasharray={isDegraded ? '6 4' : 'none'}
+                strokeDasharray={dashed ? '6 4' : 'none'}
               />
               {/* Transport label */}
               <rect
@@ -113,6 +167,8 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
         {positions.map(({ peer, x, y }) => {
           const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
           const isSelected = selectedPeer?.id === peer.id
+          const isRelay = !!peer.connected_via
+          const nodeRadius = isRelay ? 14 : 18
           return (
             <g
               key={`node-${peer.id}`}
@@ -120,7 +176,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
               style={{ cursor: 'pointer' }}
             >
               {/* Pulse ring */}
-              {peer.state === 'connected' && (
+              {peer.state === 'connected' && !isRelay && (
                 <circle cx={x} cy={y} r={22} fill={color} opacity={0.1}>
                   <animate attributeName="r" values="20;26;20" dur="2.5s" repeatCount="indefinite" />
                   <animate attributeName="opacity" values="0.12;0.03;0.12" dur="2.5s" repeatCount="indefinite" />
@@ -128,16 +184,16 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
               )}
               {/* Selection ring */}
               {isSelected && (
-                <circle cx={x} cy={y} r={24} fill="none" stroke={color} strokeWidth={2} opacity={0.6} />
+                <circle cx={x} cy={y} r={nodeRadius + 6} fill="none" stroke={color} strokeWidth={2} opacity={0.6} />
               )}
               {/* Node circle */}
-              <circle cx={x} cy={y} r={18} fill={color} opacity={0.9} />
+              <circle cx={x} cy={y} r={nodeRadius} fill={color} opacity={isRelay ? 0.75 : 0.9} />
               {/* Name above */}
-              <text x={x} y={y - 26} fill="#e9edef" fontSize={11} textAnchor="middle" fontWeight={500}>
+              <text x={x} y={y - nodeRadius - 8} fill="#e9edef" fontSize={isRelay ? 10 : 11} textAnchor="middle" fontWeight={500}>
                 {peer.name}
               </text>
               {/* Short ID inside */}
-              <text x={x} y={y + 4} fill="white" fontSize={8} textAnchor="middle" fontFamily="monospace">
+              <text x={x} y={y + 4} fill="white" fontSize={isRelay ? 7 : 8} textAnchor="middle" fontFamily="monospace">
                 {peer.short_id}
               </text>
             </g>
@@ -229,6 +285,11 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
         <DetailRow label="Connected">
           <span className="text-pl-text">{duration}</span>
         </DetailRow>
+        {peer.connected_via && (
+          <DetailRow label="Via">
+            <span className="text-pl-text font-mono text-[10px] break-all">{peer.connected_via.slice(0, 12)}...</span>
+          </DetailRow>
+        )}
         <DetailRow label="Full ID">
           <span className="text-pl-text font-mono text-[10px] break-all">{peer.id.slice(0, 24)}...</span>
         </DetailRow>

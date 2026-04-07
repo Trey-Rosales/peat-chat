@@ -4,6 +4,8 @@ pub mod ws_server;
 
 #[cfg(feature = "bluetooth")]
 pub mod ble;
+#[cfg(feature = "bluetooth")]
+pub mod bridge;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,7 +45,9 @@ pub struct MobileNode {
     #[cfg(feature = "bluetooth")]
     ble_manager: Arc<ble::BleManager>,
     #[cfg(feature = "bluetooth")]
-    _ble_event_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<ble::BlePeerEvent>>>,
+    ble_event_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<ble::BlePeerEvent>>>,
+    #[cfg(feature = "bluetooth")]
+    bridge_handle: RwLock<Option<bridge::BridgeHandle>>,
 }
 
 impl MobileNode {
@@ -72,7 +76,9 @@ impl MobileNode {
             #[cfg(feature = "bluetooth")]
             ble_manager,
             #[cfg(feature = "bluetooth")]
-            _ble_event_rx: RwLock::new(Some(ble_event_rx)),
+            bridge_handle: RwLock::new(None),
+            #[cfg(feature = "bluetooth")]
+            ble_event_rx: RwLock::new(Some(ble_event_rx)),
         })
     }
 
@@ -235,6 +241,7 @@ impl MobileNode {
     // --- BLE mesh controls ---
 
     /// Start the BLE mesh transport for peer-to-peer communication.
+    /// If the WS server is running, also starts the BLE ↔ WS bridge.
     pub fn start_ble(
         &self,
         mesh_id: String,
@@ -248,7 +255,29 @@ impl MobileNode {
                 callsign,
                 shared_secret,
             };
-            self.runtime.block_on(self.ble_manager.start(config))
+            self.runtime.block_on(self.ble_manager.start(config))?;
+
+            // Start the BLE ↔ WS bridge if the Hub is available
+            self.runtime.block_on(async {
+                if let Some(hub) = self.hub.read().await.clone() {
+                    if let Some(event_rx) = self.ble_event_rx.write().await.take() {
+                        let node_id = self.identity.read().await.clone();
+                        let handle = bridge::start_bridge(
+                            hub,
+                            self.ble_manager.clone(),
+                            event_rx,
+                            "general".to_string(),
+                            self.seen_ids.clone(),
+                            node_id,
+                        )
+                        .await;
+                        *self.bridge_handle.write().await = Some(handle);
+                        tracing::info!("BLE↔WS bridge started");
+                    }
+                }
+            });
+
+            Ok(())
         }
         #[cfg(not(feature = "bluetooth"))]
         {
@@ -259,10 +288,15 @@ impl MobileNode {
         }
     }
 
-    /// Stop the BLE mesh transport.
+    /// Stop the BLE mesh transport and bridge.
     pub fn stop_ble(&self) -> Result<(), PeatLinkError> {
         #[cfg(feature = "bluetooth")]
         {
+            self.runtime.block_on(async {
+                if let Some(handle) = self.bridge_handle.write().await.take() {
+                    handle.shutdown().await;
+                }
+            });
             self.runtime.block_on(self.ble_manager.stop())
         }
         #[cfg(not(feature = "bluetooth"))]
@@ -303,6 +337,77 @@ impl MobileNode {
         #[cfg(not(feature = "bluetooth"))]
         {
             Vec::new()
+        }
+    }
+
+    // --- BLE platform callbacks (called from Android/iOS native code) ---
+
+    pub fn on_ble_discovered(
+        &self,
+        identifier: String,
+        name: Option<String>,
+        rssi: i8,
+        mesh_id: Option<String>,
+        now_ms: u64,
+    ) {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime.block_on(self.ble_manager.on_ble_discovered(
+                &identifier,
+                name.as_deref(),
+                rssi,
+                mesh_id.as_deref(),
+                now_ms,
+            ));
+        }
+    }
+
+    pub fn on_ble_connected(&self, identifier: String, now_ms: u64) {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime
+                .block_on(self.ble_manager.on_ble_connected(&identifier, now_ms));
+        }
+    }
+
+    pub fn on_ble_disconnected(&self, identifier: String) {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime
+                .block_on(self.ble_manager.on_ble_disconnected(&identifier));
+        }
+    }
+
+    pub fn on_ble_data_received(&self, identifier: String, data: Vec<u8>, now_ms: u64) {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime
+                .block_on(self.ble_manager.on_ble_data_received(&identifier, &data, now_ms));
+        }
+    }
+
+    /// Periodic BLE tick. Returns data to broadcast to connected peers, if any.
+    pub fn ble_tick(&self, now_ms: u64) -> Option<Vec<u8>> {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime.block_on(self.ble_manager.tick(now_ms))
+        }
+        #[cfg(not(feature = "bluetooth"))]
+        {
+            let _ = now_ms;
+            None
+        }
+    }
+
+    /// Build current mesh document for new connections.
+    pub fn ble_build_document(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "bluetooth")]
+        {
+            self.runtime.block_on(self.ble_manager.build_document())
+        }
+        #[cfg(not(feature = "bluetooth"))]
+        {
+            None
         }
     }
 }

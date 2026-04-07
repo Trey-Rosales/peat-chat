@@ -96,13 +96,14 @@ type SetTransportData struct {
 }
 
 type MeshPeerData struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	ShortID     string `json:"short_id"`
-	Transport   string `json:"transport"`
-	LatencyMs   int64  `json:"latency_ms"`
-	State       string `json:"state"`
-	ConnectedAt uint64 `json:"connected_at"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ShortID      string `json:"short_id"`
+	Transport    string `json:"transport"`
+	LatencyMs    int64  `json:"latency_ms"`
+	State        string `json:"state"`
+	ConnectedAt  uint64 `json:"connected_at"`
+	ConnectedVia string `json:"connected_via,omitempty"` // parent node for relay peers
 }
 
 type MeshStateData struct {

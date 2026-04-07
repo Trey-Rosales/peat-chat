@@ -126,6 +126,9 @@ export function useWebSocket(
         case 'mesh_state':
           state.setMeshPeers(msg.data.room_id, msg.data.peers || [])
           break
+        case 'ble_mesh_state':
+          state.mergeMeshPeers(msg.data.room_id, msg.data.peers || [])
+          break
 
         // --- Voice messages ---
         case 'voice_state':

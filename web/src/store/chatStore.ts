@@ -38,6 +38,7 @@ interface ChatStore {
   meshPeers: Record<string, MeshPeer[]>
   meshViewerOpen: boolean
   setMeshPeers: (roomId: string, peers: MeshPeer[]) => void
+  mergeMeshPeers: (roomId: string, blePeers: MeshPeer[]) => void
   toggleMeshViewer: () => void
 
   // Voice
@@ -216,6 +217,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setMeshPeers: (roomId, peers) => {
     const meshPeers = { ...get().meshPeers }
     meshPeers[roomId] = peers
+    set({ meshPeers })
+  },
+  mergeMeshPeers: (roomId, blePeers) => {
+    const meshPeers = { ...get().meshPeers }
+    // Keep existing non-BLE peers (no connected_via), replace BLE peers with fresh list
+    const existing = meshPeers[roomId] || []
+    const nonBle = existing.filter((p) => !p.connected_via)
+    meshPeers[roomId] = [...nonBle, ...blePeers]
     set({ meshPeers })
   },
   toggleMeshViewer: () => {

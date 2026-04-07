@@ -30,6 +30,7 @@ export interface MeshPeer {
   latency_ms: number
   state: 'connected' | 'degraded'
   connected_at: number
+  connected_via?: string // parent node ID for relay/BLE peers
 }
 
 export interface VoiceMember {
