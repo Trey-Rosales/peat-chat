@@ -31,6 +31,15 @@ pub struct BlePeerInfo {
     pub transport: String,
 }
 
+/// Opus audio frame for BLE voice relay.
+#[derive(Debug, Clone)]
+pub struct VoiceFrame {
+    pub data: Vec<u8>,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub timestamp: u64,
+}
+
 pub struct MobileNode {
     data_dir: String,
     display_name: RwLock<String>,
@@ -41,6 +50,13 @@ pub struct MobileNode {
     hub: RwLock<Option<Arc<ws_server::Hub>>>,
     upstream_handle: RwLock<Option<upstream_relay::UpstreamRelayHandle>>,
     seen_ids: upstream_relay::SeenIds,
+
+    /// Outgoing voice frames (Kotlin → bridge → BLE)
+    voice_outgoing_tx: tokio::sync::mpsc::UnboundedSender<VoiceFrame>,
+    voice_outgoing_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>>,
+    /// Incoming voice frames (BLE → bridge → Kotlin)
+    voice_incoming_tx: tokio::sync::mpsc::UnboundedSender<VoiceFrame>,
+    voice_incoming_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>,
 
     #[cfg(feature = "bluetooth")]
     ble_manager: Arc<ble::BleManager>,
@@ -63,6 +79,9 @@ impl MobileNode {
         #[cfg(feature = "bluetooth")]
         let ble_manager = Arc::new(ble::BleManager::new(ble_event_tx));
 
+        let (voice_outgoing_tx, voice_outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (voice_incoming_tx, voice_incoming_rx) = tokio::sync::mpsc::unbounded_channel();
+
         Ok(Self {
             data_dir,
             display_name: RwLock::new(display_name),
@@ -73,6 +92,10 @@ impl MobileNode {
             hub: RwLock::new(None),
             upstream_handle: RwLock::new(None),
             seen_ids: upstream_relay::new_seen_ids(),
+            voice_outgoing_tx,
+            voice_outgoing_rx: RwLock::new(Some(voice_outgoing_rx)),
+            voice_incoming_tx,
+            voice_incoming_rx: RwLock::new(voice_incoming_rx),
             #[cfg(feature = "bluetooth")]
             ble_manager,
             #[cfg(feature = "bluetooth")]
@@ -262,6 +285,7 @@ impl MobileNode {
                 if let Some(hub) = self.hub.read().await.clone() {
                     if let Some(event_rx) = self.ble_event_rx.write().await.take() {
                         let node_id = self.identity.read().await.clone();
+                        let voice_rx = self.voice_outgoing_rx.write().await.take();
                         let handle = bridge::start_bridge(
                             hub,
                             self.ble_manager.clone(),
@@ -269,6 +293,10 @@ impl MobileNode {
                             "general".to_string(),
                             self.seen_ids.clone(),
                             node_id,
+                            voice_rx.unwrap_or_else(|| {
+                                tokio::sync::mpsc::unbounded_channel().1
+                            }),
+                            self.voice_incoming_tx.clone(),
                         )
                         .await;
                         *self.bridge_handle.write().await = Some(handle);
@@ -409,5 +437,33 @@ impl MobileNode {
         {
             None
         }
+    }
+
+    // --- BLE voice audio relay ---
+
+    /// Send an Opus-encoded audio frame over BLE mesh.
+    /// Called by Kotlin when the user is transmitting (PTT pressed).
+    pub fn send_voice_frame(&self, opus_frame: Vec<u8>, sender_id: String, sender_name: String) {
+        let frame = VoiceFrame {
+            data: opus_frame,
+            sender_id,
+            sender_name,
+            timestamp: ws_server::now_ms(),
+        };
+        let _ = self.voice_outgoing_tx.send(frame);
+    }
+
+    /// Receive all pending voice frames from BLE peers.
+    /// Called by Kotlin to get audio data for playback.
+    pub fn recv_voice_frames(&self) -> Vec<VoiceFrame> {
+        let mut frames = Vec::new();
+        let rt = self.runtime.clone();
+        rt.block_on(async {
+            let mut rx = self.voice_incoming_rx.write().await;
+            while let Ok(frame) = rx.try_recv() {
+                frames.push(frame);
+            }
+        });
+        frames
     }
 }

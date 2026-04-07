@@ -13,6 +13,16 @@ use tokio::sync::mpsc;
 use crate::upstream_relay::SeenIds;
 use crate::ws_server::{ChatMessage, Hub};
 
+fn base64_encode(data: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
 #[cfg(feature = "bluetooth")]
 use crate::ble::{BleManager, BlePeerEvent};
 
@@ -37,11 +47,14 @@ pub async fn start_bridge(
     room_name: String,
     seen_ids: SeenIds,
     self_node_id: String,
+    voice_outgoing_rx: mpsc::UnboundedReceiver<crate::VoiceFrame>,
+    voice_incoming_tx: mpsc::UnboundedSender<crate::VoiceFrame>,
 ) -> BridgeHandle {
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(bridge_loop(
         hub, ble_manager, ble_event_rx, room_name, seen_ids, self_node_id, shutdown_rx,
+        voice_outgoing_rx, voice_incoming_tx,
     ));
 
     BridgeHandle { shutdown_tx }
@@ -56,6 +69,8 @@ async fn bridge_loop(
     seen_ids: SeenIds,
     self_node_id: String,
     mut shutdown_rx: mpsc::Receiver<()>,
+    mut voice_outgoing_rx: mpsc::UnboundedReceiver<crate::VoiceFrame>,
+    voice_incoming_tx: mpsc::UnboundedSender<crate::VoiceFrame>,
 ) {
     // Subscribe to local Hub room broadcasts (WS → BLE direction)
     let mut room_rx = hub.subscribe_room(&room_name).await;
@@ -85,7 +100,7 @@ async fn bridge_loop(
                         if content.starts_with(WS_PREFIX) {
                             // Full WS envelope — inject into Hub or forward to WebView
                             let json = &content[WS_PREFIX.len()..];
-                            handle_ble_ws_message(json, &hub, &room_name, &seen_ids).await;
+                            handle_ble_ws_message(json, &hub, &room_name, &seen_ids, &voice_incoming_tx).await;
                         } else {
                             // Plain text chat — create ChatMessage and inject into Hub
                             let msg_id = format!("ble-{}-{}", _node_id, timestamp);
@@ -140,6 +155,22 @@ async fn bridge_loop(
                 }
             }
 
+            // === Voice: outgoing audio frames → BLE ===
+            Some(frame) = voice_outgoing_rx.recv() => {
+                let voice_json = serde_json::json!({
+                    "type": "voice_audio",
+                    "data": {
+                        "sender_id": frame.sender_id,
+                        "sender_name": frame.sender_name,
+                        "timestamp": frame.timestamp,
+                        "audio": base64_encode(&frame.data),
+                    }
+                });
+                let payload = format!("{}{}", WS_PREFIX, voice_json);
+                let now = crate::ws_server::now_ms();
+                let _ = ble_manager.send_chat(&self_node_id, &payload, now).await;
+            }
+
             // === Periodic BLE peer state → mesh_state ===
             _ = peer_interval.tick() => {
                 broadcast_ble_mesh_state(&hub, &room_name, &ble_manager, &self_node_id).await;
@@ -160,6 +191,7 @@ async fn handle_ble_ws_message(
     hub: &Arc<Hub>,
     room_name: &str,
     seen_ids: &SeenIds,
+    voice_incoming_tx: &mpsc::UnboundedSender<crate::VoiceFrame>,
 ) {
     let Ok(envelope) = serde_json::from_str::<serde_json::Value>(json) else {
         return;
@@ -203,6 +235,26 @@ async fn handle_ble_ws_message(
                         // DM or other room — send via downstream
                         let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
                     }
+                }
+            }
+        }
+
+        // Voice audio frames — decode and push to incoming queue for Kotlin playback
+        "voice_audio" => {
+            if let Some(data) = envelope.get("data") {
+                let audio_b64 = data.get("audio").and_then(|v| v.as_str()).unwrap_or("");
+                let sender_id = data.get("sender_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let sender_name = data.get("sender_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let timestamp = data.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                if let Some(audio_data) = base64_decode(audio_b64) {
+                    let frame = crate::VoiceFrame {
+                        data: audio_data,
+                        sender_id,
+                        sender_name,
+                        timestamp,
+                    };
+                    let _ = voice_incoming_tx.send(frame);
                 }
             }
         }

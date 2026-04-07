@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -28,6 +29,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.io.File
 
+import com.peatlink.app.ble.BleVoiceService
 import com.peatlink.app.ble.PeatBleService
 import com.peatlink.app.net.ServerDiscovery
 
@@ -65,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var serverPort: Int = 0
     private var discovery: ServerDiscovery? = null
     private var bleService: PeatBleService? = null
+    private var bleVoice: BleVoiceService? = null
     private var serverStarted = false
     private var connStatusJob: Job? = null
 
@@ -154,6 +157,29 @@ class MainActivity : AppCompatActivity() {
             }
 
             setBackgroundColor(Color.parseColor("#0b141a"))
+
+            // JavaScript bridge for BLE voice PTT
+            addJavascriptInterface(object {
+                @JavascriptInterface
+                fun startPtt(senderId: String, senderName: String) {
+                    bleVoice?.startTransmitting(senderId, senderName)
+                }
+
+                @JavascriptInterface
+                fun stopPtt() {
+                    bleVoice?.stopTransmitting()
+                }
+
+                @JavascriptInterface
+                fun isTransmitting(): Boolean {
+                    return bleVoice?.isTransmitting ?: false
+                }
+
+                @JavascriptInterface
+                fun hasBleVoice(): Boolean {
+                    return bleVoice != null
+                }
+            }, "PeatLinkVoice")
         }
         rootLayout.addView(webView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -259,6 +285,12 @@ class MainActivity : AppCompatActivity() {
                     svc.start()
                     bleService = svc
                     Log.i(TAG, "BLE platform service started")
+
+                    // Start BLE voice audio service
+                    val voice = BleVoiceService(mobileNode)
+                    voice.start()
+                    bleVoice = voice
+                    Log.i(TAG, "BLE voice service started")
                 } catch (e: Throwable) {
                     Log.w(TAG, "BLE mesh/service failed: ${e.message}")
                 }
@@ -484,6 +516,8 @@ class MainActivity : AppCompatActivity() {
         try { discovery?.stopDiscovery() } catch (_: Throwable) {}
         webView.destroy()
 
+        try { bleVoice?.stop() } catch (_: Throwable) {}
+        bleVoice = null
         try { bleService?.stop() } catch (_: Throwable) {}
         bleService = null
 

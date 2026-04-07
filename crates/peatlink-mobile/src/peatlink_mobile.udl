@@ -65,6 +65,17 @@ interface MobileNode {
 
     // Build current mesh document for new connections
     sequence<u8>? ble_build_document();
+
+    // BLE voice audio relay
+    void send_voice_frame(sequence<u8> opus_frame, string sender_id, string sender_name);
+    sequence<VoiceFrame> recv_voice_frames();
+};
+
+dictionary VoiceFrame {
+    sequence<u8> data;
+    string sender_id;
+    string sender_name;
+    u64 timestamp;
 };
 
 namespace peatlink_mobile {
