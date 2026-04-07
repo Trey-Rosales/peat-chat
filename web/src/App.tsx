@@ -44,6 +44,17 @@ export default function App() {
 
   const joinVoice = useCallback(
     async (roomId: string, channelId: string, existingMembers: VoiceMember[]) => {
+      // BLE-only mode: join voice channel without WebRTC VoiceManager
+      const hasBleVoice = !!window.PeatLinkVoice?.hasBleVoice?.()
+      if (!voiceManagerRef.current && !hasBleVoice) return
+
+      if (!voiceManagerRef.current && hasBleVoice) {
+        // BLE-only: just send join_voice and set active — no WebRTC needed
+        send('join_voice', { room_id: roomId, channel_id: channelId })
+        useChatStore.getState().setActiveVoice(roomId, channelId)
+        return
+      }
+
       if (!voiceManagerRef.current) return
       try {
         await voiceManagerRef.current.joinChannel(roomId, channelId, existingMembers)

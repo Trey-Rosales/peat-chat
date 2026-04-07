@@ -234,7 +234,19 @@ async fn bridge_loop(
                 if let Ok(text) = String::from_utf8(packet.data) {
                     if text.starts_with(WS_PREFIX) {
                         let json = &text[WS_PREFIX.len()..];
-                        // Content hash dedup — prevents echo AND dual-GATT duplicates
+
+                        // Message ID dedup — drop messages we sent to BLE that echoed back
+                        if let Ok(env) = serde_json::from_str::<serde_json::Value>(json) {
+                            if let Some(msg_id) = env.pointer("/data/message/id").and_then(|v| v.as_str()) {
+                                let key = format!("ble-sent-{}", msg_id);
+                                let ids = seen_ids.read().await;
+                                if ids.contains(&key) {
+                                    continue; // We sent this — it echoed back from BLE peer
+                                }
+                            }
+                        }
+
+                        // Content hash dedup — prevents dual-GATT duplicates
                         let hash = format!("ble-echo-{}", fxhash(json));
                         {
                             let mut ids = seen_ids.write().await;
@@ -617,12 +629,22 @@ async fn forward_ws_to_ble(
         _ => {}
     }
 
-    // Check echo prevention — only block if this exact content came from BLE
+    // For messages, track by ID so we drop echoes when they come back from BLE
+    if msg_type == "message" {
+        if let Ok(env) = serde_json::from_str::<serde_json::Value>(broadcast) {
+            if let Some(msg_id) = env.pointer("/data/message/id").and_then(|v| v.as_str()) {
+                let mut ids = seen_ids.write().await;
+                ids.insert(format!("ble-sent-{}", msg_id));
+            }
+        }
+    }
+
+    // Check echo prevention — block if content hash or message ID was seen from BLE
     let hash = format!("ble-echo-{}", fxhash(broadcast));
     {
         let ids = seen_ids.read().await;
         if ids.contains(&hash) {
-            return; // This came from BLE — don't echo back
+            return;
         }
     }
 
