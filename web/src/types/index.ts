@@ -5,6 +5,10 @@ export interface ChatMessage {
   timestamp: number
   content: string
   reply_to?: string
+  edited_at?: number
+  deleted?: boolean
+  reactions?: Record<string, string[]> // emoji -> senderIDs
+  pinned?: boolean
 }
 
 export interface Room {
@@ -13,6 +17,9 @@ export interface Room {
   messages: ChatMessage[]
   members: number
   unread: number
+  isDM?: boolean
+  dmPeerId?: string
+  dmPeerName?: string
 }
 
 export interface MeshPeer {

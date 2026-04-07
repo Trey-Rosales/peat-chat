@@ -690,3 +690,610 @@ func TestHub_DeleteMarker_OwnershipCheck(t *testing.T) {
 		t.Fatalf("marker should still exist after unauthorized delete, got %d markers", len(markers))
 	}
 }
+
+// --- Edit / Delete / Reaction / Pin hub tests ---
+
+func TestHub_EditMessage(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "original")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.EditMessage(c1, roomHex, msg.ID, "edited")
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundEdited bool
+	for _, m := range allMsgs {
+		if m.Type == "message_edited" {
+			foundEdited = true
+			var data MessageEditedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+			if data.Content != "edited" {
+				t.Fatalf("expected content 'edited', got '%s'", data.Content)
+			}
+			if data.EditedAt == 0 {
+				t.Fatal("edited_at should be non-zero")
+			}
+		}
+	}
+	if !foundEdited {
+		t.Fatal("should receive message_edited broadcast")
+	}
+}
+
+func TestHub_EditMessage_WrongSender(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "original")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Bob tries to edit Alice's message
+	hub.EditMessage(c2, roomHex, msg.ID, "hacked")
+
+	c2Msgs := drainClientSend(c2, 5)
+	var gotError bool
+	for _, m := range c2Msgs {
+		if m.Type == "error" {
+			gotError = true
+			var data ErrorData
+			json.Unmarshal(m.Data, &data)
+			if data.Message != "cannot edit message" {
+				t.Fatalf("expected 'cannot edit message', got '%s'", data.Message)
+			}
+		}
+	}
+	if !gotError {
+		t.Fatal("Bob should receive error when editing Alice's message")
+	}
+}
+
+func TestHub_DeleteMessage(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "to delete")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.DeleteMessage(c1, roomHex, msg.ID)
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundDeleted bool
+	for _, m := range allMsgs {
+		if m.Type == "message_deleted" {
+			foundDeleted = true
+			var data MessageDeletedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+		}
+	}
+	if !foundDeleted {
+		t.Fatal("should receive message_deleted broadcast")
+	}
+}
+
+func TestHub_AddReaction(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "react to me")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.AddReaction(c2, roomHex, msg.ID, "👍")
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundReaction bool
+	for _, m := range allMsgs {
+		if m.Type == "reaction_updated" {
+			foundReaction = true
+			var data ReactionUpdatedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+			if len(data.Reactions["👍"]) != 1 {
+				t.Fatalf("expected 1 reactor for 👍, got %d", len(data.Reactions["👍"]))
+			}
+		}
+	}
+	if !foundReaction {
+		t.Fatal("should receive reaction_updated broadcast")
+	}
+}
+
+func TestHub_RemoveReaction(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "react then remove")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.AddReaction(c2, roomHex, msg.ID, "👍")
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.RemoveReaction(c2, roomHex, msg.ID, "👍")
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundReaction bool
+	for _, m := range allMsgs {
+		if m.Type == "reaction_updated" {
+			foundReaction = true
+			var data ReactionUpdatedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+			if _, exists := data.Reactions["👍"]; exists {
+				t.Fatal("👍 should be removed from reactions map")
+			}
+		}
+	}
+	if !foundReaction {
+		t.Fatal("should receive reaction_updated broadcast after removal")
+	}
+}
+
+func TestHub_PinMessage(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "pin me")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.PinMessage(c1, roomHex, msg.ID)
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundPinned bool
+	for _, m := range allMsgs {
+		if m.Type == "message_pinned" {
+			foundPinned = true
+			var data MessagePinnedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+		}
+	}
+	if !foundPinned {
+		t.Fatal("should receive message_pinned broadcast")
+	}
+}
+
+func TestHub_UnpinMessage(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c1, "general")
+	hub.JoinRoom(c2, "general")
+	drainClientSend(c1, 20)
+	drainClientSend(c2, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+
+	msg := NewChatMessage(c1.identity.ID, "Alice", "unpin me")
+	hub.BroadcastMessage(c1, room, msg)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.PinMessage(c1, roomHex, msg.ID)
+	drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	hub.UnpinMessage(c1, roomHex, msg.ID)
+
+	c1Msgs := drainClientSend(c1, 5)
+	c2Msgs := drainClientSend(c2, 5)
+
+	allMsgs := append(c1Msgs, c2Msgs...)
+	var foundUnpinned bool
+	for _, m := range allMsgs {
+		if m.Type == "message_unpinned" {
+			foundUnpinned = true
+			var data MessageUnpinnedData
+			json.Unmarshal(m.Data, &data)
+			if data.MessageID != msg.ID {
+				t.Fatalf("expected message_id '%s', got '%s'", msg.ID, data.MessageID)
+			}
+		}
+	}
+	if !foundUnpinned {
+		t.Fatal("should receive message_unpinned broadcast")
+	}
+}
+
+// --- DM hub tests ---
+
+func TestHub_StartDM(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.StartDM(c1, c2.identity.ID)
+
+	c1Msgs := drainClientSend(c1, 10)
+	c2Msgs := drainClientSend(c2, 10)
+
+	// c1 should get dm_opened and room_joined with is_dm=true
+	var c1DmOpened, c1RoomJoined bool
+	for _, m := range c1Msgs {
+		if m.Type == "dm_opened" {
+			c1DmOpened = true
+			var data DMOpenedData
+			json.Unmarshal(m.Data, &data)
+			if data.PeerName != "Bob" {
+				t.Fatalf("expected peer_name 'Bob', got '%s'", data.PeerName)
+			}
+		}
+		if m.Type == "room_joined" {
+			c1RoomJoined = true
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			if !data.IsDM {
+				t.Fatal("room_joined for DM should have is_dm=true")
+			}
+		}
+	}
+	if !c1DmOpened {
+		t.Fatal("c1 should receive dm_opened")
+	}
+	if !c1RoomJoined {
+		t.Fatal("c1 should receive room_joined")
+	}
+
+	// c2 should get dm_opened and room_joined with is_dm=true
+	var c2DmOpened, c2RoomJoined bool
+	for _, m := range c2Msgs {
+		if m.Type == "dm_opened" {
+			c2DmOpened = true
+			var data DMOpenedData
+			json.Unmarshal(m.Data, &data)
+			if data.PeerName != "Alice" {
+				t.Fatalf("expected peer_name 'Alice', got '%s'", data.PeerName)
+			}
+		}
+		if m.Type == "room_joined" {
+			c2RoomJoined = true
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			if !data.IsDM {
+				t.Fatal("room_joined for DM should have is_dm=true")
+			}
+		}
+	}
+	if !c2DmOpened {
+		t.Fatal("c2 should receive dm_opened")
+	}
+	if !c2RoomJoined {
+		t.Fatal("c2 should receive room_joined")
+	}
+}
+
+func TestHub_StartDM_FindExisting(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.StartDM(c1, c2.identity.ID)
+	c1Msgs1 := drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Extract room_id from first DM
+	var firstRoomID string
+	for _, m := range c1Msgs1 {
+		if m.Type == "room_joined" {
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			firstRoomID = data.RoomID
+		}
+	}
+	if firstRoomID == "" {
+		t.Fatal("should have received room_joined with room_id")
+	}
+
+	// Start DM again — should return the same room
+	hub.StartDM(c2, c1.identity.ID)
+	c2Msgs := drainClientSend(c2, 10)
+	drainClientSend(c1, 10)
+
+	var secondRoomID string
+	for _, m := range c2Msgs {
+		if m.Type == "room_joined" {
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			secondRoomID = data.RoomID
+		}
+	}
+	if secondRoomID == "" {
+		t.Fatal("should have received room_joined with room_id on second StartDM")
+	}
+	if firstRoomID != secondRoomID {
+		t.Fatalf("starting DM twice should return same room: got '%s' and '%s'", firstRoomID, secondRoomID)
+	}
+}
+
+func TestHub_JoinRoom_BlocksDM(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.StartDM(c1, c2.identity.ID)
+	c1Msgs := drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Extract the DM room name
+	var dmRoomName string
+	for _, m := range c1Msgs {
+		if m.Type == "dm_opened" {
+			var data DMOpenedData
+			json.Unmarshal(m.Data, &data)
+			// We need the room name, but dm_opened gives us room_id (hex).
+			// We'll use the room_id to find the room and get its name.
+			room := hub.getRoomByHex(data.RoomID)
+			if room != nil {
+				dmRoomName = room.Name
+			}
+		}
+	}
+	if dmRoomName == "" {
+		t.Fatal("could not find DM room name")
+	}
+
+	// Register a third client and try to join the DM room
+	c3 := newTestClient(hub, "Charlie")
+	hub.register <- c3
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(c3, dmRoomName)
+
+	c3Msgs := drainClientSend(c3, 5)
+	var gotError bool
+	for _, m := range c3Msgs {
+		if m.Type == "error" {
+			gotError = true
+			var data ErrorData
+			json.Unmarshal(m.Data, &data)
+			if data.Message != "cannot join private conversation" {
+				t.Fatalf("expected 'cannot join private conversation', got '%s'", data.Message)
+			}
+		}
+	}
+	if !gotError {
+		t.Fatal("third client should be blocked from joining a DM room")
+	}
+}
+
+func TestHub_JoinDM(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	hub.register <- c1
+	hub.register <- c2
+	time.Sleep(50 * time.Millisecond)
+
+	hub.StartDM(c1, c2.identity.ID)
+	c1Msgs := drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Extract room hex ID
+	var roomHexID string
+	for _, m := range c1Msgs {
+		if m.Type == "room_joined" {
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			roomHexID = data.RoomID
+		}
+	}
+	if roomHexID == "" {
+		t.Fatal("should have room_id from StartDM")
+	}
+
+	// Participant can rejoin via JoinDM
+	hub.JoinDM(c1, roomHexID)
+
+	c1Msgs = drainClientSend(c1, 10)
+	var gotRoomJoined bool
+	for _, m := range c1Msgs {
+		if m.Type == "room_joined" {
+			gotRoomJoined = true
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			if !data.IsDM {
+				t.Fatal("JoinDM room_joined should have is_dm=true")
+			}
+		}
+	}
+	if !gotRoomJoined {
+		t.Fatal("participant should receive room_joined on JoinDM")
+	}
+}
+
+func TestHub_JoinDM_Unauthorized(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	c1 := newTestClient(hub, "Alice")
+	c2 := newTestClient(hub, "Bob")
+	c3 := newTestClient(hub, "Charlie")
+	hub.register <- c1
+	hub.register <- c2
+	hub.register <- c3
+	time.Sleep(50 * time.Millisecond)
+
+	hub.StartDM(c1, c2.identity.ID)
+	c1Msgs := drainClientSend(c1, 10)
+	drainClientSend(c2, 10)
+
+	// Extract room hex ID
+	var roomHexID string
+	for _, m := range c1Msgs {
+		if m.Type == "room_joined" {
+			var data RoomJoinedData
+			json.Unmarshal(m.Data, &data)
+			roomHexID = data.RoomID
+		}
+	}
+	if roomHexID == "" {
+		t.Fatal("should have room_id from StartDM")
+	}
+
+	// Non-participant tries JoinDM
+	hub.JoinDM(c3, roomHexID)
+
+	c3Msgs := drainClientSend(c3, 5)
+	var gotError bool
+	for _, m := range c3Msgs {
+		if m.Type == "error" {
+			gotError = true
+			var data ErrorData
+			json.Unmarshal(m.Data, &data)
+			if data.Message != "cannot join private conversation" {
+				t.Fatalf("expected 'cannot join private conversation', got '%s'", data.Message)
+			}
+		}
+	}
+	if !gotError {
+		t.Fatal("non-participant should be rejected from JoinDM")
+	}
+}

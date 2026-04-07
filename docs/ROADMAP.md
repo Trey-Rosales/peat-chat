@@ -22,10 +22,10 @@
 ## Phase 1 — Core Messaging
 
 ### Direct Messages (DMs)
-- [ ] Private 1:1 channels between any two mesh members
+- [x] Private 1:1 channels between any two mesh members
 - [ ] End-to-end encrypted via X25519 key exchange (peat-mesh already has this)
-- [ ] DM threads in sidebar separate from room list
-- [ ] Unread indicators and notifications
+- [x] DM threads in sidebar separate from room list
+- [x] Unread indicators and notifications
 - [ ] Message delivery receipts (sent/delivered/read)
 
 ### File Sharing
@@ -37,11 +37,11 @@
 - [ ] Files persist in AutomergeStore with TTL (auto-expire on low storage)
 
 ### Message Improvements
-- [ ] Message editing and deletion (CRDT tombstones via AutomergeStore)
-- [ ] Threaded replies (reply-to with visual nesting)
-- [ ] Reactions / emoji responses
-- [ ] Message search across rooms
-- [ ] Pinned messages per room
+- [x] Message editing and deletion (CRDT tombstones via AutomergeStore)
+- [x] Threaded replies (reply-to with visual nesting)
+- [x] Reactions / emoji responses
+- [x] Message search across rooms
+- [x] Pinned messages per room
 
 ---
 

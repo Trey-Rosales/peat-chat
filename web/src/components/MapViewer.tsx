@@ -69,15 +69,18 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
       setSelectedMarker(null)
     })
 
+    // Prevent native context menu on the map canvas (interferes with marker placement)
+    map.getCanvas().addEventListener('contextmenu', (e) => e.preventDefault())
+
     // Long-press (mobile) to place marker
     let longPressTimer: ReturnType<typeof setTimeout> | null = null
     let longPressPos: { lat: number; lon: number } | null = null
-    const canvas = map.getCanvas()
 
-    canvas.addEventListener('touchstart', (e) => {
+    map.getCanvas().addEventListener('touchstart', (e) => {
       if (e.touches.length !== 1) return
       const touch = e.touches[0]
-      const point = map.unproject([touch.clientX - canvas.getBoundingClientRect().left, touch.clientY - canvas.getBoundingClientRect().top])
+      const rect = map.getCanvas().getBoundingClientRect()
+      const point = map.unproject([touch.clientX - rect.left, touch.clientY - rect.top])
       longPressPos = { lat: point.lat, lon: point.lng }
       longPressTimer = setTimeout(() => {
         if (longPressPos) {
@@ -86,11 +89,11 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
           setSelectedMarker(null)
         }
       }, 600)
-    })
-    canvas.addEventListener('touchmove', () => {
+    }, { passive: true })
+    map.getCanvas().addEventListener('touchmove', () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
-    })
-    canvas.addEventListener('touchend', () => {
+    }, { passive: true })
+    map.getCanvas().addEventListener('touchend', () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
     })
 

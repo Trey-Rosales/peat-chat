@@ -94,6 +94,19 @@ func (h *Hub) getRoomByHex(hexID string) *Room {
 
 func (h *Hub) JoinRoom(client *Client, roomName string) {
 	room := h.getOrCreateRoom(roomName)
+
+	// Block non-participants from joining DM rooms
+	room.mu.RLock()
+	isDM := room.IsDM
+	participants := room.DMParticipants
+	room.mu.RUnlock()
+	if isDM {
+		if client.identity.ID != participants[0] && client.identity.ID != participants[1] {
+			client.sendJSON("error", ErrorData{Message: "cannot join private conversation"})
+			return
+		}
+	}
+
 	room.AddMember(client)
 
 	client.mu.Lock()
@@ -106,6 +119,7 @@ func (h *Hub) JoinRoom(client *Client, roomName string) {
 		RoomID:  roomID,
 		Name:    room.Name,
 		Members: room.MemberCount(),
+		IsDM:    isDM,
 	})
 
 	client.sendJSON("room_history", RoomHistoryData{
@@ -413,6 +427,282 @@ func (h *Hub) broadcastVoiceState(room *Room) {
 }
 
 // --- CoT / map methods ---
+
+// --- Message editing / deletion / reactions / pins ---
+
+func (h *Hub) EditMessage(client *Client, roomHexID, messageID, content string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		client.sendJSON("error", ErrorData{Message: "room not found"})
+		return
+	}
+	editedAt, ok := room.EditMessage(messageID, client.identity.ID, content)
+	if !ok {
+		client.sendJSON("error", ErrorData{Message: "cannot edit message"})
+		return
+	}
+	data := mustMarshal("message_edited", MessageEditedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+		Content:   content,
+		EditedAt:  editedAt,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) DeleteMessage(client *Client, roomHexID, messageID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		client.sendJSON("error", ErrorData{Message: "room not found"})
+		return
+	}
+	if !room.DeleteMessage(messageID, client.identity.ID) {
+		client.sendJSON("error", ErrorData{Message: "cannot delete message"})
+		return
+	}
+	data := mustMarshal("message_deleted", MessageDeletedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) AddReaction(client *Client, roomHexID, messageID, emoji string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
+	reactions, ok := room.AddReaction(messageID, client.identity.ID, emoji)
+	if !ok {
+		return
+	}
+	data := mustMarshal("reaction_updated", ReactionUpdatedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+		Reactions: reactions,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) RemoveReaction(client *Client, roomHexID, messageID, emoji string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
+	reactions, ok := room.RemoveReaction(messageID, client.identity.ID, emoji)
+	if !ok {
+		return
+	}
+	data := mustMarshal("reaction_updated", ReactionUpdatedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+		Reactions: reactions,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) PinMessage(client *Client, roomHexID, messageID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
+	if !room.PinMessage(messageID) {
+		return
+	}
+	data := mustMarshal("message_pinned", MessagePinnedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+	})
+	room.Broadcast(data, nil)
+}
+
+func (h *Hub) UnpinMessage(client *Client, roomHexID, messageID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil || !room.HasMember(client) {
+		return
+	}
+	if !room.UnpinMessage(messageID) {
+		return
+	}
+	data := mustMarshal("message_unpinned", MessageUnpinnedData{
+		RoomID:    roomHexID,
+		MessageID: messageID,
+	})
+	room.Broadcast(data, nil)
+}
+
+// --- Direct Messages ---
+
+func (h *Hub) StartDM(client *Client, targetID string) {
+	h.mu.RLock()
+	target := h.clientsByID[targetID]
+	h.mu.RUnlock()
+	if target == nil {
+		client.sendJSON("error", ErrorData{Message: "user not found"})
+		return
+	}
+
+	id1, id2 := client.identity.ID, target.identity.ID
+
+	// Check if a DM room already exists between these two participants
+	room := h.findExistingDM(id1, id2)
+
+	if room == nil {
+		// Create with opaque UUID name — not guessable from peer IDs
+		dmName := "dm:" + uuid.New().String()
+		room = h.getOrCreateRoom(dmName)
+		room.mu.Lock()
+		room.IsDM = true
+		if id1 < id2 {
+			room.DMParticipants = [2]string{id1, id2}
+		} else {
+			room.DMParticipants = [2]string{id2, id1}
+		}
+		room.mu.Unlock()
+	}
+
+	// Join both participants if not already in the room
+	if !room.HasMember(client) {
+		room.AddMember(client)
+		client.mu.Lock()
+		client.rooms[room.ID] = true
+		client.mu.Unlock()
+	}
+	if !room.HasMember(target) {
+		room.AddMember(target)
+		target.mu.Lock()
+		target.rooms[room.ID] = true
+		target.mu.Unlock()
+	}
+
+	roomID := ChatIdHex(room.ID)
+
+	target.mu.RLock()
+	targetName := target.name
+	target.mu.RUnlock()
+
+	client.mu.RLock()
+	clientName := client.name
+	client.mu.RUnlock()
+
+	// Send dm_opened to initiator
+	client.sendJSON("dm_opened", DMOpenedData{
+		RoomID:   roomID,
+		Name:     targetName,
+		PeerID:   target.identity.ID,
+		PeerName: targetName,
+	})
+
+	// Send room_joined + history to initiator
+	client.sendJSON("room_joined", RoomJoinedData{
+		RoomID:  roomID,
+		Name:    targetName,
+		Members: room.MemberCount(),
+		IsDM:    true,
+	})
+	client.sendJSON("room_history", RoomHistoryData{
+		RoomID:   roomID,
+		Messages: room.GetHistory(),
+	})
+
+	// Send dm_opened to target
+	target.sendJSON("dm_opened", DMOpenedData{
+		RoomID:   roomID,
+		Name:     clientName,
+		PeerID:   client.identity.ID,
+		PeerName: clientName,
+	})
+
+	// Send room_joined + history to target
+	target.sendJSON("room_joined", RoomJoinedData{
+		RoomID:  roomID,
+		Name:    clientName,
+		Members: room.MemberCount(),
+		IsDM:    true,
+	})
+	target.sendJSON("room_history", RoomHistoryData{
+		RoomID:   roomID,
+		Messages: room.GetHistory(),
+	})
+}
+
+// findExistingDM looks for an existing DM room between two peer IDs.
+func (h *Hub) findExistingDM(id1, id2 string) *Room {
+	// Normalize participant order for comparison
+	if id1 > id2 {
+		id1, id2 = id2, id1
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, room := range h.rooms {
+		room.mu.RLock()
+		isDM := room.IsDM
+		p := room.DMParticipants
+		room.mu.RUnlock()
+		if isDM && p[0] == id1 && p[1] == id2 {
+			return room
+		}
+	}
+	return nil
+}
+
+// JoinDM allows a participant to rejoin their DM room by hex room ID (used on reconnect).
+func (h *Hub) JoinDM(client *Client, roomHexID string) {
+	room := h.getRoomByHex(roomHexID)
+	if room == nil {
+		client.sendJSON("error", ErrorData{Message: "DM room not found"})
+		return
+	}
+
+	room.mu.RLock()
+	isDM := room.IsDM
+	participants := room.DMParticipants
+	room.mu.RUnlock()
+
+	if !isDM {
+		client.sendJSON("error", ErrorData{Message: "not a DM room"})
+		return
+	}
+	if client.identity.ID != participants[0] && client.identity.ID != participants[1] {
+		client.sendJSON("error", ErrorData{Message: "cannot join private conversation"})
+		return
+	}
+
+	if !room.HasMember(client) {
+		room.AddMember(client)
+		client.mu.Lock()
+		client.rooms[room.ID] = true
+		client.mu.Unlock()
+	}
+
+	roomID := ChatIdHex(room.ID)
+
+	// Determine peer name for the DM display
+	var peerName string
+	members := room.GetMembers()
+	for _, m := range members {
+		if m.identity.ID != client.identity.ID {
+			m.mu.RLock()
+			peerName = m.name
+			m.mu.RUnlock()
+			break
+		}
+	}
+	if peerName == "" {
+		peerName = "DM"
+	}
+
+	client.sendJSON("room_joined", RoomJoinedData{
+		RoomID:  roomID,
+		Name:    peerName,
+		Members: room.MemberCount(),
+		IsDM:    true,
+	})
+	client.sendJSON("room_history", RoomHistoryData{
+		RoomID:   roomID,
+		Messages: room.GetHistory(),
+	})
+}
 
 func (h *Hub) broadcastCotState(room *Room) {
 	members := room.GetMembers()

@@ -35,7 +35,12 @@ export function useWebSocket(
         const roomList = Object.values(rooms)
         if (roomList.length > 0) {
           for (const room of roomList) {
-            ws.send(JSON.stringify({ type: 'join_room', data: { name: room.name } }))
+            if (room.isDM) {
+              // DM rooms rejoin by room ID, not by display name
+              ws.send(JSON.stringify({ type: 'join_dm', data: { room_id: room.id } }))
+            } else {
+              ws.send(JSON.stringify({ type: 'join_room', data: { name: room.name } }))
+            }
           }
         } else {
           ws.send(JSON.stringify({ type: 'join_room', data: { name: 'general' } }))
@@ -79,7 +84,7 @@ export function useWebSocket(
           state.setIdentity(msg.data.id, msg.data.short_id)
           break
         case 'room_joined':
-          state.addRoom(msg.data.room_id, msg.data.name, msg.data.members)
+          state.addRoom(msg.data.room_id, msg.data.name, msg.data.members, msg.data.is_dm)
           if (!state.activeRoomId) {
             state.setActiveRoom(msg.data.room_id)
           }
@@ -93,6 +98,31 @@ export function useWebSocket(
         case 'peer_update':
           state.updateRoomMembers(msg.data.room_id, msg.data.members)
           break
+
+        // --- Message editing / deletion / reactions / pins ---
+        case 'message_edited':
+          state.editMessage(msg.data.room_id, msg.data.message_id, msg.data.content, msg.data.edited_at)
+          break
+        case 'message_deleted':
+          state.deleteMessage(msg.data.room_id, msg.data.message_id)
+          break
+        case 'reaction_updated':
+          state.updateReactions(msg.data.room_id, msg.data.message_id, msg.data.reactions || {})
+          break
+        case 'message_pinned':
+          state.pinMessage(msg.data.room_id, msg.data.message_id)
+          break
+        case 'message_unpinned':
+          state.unpinMessage(msg.data.room_id, msg.data.message_id)
+          break
+
+        // --- Direct Messages ---
+        case 'dm_opened':
+          state.addDMRoom(msg.data.room_id, msg.data.name, msg.data.peer_id, msg.data.peer_name)
+          // Auto-switch to the DM conversation
+          state.setActiveRoom(msg.data.room_id)
+          break
+
         case 'mesh_state':
           state.setMeshPeers(msg.data.room_id, msg.data.peers || [])
           break

@@ -12,10 +12,24 @@ interface ChatStore {
   setActiveRoom: (id: string) => void
 
   setIdentity: (id: string, shortId: string) => void
-  addRoom: (id: string, name: string, members: number) => void
+  addRoom: (id: string, name: string, members: number, isDM?: boolean) => void
   setRoomHistory: (roomId: string, messages: ChatMessage[]) => void
   addMessage: (roomId: string, message: ChatMessage) => void
   updateRoomMembers: (roomId: string, members: number) => void
+
+  // Message editing / deletion
+  editMessage: (roomId: string, messageId: string, content: string, editedAt: number) => void
+  deleteMessage: (roomId: string, messageId: string) => void
+
+  // Reactions
+  updateReactions: (roomId: string, messageId: string, reactions: Record<string, string[]>) => void
+
+  // Pinned messages
+  pinMessage: (roomId: string, messageId: string) => void
+  unpinMessage: (roomId: string, messageId: string) => void
+
+  // DMs
+  addDMRoom: (id: string, name: string, peerId: string, peerName: string) => void
 
   connected: boolean
   setConnected: (c: boolean) => void
@@ -80,10 +94,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setIdentity: (id, shortId) => set({ userId: id, shortId }),
 
-  addRoom: (id, name, members) => {
+  addRoom: (id, name, members, isDM) => {
     const rooms = { ...get().rooms }
     if (!rooms[id]) {
-      rooms[id] = { id, name, messages: [], members, unread: 0 }
+      rooms[id] = { id, name, messages: [], members, unread: 0, isDM: isDM || false }
     } else {
       rooms[id] = { ...rooms[id], members }
     }
@@ -116,6 +130,79 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const rooms = { ...get().rooms }
     if (rooms[roomId]) {
       rooms[roomId] = { ...rooms[roomId], members }
+    }
+    set({ rooms })
+  },
+
+  editMessage: (roomId, messageId, content, editedAt) => {
+    const rooms = { ...get().rooms }
+    if (rooms[roomId]) {
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: rooms[roomId].messages.map((m) =>
+          m.id === messageId ? { ...m, content, edited_at: editedAt } : m
+        ),
+      }
+    }
+    set({ rooms })
+  },
+
+  deleteMessage: (roomId, messageId) => {
+    const rooms = { ...get().rooms }
+    if (rooms[roomId]) {
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: rooms[roomId].messages.map((m) =>
+          m.id === messageId ? { ...m, deleted: true, content: '', pinned: false } : m
+        ),
+      }
+    }
+    set({ rooms })
+  },
+
+  updateReactions: (roomId, messageId, reactions) => {
+    const rooms = { ...get().rooms }
+    if (rooms[roomId]) {
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: rooms[roomId].messages.map((m) =>
+          m.id === messageId ? { ...m, reactions } : m
+        ),
+      }
+    }
+    set({ rooms })
+  },
+
+  pinMessage: (roomId, messageId) => {
+    const rooms = { ...get().rooms }
+    if (rooms[roomId]) {
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: rooms[roomId].messages.map((m) =>
+          m.id === messageId ? { ...m, pinned: true } : m
+        ),
+      }
+    }
+    set({ rooms })
+  },
+
+  unpinMessage: (roomId, messageId) => {
+    const rooms = { ...get().rooms }
+    if (rooms[roomId]) {
+      rooms[roomId] = {
+        ...rooms[roomId],
+        messages: rooms[roomId].messages.map((m) =>
+          m.id === messageId ? { ...m, pinned: false } : m
+        ),
+      }
+    }
+    set({ rooms })
+  },
+
+  addDMRoom: (id, name, peerId, peerName) => {
+    const rooms = { ...get().rooms }
+    if (!rooms[id]) {
+      rooms[id] = { id, name, messages: [], members: 2, unread: 0, isDM: true, dmPeerId: peerId, dmPeerName: peerName }
     }
     set({ rooms })
   },

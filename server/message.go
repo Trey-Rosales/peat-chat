@@ -9,12 +9,16 @@ import (
 
 // ChatMessage mirrors the Rust ChatMessage struct exactly.
 type ChatMessage struct {
-	ID         string  `json:"id"`
-	Sender     string  `json:"sender"`
-	SenderName string  `json:"sender_name"`
-	Timestamp  uint64  `json:"timestamp"`
-	Content    string  `json:"content"`
-	ReplyTo    *string `json:"reply_to,omitempty"`
+	ID         string              `json:"id"`
+	Sender     string              `json:"sender"`
+	SenderName string              `json:"sender_name"`
+	Timestamp  uint64              `json:"timestamp"`
+	Content    string              `json:"content"`
+	ReplyTo    *string             `json:"reply_to,omitempty"`
+	EditedAt   *uint64             `json:"edited_at,omitempty"`
+	Deleted    bool                `json:"deleted,omitempty"`
+	Reactions  map[string][]string `json:"reactions,omitempty"` // emoji -> []senderID
+	Pinned     bool                `json:"pinned,omitempty"`
 }
 
 func NewChatMessage(senderID, senderName, content string) ChatMessage {
@@ -60,6 +64,7 @@ type RoomJoinedData struct {
 	RoomID  string `json:"room_id"`
 	Name    string `json:"name"`
 	Members int    `json:"members"`
+	IsDM    bool   `json:"is_dm,omitempty"`
 }
 
 type RoomHistoryData struct {
@@ -312,4 +317,102 @@ type MarkerCreatedData struct {
 type MarkerDeletedData struct {
 	RoomID   string `json:"room_id"`
 	MarkerID string `json:"marker_id"`
+}
+
+// --- Message editing / deletion ---
+
+// Incoming: edit_message
+type EditMessageData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Content   string `json:"content"`
+}
+
+// Incoming: delete_message
+type DeleteMessageData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Outgoing: message_edited
+type MessageEditedData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Content   string `json:"content"`
+	EditedAt  uint64 `json:"edited_at"`
+}
+
+// Outgoing: message_deleted
+type MessageDeletedData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// --- Reactions ---
+
+// Incoming: add_reaction
+type AddReactionData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
+// Incoming: remove_reaction
+type RemoveReactionData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
+// Outgoing: reaction_updated
+type ReactionUpdatedData struct {
+	RoomID    string              `json:"room_id"`
+	MessageID string              `json:"message_id"`
+	Reactions map[string][]string `json:"reactions"`
+}
+
+// --- Pinned messages ---
+
+// Incoming: pin_message
+type PinMessageData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Incoming: unpin_message
+type UnpinMessageData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Outgoing: message_pinned
+type MessagePinnedData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// Outgoing: message_unpinned
+type MessageUnpinnedData struct {
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
+// --- Direct Messages ---
+
+// Incoming: start_dm
+type StartDMData struct {
+	TargetID string `json:"target_id"`
+}
+
+// Incoming: join_dm — rejoin a DM room by its hex room ID (used on reconnect)
+type JoinDMData struct {
+	RoomID string `json:"room_id"`
+}
+
+// Outgoing: dm_opened
+type DMOpenedData struct {
+	RoomID   string `json:"room_id"`
+	Name     string `json:"name"`
+	PeerID   string `json:"peer_id"`
+	PeerName string `json:"peer_name"`
 }

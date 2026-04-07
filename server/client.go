@@ -264,6 +264,62 @@ func (c *Client) readPump() {
 				c.hub.BroadcastVoiceSpeaking(c, d.RoomID, d.ChannelID, d.Speaking)
 			}
 
+		// --- Message editing / deletion ---
+
+		case "edit_message":
+			var d EditMessageData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" && d.Content != "" {
+				c.hub.EditMessage(c, d.RoomID, d.MessageID, d.Content)
+			}
+
+		case "delete_message":
+			var d DeleteMessageData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" {
+				c.hub.DeleteMessage(c, d.RoomID, d.MessageID)
+			}
+
+		// --- Reactions ---
+
+		case "add_reaction":
+			var d AddReactionData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" && d.Emoji != "" {
+				c.hub.AddReaction(c, d.RoomID, d.MessageID, d.Emoji)
+			}
+
+		case "remove_reaction":
+			var d RemoveReactionData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" && d.Emoji != "" {
+				c.hub.RemoveReaction(c, d.RoomID, d.MessageID, d.Emoji)
+			}
+
+		// --- Pinned messages ---
+
+		case "pin_message":
+			var d PinMessageData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" {
+				c.hub.PinMessage(c, d.RoomID, d.MessageID)
+			}
+
+		case "unpin_message":
+			var d UnpinMessageData
+			if json.Unmarshal(msg.Data, &d) == nil && d.MessageID != "" {
+				c.hub.UnpinMessage(c, d.RoomID, d.MessageID)
+			}
+
+		// --- Direct Messages ---
+
+		case "start_dm":
+			var d StartDMData
+			if json.Unmarshal(msg.Data, &d) == nil && d.TargetID != "" {
+				c.hub.StartDM(c, d.TargetID)
+			}
+
+		case "join_dm":
+			var d JoinDMData
+			if json.Unmarshal(msg.Data, &d) == nil && d.RoomID != "" {
+				c.hub.JoinDM(c, d.RoomID)
+			}
+
 		default:
 			c.sendJSON("error", ErrorData{Message: "unknown message type: " + msg.Type})
 		}

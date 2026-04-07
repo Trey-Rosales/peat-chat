@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { MessageInput } from './MessageInput'
@@ -6,6 +6,7 @@ import { MeshViewer } from './MeshViewer'
 import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
 import type { GeoPosition } from '../hooks/useGeolocation'
+import type { ChatMessage } from '../types'
 
 interface Props {
   send: (type: string, data: any) => void
@@ -33,13 +34,63 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
   const voiceState = useChatStore((s) => s.voiceState)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Reply-to state
+  const [replyToId, setReplyToId] = useState<string | null>(null)
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  // Pinned panel state
+  const [pinnedPanelOpen, setPinnedPanelOpen] = useState(false)
+
   const room = activeRoomId ? rooms[activeRoomId] : null
 
+  // Build message lookup for reply parents
+  const messageMap = useMemo(() => {
+    if (!room) return new Map<string, ChatMessage>()
+    const map = new Map<string, ChatMessage>()
+    for (const msg of room.messages) {
+      map.set(msg.id, msg)
+    }
+    return map
+  }, [room?.messages])
+
+  // Filtered messages for search
+  const filteredMessages = useMemo(() => {
+    if (!room) return []
+    if (!searchOpen || !searchQuery.trim()) return room.messages
+    const q = searchQuery.toLowerCase()
+    return room.messages.filter(
+      (m) =>
+        !m.deleted &&
+        (m.content.toLowerCase().includes(q) ||
+          m.sender_name.toLowerCase().includes(q))
+    )
+  }, [room?.messages, searchOpen, searchQuery])
+
+  // Pinned messages
+  const pinnedMessages = useMemo(() => {
+    if (!room) return []
+    return room.messages.filter((m) => m.pinned && !m.deleted)
+  }, [room?.messages])
+
   useEffect(() => {
-    if (!meshViewerOpen) {
+    if (!meshViewerOpen && !searchOpen) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [room?.messages.length, meshViewerOpen])
+  }, [room?.messages.length, meshViewerOpen, searchOpen])
+
+  // Clear reply/edit state when switching rooms
+  useEffect(() => {
+    setReplyToId(null)
+    setEditingId(null)
+    setEditContent('')
+    setSearchOpen(false)
+    setSearchQuery('')
+    setPinnedPanelOpen(false)
+  }, [activeRoomId])
 
   if (!room) {
     return (
@@ -59,8 +110,53 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
   }
 
   const handleSend = (content: string) => {
-    send('send_message', { room_id: room.id, content })
+    if (editingId) {
+      send('edit_message', { room_id: room.id, message_id: editingId, content })
+      setEditingId(null)
+      setEditContent('')
+    } else {
+      const data: any = { room_id: room.id, content }
+      if (replyToId) {
+        data.reply_to = replyToId
+      }
+      send('send_message', data)
+      setReplyToId(null)
+    }
   }
+
+  const handleReply = (messageId: string) => {
+    setReplyToId(messageId)
+    setEditingId(null)
+    setEditContent('')
+  }
+
+  const handleEdit = (messageId: string, content: string) => {
+    setEditingId(messageId)
+    setEditContent(content)
+    setReplyToId(null)
+  }
+
+  const handleDelete = (messageId: string) => {
+    send('delete_message', { room_id: room.id, message_id: messageId })
+  }
+
+  const handleReact = (messageId: string, emoji: string) => {
+    send('add_reaction', { room_id: room.id, message_id: messageId, emoji })
+  }
+
+  const handleRemoveReact = (messageId: string, emoji: string) => {
+    send('remove_reaction', { room_id: room.id, message_id: messageId, emoji })
+  }
+
+  const handlePin = (messageId: string) => {
+    send('pin_message', { room_id: room.id, message_id: messageId })
+  }
+
+  const handleUnpin = (messageId: string) => {
+    send('unpin_message', { room_id: room.id, message_id: messageId })
+  }
+
+  const replyParentMsg = replyToId ? messageMap.get(replyToId) : null
 
   const peers = meshPeers[room.id] || []
   const inVoice = activeVoice?.roomId === room.id
@@ -97,6 +193,42 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
             )}
           </div>
         </div>
+
+        {/* Search toggle */}
+        <button
+          onClick={() => { setSearchOpen(!searchOpen); setSearchQuery(''); setPinnedPanelOpen(false) }}
+          className={`p-2 rounded-lg transition shrink-0 ${
+            searchOpen
+              ? 'bg-pl-accent/20 text-pl-accent'
+              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
+          }`}
+          title="Search messages"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+
+        {/* Pinned messages toggle */}
+        {pinnedMessages.length > 0 && (
+          <button
+            onClick={() => { setPinnedPanelOpen(!pinnedPanelOpen); setSearchOpen(false) }}
+            className={`p-2 rounded-lg transition shrink-0 relative ${
+              pinnedPanelOpen
+                ? 'bg-pl-accent/20 text-pl-accent'
+                : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
+            }`}
+            title="Pinned messages"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M16 2H8l-1 7H4l3 7v6h2v-6h6v6h2v-6l3-7h-3z" />
+            </svg>
+            <span className="absolute -top-0.5 -right-0.5 bg-pl-accent text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
+              {pinnedMessages.length}
+            </span>
+          </button>
+        )}
 
         {/* Map viewer toggle */}
         <button
@@ -136,6 +268,49 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
         </button>
       </div>
 
+      {/* Search bar */}
+      {searchOpen && (
+        <div className="px-3 md:px-4 py-2 bg-pl-header border-b border-pl-border shrink-0">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Search messages..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1 bg-pl-input text-pl-text rounded-lg px-3 py-1.5 text-sm placeholder-pl-text-sec"
+              autoFocus
+            />
+            <span className="text-xs text-pl-text-sec whitespace-nowrap">
+              {searchQuery.trim() ? `${filteredMessages.length} results` : ''}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Pinned messages panel */}
+      {pinnedPanelOpen && (
+        <div className="px-3 md:px-4 py-2 bg-pl-sidebar border-b border-pl-border shrink-0 max-h-48 overflow-y-auto">
+          <div className="text-xs font-medium text-pl-text-sec mb-1.5">
+            Pinned Messages ({pinnedMessages.length})
+          </div>
+          {pinnedMessages.map((msg) => (
+            <div
+              key={msg.id}
+              className="px-2 py-1.5 rounded-lg bg-pl-bg/50 mb-1 border border-pl-border/50 cursor-pointer hover:bg-pl-hover transition"
+              onClick={() => {
+                // Scroll to pinned message
+                const el = document.getElementById(`msg-${msg.id}`)
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                setPinnedPanelOpen(false)
+              }}
+            >
+              <div className="text-xs font-medium text-pl-accent">{msg.sender_name}</div>
+              <div className="text-xs text-pl-text truncate">{msg.content}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Content area: map, mesh viewer, or chat */}
       {mapViewerOpen ? (
         <MapViewer
@@ -154,20 +329,73 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
       ) : (
         <>
           <div className="flex-1 overflow-y-auto px-3 md:px-4 py-2 space-y-1">
-            {room.messages.map((msg, i) => {
-              const prev = room.messages[i - 1]
+            {filteredMessages.map((msg, i) => {
+              const prev = filteredMessages[i - 1]
               const showSender = !prev || prev.sender !== msg.sender
+              const replyParent = msg.reply_to ? messageMap.get(msg.reply_to) : undefined
               return (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  isSelf={msg.sender === userId}
-                  showSender={showSender}
-                />
+                <div key={msg.id} id={`msg-${msg.id}`}>
+                  <MessageBubble
+                    message={msg}
+                    isSelf={msg.sender === userId}
+                    showSender={showSender}
+                    replyParent={replyParent}
+                    onReply={handleReply}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    onReact={handleReact}
+                    onRemoveReact={handleRemoveReact}
+                    onPin={handlePin}
+                    onUnpin={handleUnpin}
+                    userId={userId}
+                  />
+                </div>
               )
             })}
             <div ref={bottomRef} />
           </div>
+
+          {/* Reply-to bar */}
+          {replyParentMsg && (
+            <div className="px-3 md:px-4 py-1.5 bg-pl-sidebar border-t border-pl-border shrink-0 flex items-center gap-2">
+              <div className="flex-1 min-w-0 border-l-2 border-pl-accent pl-2">
+                <div className="text-xs font-medium text-pl-accent truncate">
+                  Replying to {replyParentMsg.sender_name}
+                </div>
+                <div className="text-xs text-pl-text-sec truncate">
+                  {replyParentMsg.deleted ? 'Message deleted' : replyParentMsg.content}
+                </div>
+              </div>
+              <button
+                onClick={() => setReplyToId(null)}
+                className="text-pl-text-sec hover:text-pl-text p-1"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Edit bar */}
+          {editingId && (
+            <div className="px-3 md:px-4 py-1.5 bg-pl-sidebar border-t border-pl-border shrink-0 flex items-center gap-2">
+              <div className="flex-1 min-w-0 border-l-2 border-yellow-500 pl-2">
+                <div className="text-xs font-medium text-yellow-500">Editing message</div>
+              </div>
+              <button
+                onClick={() => { setEditingId(null); setEditContent('') }}
+                className="text-pl-text-sec hover:text-pl-text p-1"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           <div className="px-3 md:px-4 py-2 md:py-3 bg-pl-header border-t border-pl-border shrink-0">
             <div className="flex items-center gap-2">
               {/* PTT button (visible when in voice) */}
@@ -178,7 +406,10 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
                   active={localSpeaking}
                 />
               )}
-              <MessageInput onSend={handleSend} />
+              <MessageInput
+                onSend={handleSend}
+                editContent={editingId ? editContent : undefined}
+              />
             </div>
           </div>
         </>

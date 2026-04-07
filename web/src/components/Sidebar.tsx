@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { RoomItem } from './RoomItem'
 import { VoiceChannelList } from './VoiceChannelList'
@@ -24,12 +25,42 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
   const voiceState = useChatStore((s) => s.voiceState)
   const toggleSettings = useChatStore((s) => s.toggleSettings)
   const voiceError = useChatStore((s) => s.voiceError)
+  const meshPeers = useChatStore((s) => s.meshPeers)
 
-  const sortedRooms = Object.values(rooms).sort((a, b) => {
+  const [showDMPicker, setShowDMPicker] = useState(false)
+
+  const allRooms = Object.values(rooms)
+  const regularRooms = allRooms.filter((r) => !r.isDM).sort((a, b) => {
     const aLast = a.messages[a.messages.length - 1]?.timestamp ?? 0
     const bLast = b.messages[b.messages.length - 1]?.timestamp ?? 0
     return bLast - aLast
   })
+  const dmRooms = allRooms.filter((r) => r.isDM).sort((a, b) => {
+    const aLast = a.messages[a.messages.length - 1]?.timestamp ?? 0
+    const bLast = b.messages[b.messages.length - 1]?.timestamp ?? 0
+    return bLast - aLast
+  })
+
+  // Collect online peers from mesh state (deduplicated across rooms)
+  const onlinePeers = (() => {
+    const seen = new Set<string>()
+    const peers: { id: string; name: string; short_id: string }[] = []
+    for (const peerList of Object.values(meshPeers)) {
+      for (const p of peerList) {
+        if (!seen.has(p.id)) {
+          seen.add(p.id)
+          peers.push({ id: p.id, name: p.name, short_id: p.short_id })
+        }
+      }
+    }
+    return peers.sort((a, b) => a.name.localeCompare(b.name))
+  })()
+
+  const handleStartDM = (targetId: string) => {
+    send('start_dm', { target_id: targetId })
+    setShowDMPicker(false)
+    onSelectRoom()
+  }
 
   return (
     <div className="w-80 max-w-[85vw] bg-pl-sidebar flex flex-col border-r border-pl-border h-full">
@@ -74,12 +105,16 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
 
       {/* Room list */}
       <div className="flex-1 overflow-y-auto">
-        {sortedRooms.length === 0 && (
+        {/* Rooms section */}
+        <div className="px-3 pt-3 pb-1">
+          <div className="text-[10px] font-semibold text-pl-text-sec uppercase tracking-wider">Rooms</div>
+        </div>
+        {regularRooms.length === 0 && (
           <div className="p-4 text-center text-pl-text-sec text-sm">
             No rooms yet
           </div>
         )}
-        {sortedRooms.map((room) => (
+        {regularRooms.map((room) => (
           <div key={room.id}>
             <RoomItem
               room={room}
@@ -106,6 +141,64 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
               />
             )}
           </div>
+        ))}
+
+        {/* DMs section */}
+        <div className="px-3 pt-4 pb-1 flex items-center justify-between">
+          <div className="text-[10px] font-semibold text-pl-text-sec uppercase tracking-wider">Direct Messages</div>
+          <button
+            onClick={() => setShowDMPicker(!showDMPicker)}
+            className="text-pl-text-sec hover:text-pl-text p-1 rounded hover:bg-pl-hover"
+            title="New DM"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+
+        {/* DM peer picker */}
+        {showDMPicker && (
+          <div className="mx-2 mb-2 bg-pl-bg rounded-lg border border-pl-border overflow-hidden">
+            {onlinePeers.length === 0 ? (
+              <div className="p-3 text-xs text-pl-text-sec text-center">No peers online</div>
+            ) : (
+              <div className="max-h-40 overflow-y-auto">
+                {onlinePeers.map((peer) => (
+                  <button
+                    key={peer.id}
+                    onClick={() => handleStartDM(peer.id)}
+                    className="w-full px-3 py-2 flex items-center gap-2 hover:bg-pl-hover transition text-left"
+                  >
+                    <div className="w-7 h-7 rounded-full bg-pl-active flex items-center justify-center text-pl-text-sec font-semibold text-[10px] shrink-0">
+                      {peer.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs text-pl-text truncate">{peer.name}</div>
+                      <div className="text-[10px] text-pl-text-sec">{peer.short_id}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {dmRooms.length === 0 && !showDMPicker && (
+          <div className="px-4 py-2 text-xs text-pl-text-sec">
+            No conversations yet
+          </div>
+        )}
+        {dmRooms.map((room) => (
+          <RoomItem
+            key={room.id}
+            room={room}
+            active={room.id === activeRoomId}
+            onClick={() => {
+              setActiveRoom(room.id)
+              onSelectRoom()
+            }}
+          />
         ))}
       </div>
 

@@ -37,26 +37,30 @@ type CotPosition struct {
 }
 
 type Room struct {
-	ID            [32]byte
-	Name          string
-	Messages      []ChatMessage
-	Members       map[*Client]bool
-	VoiceChannels map[string]*VoiceChannel
-	Markers       map[string]*CotMarker
-	CotPositions  map[*Client]*CotPosition
-	mu            sync.RWMutex
+	ID             [32]byte
+	Name           string
+	Messages       []ChatMessage
+	Members        map[*Client]bool
+	VoiceChannels  map[string]*VoiceChannel
+	Markers        map[string]*CotMarker
+	CotPositions   map[*Client]*CotPosition
+	PinnedMessages map[string]bool // message ID -> true
+	IsDM           bool
+	DMParticipants [2]string // two client identity IDs (only for DM rooms)
+	mu             sync.RWMutex
 }
 
 func NewRoom(name string) *Room {
 	defaultVC := NewVoiceChannel("General")
 	return &Room{
-		ID:            ChatIdFromName(name),
-		Name:          name,
-		Messages:      make([]ChatMessage, 0),
-		Members:       make(map[*Client]bool),
-		VoiceChannels: map[string]*VoiceChannel{defaultVC.ID: defaultVC},
-		Markers:       make(map[string]*CotMarker),
-		CotPositions:  make(map[*Client]*CotPosition),
+		ID:             ChatIdFromName(name),
+		Name:           name,
+		Messages:       make([]ChatMessage, 0),
+		Members:        make(map[*Client]bool),
+		VoiceChannels:  map[string]*VoiceChannel{defaultVC.ID: defaultVC},
+		Markers:        make(map[string]*CotMarker),
+		CotPositions:   make(map[*Client]*CotPosition),
+		PinnedMessages: make(map[string]bool),
 	}
 }
 
@@ -75,6 +79,148 @@ func (r *Room) GetHistory() []ChatMessage {
 	out := make([]ChatMessage, len(r.Messages))
 	copy(out, r.Messages)
 	return out
+}
+
+// EditMessage updates the content of a message. Only the original sender can edit.
+// Returns true if the message was found and edited.
+func (r *Room) EditMessage(messageID, senderID, newContent string) (uint64, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID {
+			if r.Messages[i].Sender != senderID {
+				return 0, false
+			}
+			if r.Messages[i].Deleted {
+				return 0, false
+			}
+			editedAt := uint64(time.Now().UnixMilli())
+			r.Messages[i].Content = newContent
+			r.Messages[i].EditedAt = &editedAt
+			return editedAt, true
+		}
+	}
+	return 0, false
+}
+
+// DeleteMessage marks a message as deleted. Only the original sender can delete.
+func (r *Room) DeleteMessage(messageID, senderID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID {
+			if r.Messages[i].Sender != senderID {
+				return false
+			}
+			r.Messages[i].Deleted = true
+			r.Messages[i].Content = ""
+			// Remove from pinned if it was pinned
+			delete(r.PinnedMessages, messageID)
+			r.Messages[i].Pinned = false
+			return true
+		}
+	}
+	return false
+}
+
+// AddReaction adds a reaction to a message. Returns the updated reactions map.
+func (r *Room) AddReaction(messageID, senderID, emoji string) (map[string][]string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID {
+			if r.Messages[i].Deleted {
+				return nil, false
+			}
+			if r.Messages[i].Reactions == nil {
+				r.Messages[i].Reactions = make(map[string][]string)
+			}
+			// Check if sender already reacted with this emoji
+			for _, id := range r.Messages[i].Reactions[emoji] {
+				if id == senderID {
+					return r.Messages[i].Reactions, true
+				}
+			}
+			r.Messages[i].Reactions[emoji] = append(r.Messages[i].Reactions[emoji], senderID)
+			// Return a copy
+			out := make(map[string][]string, len(r.Messages[i].Reactions))
+			for k, v := range r.Messages[i].Reactions {
+				out[k] = append([]string{}, v...)
+			}
+			return out, true
+		}
+	}
+	return nil, false
+}
+
+// RemoveReaction removes a reaction from a message. Returns the updated reactions map.
+func (r *Room) RemoveReaction(messageID, senderID, emoji string) (map[string][]string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID {
+			if r.Messages[i].Reactions == nil {
+				return nil, false
+			}
+			senders := r.Messages[i].Reactions[emoji]
+			for j, id := range senders {
+				if id == senderID {
+					r.Messages[i].Reactions[emoji] = append(senders[:j], senders[j+1:]...)
+					if len(r.Messages[i].Reactions[emoji]) == 0 {
+						delete(r.Messages[i].Reactions, emoji)
+					}
+					out := make(map[string][]string, len(r.Messages[i].Reactions))
+					for k, v := range r.Messages[i].Reactions {
+						out[k] = append([]string{}, v...)
+					}
+					return out, true
+				}
+			}
+			return r.Messages[i].Reactions, false
+		}
+	}
+	return nil, false
+}
+
+// PinMessage pins a message in the room. Returns true if successful.
+func (r *Room) PinMessage(messageID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID && !r.Messages[i].Deleted {
+			r.Messages[i].Pinned = true
+			r.PinnedMessages[messageID] = true
+			return true
+		}
+	}
+	return false
+}
+
+// UnpinMessage unpins a message in the room. Returns true if successful.
+func (r *Room) UnpinMessage(messageID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.Messages {
+		if r.Messages[i].ID == messageID {
+			r.Messages[i].Pinned = false
+			delete(r.PinnedMessages, messageID)
+			return true
+		}
+	}
+	return false
+}
+
+// GetPinnedMessages returns all pinned messages in the room.
+func (r *Room) GetPinnedMessages() []ChatMessage {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var pinned []ChatMessage
+	for _, msg := range r.Messages {
+		if msg.Pinned && !msg.Deleted {
+			pinned = append(pinned, msg)
+		}
+	}
+	return pinned
 }
 
 func (r *Room) HasMember(c *Client) bool {

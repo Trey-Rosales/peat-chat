@@ -306,3 +306,130 @@ describe('chatStore - settings', () => {
     expect(useChatStore.getState().settingsOpen).toBe(false)
   })
 })
+
+describe('chatStore - message editing', () => {
+  it('edits a message content and edited_at', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello' },
+      { id: 'm2', sender: 's2', sender_name: 'Bob', timestamp: 2000, content: 'world' },
+    ])
+
+    useChatStore.getState().editMessage('r1', 'm1', 'hello edited', 3000)
+    const msgs = useChatStore.getState().rooms['r1'].messages
+    expect(msgs[0].content).toBe('hello edited')
+    expect(msgs[0].edited_at).toBe(3000)
+  })
+
+  it('does not affect other messages in the room', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello' },
+      { id: 'm2', sender: 's2', sender_name: 'Bob', timestamp: 2000, content: 'world' },
+    ])
+
+    useChatStore.getState().editMessage('r1', 'm1', 'hello edited', 3000)
+    const msgs = useChatStore.getState().rooms['r1'].messages
+    expect(msgs[1].content).toBe('world')
+    expect(msgs[1].edited_at).toBeUndefined()
+  })
+})
+
+describe('chatStore - message deletion', () => {
+  it('deletes a message setting deleted=true and content empty', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello' },
+    ])
+
+    useChatStore.getState().deleteMessage('r1', 'm1')
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.deleted).toBe(true)
+    expect(msg.content).toBe('')
+  })
+
+  it('deleting a pinned message clears pinned flag', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello', pinned: true },
+    ])
+
+    useChatStore.getState().deleteMessage('r1', 'm1')
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.deleted).toBe(true)
+    expect(msg.pinned).toBe(false)
+  })
+})
+
+describe('chatStore - reactions', () => {
+  it('sets reactions on a message', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello' },
+    ])
+
+    useChatStore.getState().updateReactions('r1', 'm1', { '👍': ['s1', 's2'] })
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.reactions).toEqual({ '👍': ['s1', 's2'] })
+  })
+
+  it('clears reactions with empty object', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello', reactions: { '👍': ['s1'] } },
+    ])
+
+    useChatStore.getState().updateReactions('r1', 'm1', {})
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.reactions).toEqual({})
+  })
+})
+
+describe('chatStore - pinned messages', () => {
+  it('pins a message', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello' },
+    ])
+
+    useChatStore.getState().pinMessage('r1', 'm1')
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.pinned).toBe(true)
+  })
+
+  it('unpins a message', () => {
+    useChatStore.getState().addRoom('r1', 'general', 1)
+    useChatStore.getState().setRoomHistory('r1', [
+      { id: 'm1', sender: 's1', sender_name: 'Alice', timestamp: 1000, content: 'hello', pinned: true },
+    ])
+
+    useChatStore.getState().unpinMessage('r1', 'm1')
+    const msg = useChatStore.getState().rooms['r1'].messages[0]
+    expect(msg.pinned).toBe(false)
+  })
+})
+
+describe('chatStore - DM rooms', () => {
+  it('adds a DM room with isDM=true and peer info', () => {
+    useChatStore.getState().addDMRoom('dm1', 'Alice', 'p1', 'Alice')
+    const room = useChatStore.getState().rooms['dm1']
+    expect(room).toBeDefined()
+    expect(room.isDM).toBe(true)
+    expect(room.dmPeerId).toBe('p1')
+    expect(room.dmPeerName).toBe('Alice')
+    expect(room.members).toBe(2)
+    expect(room.messages).toEqual([])
+  })
+
+  it('addRoom with isDM=true preserves the flag', () => {
+    useChatStore.getState().addRoom('r1', 'dm-room', 2, true)
+    const room = useChatStore.getState().rooms['r1']
+    expect(room.isDM).toBe(true)
+  })
+
+  it('addRoom without isDM defaults to false', () => {
+    useChatStore.getState().addRoom('r1', 'general', 3)
+    const room = useChatStore.getState().rooms['r1']
+    expect(room.isDM).toBe(false)
+  })
+})
