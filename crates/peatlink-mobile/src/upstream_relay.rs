@@ -174,10 +174,9 @@ async fn run_relay(
         return RelayResult::Disconnected;
     }
 
-    // Subscribe to local hub broadcasts for this room
-    let mut local_rx = hub.subscribe_room(room_name).await;
-
-    // Subscribe to passthrough channel (DMs, voice, CoT, etc. from WebView)
+    // Subscribe to passthrough channel ONLY — this carries user-originated actions
+    // (send_message, set_name, DMs, voice, CoT) but NOT upstream-injected messages.
+    // This prevents the relay from re-forwarding messages that came from the Go server.
     let mut passthrough_rx = hub.passthrough_tx.subscribe();
 
     // Periodic seen_ids cleanup
@@ -200,22 +199,25 @@ async fn run_relay(
                 }
             }
 
-            // Outgoing from local Hub room → forward to upstream
-            Ok(broadcast) = local_rx.recv() => {
-                if let Some(fwd) = filter_for_upstream(
-                    &broadcast, seen_ids, &upstream_self_id, hub
-                ).await {
-                    if ws_tx.send(Message::Text(fwd)).await.is_err() {
+            // Passthrough: user-originated messages → forward to upstream
+            Ok(passthrough) = passthrough_rx.recv() => {
+                // Check if this is a "message" broadcast that needs reformatting
+                let is_message = passthrough.contains("\"type\":\"message\"");
+                if is_message {
+                    // Reformat as send_message for the Go server
+                    if let Some(fwd) = filter_for_upstream(
+                        &passthrough, seen_ids, &upstream_self_id, hub
+                    ).await {
+                        if ws_tx.send(Message::Text(fwd)).await.is_err() {
+                            return RelayResult::Disconnected;
+                        }
+                    }
+                    // If filter returns None, message was deduped — don't send
+                } else {
+                    // Non-message types: forward as-is (set_name, CoT, DMs, etc.)
+                    if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
                         return RelayResult::Disconnected;
                     }
-                }
-            }
-
-            // Passthrough: unrecognized messages from WebView → forward to upstream as-is
-            Ok(passthrough) = passthrough_rx.recv() => {
-                tracing::debug!("passthrough → upstream: {}", &passthrough[..80.min(passthrough.len())]);
-                if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
-                    return RelayResult::Disconnected;
                 }
             }
 

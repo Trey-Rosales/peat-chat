@@ -480,7 +480,10 @@ async fn handle_message(
                         "message": msg,
                     }),
                 );
-                let _ = room.tx.send(Arc::new(broadcast));
+                let _ = room.tx.send(Arc::new(broadcast.clone()));
+                // Also send to passthrough so the upstream relay forwards it
+                // (relay no longer subscribes to room broadcasts to avoid echo loops)
+                let _ = hub.passthrough_tx.send(Arc::new(broadcast));
             } else {
                 // Room not found locally — forward to upstream (DM rooms, etc.)
                 let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
