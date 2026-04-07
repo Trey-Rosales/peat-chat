@@ -69,6 +69,10 @@ interface MobileNode {
     // BLE voice audio relay
     void send_voice_frame(sequence<u8> opus_frame, string sender_id, string sender_name);
     sequence<VoiceFrame> recv_voice_frames();
+
+    // Direct BLE data transport (bypasses peat-btle document sync)
+    void push_ble_recv(sequence<u8> data);
+    sequence<u8>? pop_ble_send();
 };
 
 dictionary VoiceFrame {

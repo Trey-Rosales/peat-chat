@@ -350,6 +350,8 @@ class PeatBleService(
 
                 Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
                 node.onBleDataReceived(address, value.map { it.toUByte() }, now)
+                // Also push to direct bridge transport
+                node.pushBleRecv(value.map { it.toUByte() })
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -493,7 +495,9 @@ class PeatBleService(
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
                 val data = characteristic.value ?: return
                 val now = System.currentTimeMillis().toULong()
+                Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
+                node.pushBleRecv(data.map { it.toUByte() })
             }
         }
 
@@ -501,7 +505,9 @@ class PeatBleService(
             if (characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
                 val data = characteristic.value ?: return
                 val now = System.currentTimeMillis().toULong()
+                Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
                 node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
+                node.pushBleRecv(data.map { it.toUByte() })
             }
         }
     }
@@ -515,19 +521,27 @@ class PeatBleService(
         tickJob = scope.launch {
             while (isActive && running) {
                 try {
-                    val now = System.currentTimeMillis().toULong()
-                    val data = node.bleTick(now)
                     tickCount++
-                    if (data != null) {
-                        lastDataSize = data.size
-                        val bytes = ByteArray(data.size) { data[it].toByte() }
-                        val targetCount = connectedGattClients.size + gattServerDevices.size
-                        if (tickCount % 10 == 0) {
-                            Log.i(TAG, "Tick #$tickCount: sending ${bytes.size} bytes to $targetCount peers")
-                        }
+
+                    // Also run peat-btle tick for mesh state management
+                    val now = System.currentTimeMillis().toULong()
+                    val meshData = node.bleTick(now)
+                    if (meshData != null) {
+                        val bytes = ByteArray(meshData.size) { meshData[it].toByte() }
                         broadcastToAllPeers(bytes)
-                    } else if (tickCount % 10 == 0) {
-                        Log.d(TAG, "Tick #$tickCount: no data to send (peers: ${knownPeatDevices.size})")
+                    }
+
+                    // Send any queued bridge data via GATT (direct transport)
+                    var sent = 0
+                    while (true) {
+                        val bridgeData = node.popBleSend() ?: break
+                        val bytes = ByteArray(bridgeData.size) { bridgeData[it].toByte() }
+                        broadcastToAllPeers(bytes)
+                        sent++
+                    }
+
+                    if (tickCount % 10 == 0 && (sent > 0 || knownPeatDevices.isNotEmpty())) {
+                        Log.i(TAG, "Tick #$tickCount: sent $sent bridge msgs, mesh=${meshData?.size ?: 0}b, peers=${knownPeatDevices.size}")
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Tick error: ${e.message}")

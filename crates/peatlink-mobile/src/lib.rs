@@ -58,6 +58,12 @@ pub struct MobileNode {
     voice_incoming_tx: tokio::sync::mpsc::UnboundedSender<VoiceFrame>,
     voice_incoming_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>,
 
+    /// Direct BLE data transport (bypasses peat-btle)
+    ble_recv_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ble_recv_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>>,
+    ble_send_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ble_send_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
+
     #[cfg(feature = "bluetooth")]
     ble_manager: Arc<ble::BleManager>,
     #[cfg(feature = "bluetooth")]
@@ -81,6 +87,8 @@ impl MobileNode {
 
         let (voice_outgoing_tx, voice_outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
         let (voice_incoming_tx, voice_incoming_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ble_recv_tx, ble_recv_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ble_send_tx, ble_send_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Ok(Self {
             data_dir,
@@ -96,6 +104,10 @@ impl MobileNode {
             voice_outgoing_rx: RwLock::new(Some(voice_outgoing_rx)),
             voice_incoming_tx,
             voice_incoming_rx: RwLock::new(voice_incoming_rx),
+            ble_recv_tx,
+            ble_recv_rx: RwLock::new(Some(ble_recv_rx)),
+            ble_send_tx,
+            ble_send_rx: RwLock::new(ble_send_rx),
             #[cfg(feature = "bluetooth")]
             ble_manager,
             #[cfg(feature = "bluetooth")]
@@ -286,6 +298,8 @@ impl MobileNode {
                     if let Some(event_rx) = self.ble_event_rx.write().await.take() {
                         let node_id = self.identity.read().await.clone();
                         let voice_rx = self.voice_outgoing_rx.write().await.take();
+                        let ble_recv_rx = self.ble_recv_rx.write().await.take()
+                            .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1);
                         let handle = bridge::start_bridge(
                             hub,
                             self.ble_manager.clone(),
@@ -297,6 +311,8 @@ impl MobileNode {
                                 tokio::sync::mpsc::unbounded_channel().1
                             }),
                             self.voice_incoming_tx.clone(),
+                            ble_recv_rx,
+                            self.ble_send_tx.clone(),
                         )
                         .await;
                         *self.bridge_handle.write().await = Some(handle);
@@ -455,6 +471,21 @@ impl MobileNode {
 
     /// Receive all pending voice frames from BLE peers.
     /// Called by Kotlin to get audio data for playback.
+    // --- Direct BLE data transport ---
+
+    /// Push data received from a BLE GATT peer (called by Kotlin).
+    pub fn push_ble_recv(&self, data: Vec<u8>) {
+        let _ = self.ble_recv_tx.send(data);
+    }
+
+    /// Pop outgoing data for BLE GATT broadcast (called by Kotlin tick loop).
+    pub fn pop_ble_send(&self) -> Option<Vec<u8>> {
+        let rt = self.runtime.clone();
+        rt.block_on(async {
+            self.ble_send_rx.write().await.try_recv().ok()
+        })
+    }
+
     pub fn recv_voice_frames(&self) -> Vec<VoiceFrame> {
         let mut frames = Vec::new();
         let rt = self.runtime.clone();
