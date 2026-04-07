@@ -1,0 +1,174 @@
+# PeatLink Roadmap
+
+> Living document — updated as priorities shift and features land.
+
+## Completed
+
+- [x] Decentralized text chat with room system
+- [x] WebRTC voice channels with push-to-talk
+- [x] Open mic / listen-only voice modes
+- [x] Tactical map (MapLibre GL) with satellite, dark, light, topo styles
+- [x] CoT-compliant position sharing and shared markers
+- [x] Callsign HUD (TAK-style)
+- [x] Marker placement with CoT type, affiliation, and remarks
+- [x] Mesh topology viewer
+- [x] Migration to peat-mesh 0.8 (AutomergeStore, mDNS discovery, PeatMeshBuilder)
+- [x] Mobile web support (HTTPS, LAN access, touch PTT, long-press markers)
+- [x] BLE mesh transport (peat-btle) for mobile
+- [x] Persistent Ed25519 identity via peat-mesh DeviceKeypair
+
+---
+
+## Phase 1 — Core Messaging
+
+### Direct Messages (DMs)
+- [ ] Private 1:1 channels between any two mesh members
+- [ ] End-to-end encrypted via X25519 key exchange (peat-mesh already has this)
+- [ ] DM threads in sidebar separate from room list
+- [ ] Unread indicators and notifications
+- [ ] Message delivery receipts (sent/delivered/read)
+
+### File Sharing
+- [ ] Send images, videos, documents, and voice notes in chat
+- [ ] peat-mesh streaming blob transfer with checkpoint/resume for large files
+- [ ] Thumbnail previews for images/videos inline in chat
+- [ ] Progress indicator for transfers in progress
+- [ ] Configurable max file size per room/formation
+- [ ] Files persist in AutomergeStore with TTL (auto-expire on low storage)
+
+### Message Improvements
+- [ ] Message editing and deletion (CRDT tombstones via AutomergeStore)
+- [ ] Threaded replies (reply-to with visual nesting)
+- [ ] Reactions / emoji responses
+- [ ] Message search across rooms
+- [ ] Pinned messages per room
+
+---
+
+## Phase 2 — Media & Streaming
+
+### Video Streams
+- [ ] On-demand video streams — not pushed to all peers by default
+- [ ] Camera feed published as a named stream in the room
+- [ ] Other users tap to subscribe (pull model, bandwidth-conscious)
+- [ ] WebRTC-based, reuses existing voice infrastructure
+- [ ] Quality auto-negotiation based on available bandwidth
+- [ ] Picture-in-picture overlay on tactical map
+- [ ] Snapshot capture from stream → shared as image in chat
+
+### Voice Improvements
+- [ ] VOX (voice-activated transmission) with adjustable threshold
+- [ ] Per-channel volume controls
+- [ ] Noise suppression (WebAudio API or RNNoise WASM)
+- [ ] Audio recording / voice notes
+- [ ] Channel-specific permissions (who can transmit)
+
+---
+
+## Phase 3 — Transport & Interop
+
+### LoRa / Meshtastic Bridge
+- [ ] `peat-meshtastic-bridge` crate — connects to Meshtastic radio via BLE or serial
+- [ ] Translate Meshtastic position packets ↔ CoT contacts on tactical map
+- [ ] Translate Meshtastic text messages ↔ PeatLink chat messages
+- [ ] Bridge node appears as a peer in mesh viewer
+- [ ] Handle Meshtastic's bandwidth constraints (short messages, low duty cycle)
+- [ ] Support multiple Meshtastic channels mapped to PeatLink rooms
+- [ ] Radio status indicators in mesh viewer (RSSI, SNR, hop count)
+
+### ATAK Plugin
+- [ ] Android plugin that registers PeatLink as a TAK data source
+- [ ] Bidirectional CoT sync — PeatLink markers/positions visible in ATAK and vice versa
+- [ ] Leverage `peat-tak-bridge` crate from Defense Unicorns PEAT workspace
+- [ ] Chat messages bridged to ATAK's messaging system
+- [ ] Marker CRUD operations synced both directions
+- [ ] Support TAK Server multicast and direct TCP connections
+- [ ] Plugin distributed as APK via ATAK marketplace or sideload
+
+### WinTAK / iTAK Support
+- [ ] Desktop/iOS TAK client interop via same CoT bridge
+- [ ] TAK Server relay mode for non-mesh TAK clients
+
+### Transport Hardening
+- [ ] Full peat-mesh AutomergeSyncCoordinator integration (delta sync, negentropy reconciliation)
+- [ ] Multi-transport failover (QUIC + BLE + LoRa simultaneously)
+- [ ] FormationKey-based room authentication (challenge-response join)
+- [ ] Offline message queue — store-and-forward when peers reconnect
+- [ ] Bandwidth estimation and adaptive sync frequency
+
+---
+
+## Phase 4 — Tactical Features
+
+### Enhanced Tactical Map
+- [ ] Drawing tools (lines, polygons, circles) for area markers
+- [ ] Route planning with waypoint sequencing
+- [ ] Elevation profile along routes
+- [ ] Offline map tiles (download regions for disconnected ops)
+- [ ] MGRS / UTM coordinate display toggle
+- [ ] Geofence alerts (notify when a contact enters/leaves an area)
+- [ ] Bearing and distance tool between two points
+- [ ] Map layer toggles (contacts, markers, routes, geofences)
+
+### Situational Awareness
+- [ ] Contact history trails (breadcrumb paths on map)
+- [ ] Speed and heading indicators on contact markers
+- [ ] Automatic stale contact cleanup with configurable TTL
+- [ ] Formation-level COP (Common Operating Picture) aggregation
+- [ ] Sensor integration — bridge external sensor data as CoT events
+
+### Alerts & Notifications
+- [ ] Configurable alert rules (proximity, geofence breach, peer disconnect)
+- [ ] Push notifications on mobile (via service worker)
+- [ ] Audio alerts for incoming messages / voice channel activity
+- [ ] Priority message flag (bypass normal notification settings)
+
+---
+
+## Phase 5 — Platform & Scale
+
+### Native Mobile Apps
+- [ ] Android app (Kotlin shell + embedded Rust server via peatlink-mobile)
+- [ ] iOS app (Swift shell + embedded Rust server)
+- [ ] Background BLE mesh operation
+- [ ] Native push notifications
+- [ ] Hardware PTT button support (Bluetooth HID)
+
+### Desktop App
+- [ ] Tauri or Electron wrapper for standalone desktop use
+- [ ] System tray with notification badges
+- [ ] Global PTT hotkey
+
+### Enterprise / Formation Management
+- [ ] peat-gateway integration for multi-org enrollment
+- [ ] Certificate-based device authentication
+- [ ] Role-based access control (admin, operator, observer)
+- [ ] Audit logging
+- [ ] Formation hierarchy — cells auto-organize based on capabilities
+
+### Embedded / IoT
+- [ ] peat-lite bridge for ESP32 sensors
+- [ ] Sensor telemetry displayed on tactical map
+- [ ] Remote device status monitoring
+- [ ] OTA firmware updates via peat-mesh
+
+---
+
+## Technical Debt & Quality
+
+- [ ] Fix settingsStore test suite (localStorage mock in jsdom)
+- [ ] Add WebSocket integration tests (Go server)
+- [ ] Add end-to-end tests (Playwright or Cypress)
+- [ ] CI/CD pipeline (GitHub Actions — build, test, lint)
+- [ ] Production Docker build (Go server + web dist)
+- [ ] Performance profiling for large rooms (100+ members)
+- [ ] Accessibility audit (keyboard nav, screen readers)
+
+---
+
+## Non-Goals (for now)
+
+- Replacing TAK/ATAK — PeatLink complements TAK, it doesn't replace it
+- Cloud-hosted SaaS — PeatLink is designed for edge/tactical deployment
+- Social media features — no profiles, feeds, or algorithmic content
+- Video conferencing (multi-party video) — voice + optional 1:1 streams only
