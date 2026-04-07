@@ -407,13 +407,28 @@ async fn handle_ble_ws_message(
                         if let Ok(mut chat_msg) =
                             serde_json::from_value::<ChatMessage>(msg_val.clone())
                         {
-                            if let Some((sender_id, sender_name)) =
-                                ble_peers.resolve_sender(source_peer_id)
-                            {
-                                chat_msg.sender = sender_id;
-                                chat_msg.sender_name = sender_name;
+                            // Only override sender if the message doesn't already have a name
+                            // (messages from the remote WebView already have correct sender_name)
+                            if chat_msg.sender_name.is_empty() || chat_msg.sender_name.starts_with("anon-") {
+                                if let Some((sender_id, sender_name)) =
+                                    ble_peers.resolve_sender(source_peer_id)
+                                {
+                                    chat_msg.sender = sender_id;
+                                    chat_msg.sender_name = sender_name;
+                                }
                             }
-                            hub.inject_external_message(room_name, chat_msg).await;
+                            // Inject into local Hub (shows on WiFi phone WebView)
+                            hub.inject_external_message(room_name, chat_msg.clone()).await;
+
+                            // Also send to passthrough so upstream relay forwards to Go server
+                            let fwd = crate::ws_server::make_json(
+                                "message",
+                                &serde_json::json!({
+                                    "room_id": room_id,
+                                    "message": chat_msg,
+                                }),
+                            );
+                            let _ = hub.passthrough_tx.send(Arc::new(fwd));
                         }
                     } else {
                         // DM or other room — send via downstream
