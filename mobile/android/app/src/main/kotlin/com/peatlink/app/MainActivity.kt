@@ -395,21 +395,24 @@ class MainActivity : AppCompatActivity() {
                     mobileNode?.isUpstreamConnected() == true
                 } catch (_: Throwable) { false }
 
-                val bleRunning = try {
-                    mobileNode?.isBleRunning() == true
-                } catch (_: Throwable) { false }
-
+                val bleStatus = bleService?.status ?: "off"
+                val bleConnected = bleService?.connectedCount ?: 0
+                val bleDiscovered = bleService?.discoveredCount ?: 0
                 val blePeerCount = try {
                     mobileNode?.blePeers()?.count { it.isConnected } ?: 0
                 } catch (_: Throwable) { 0 }
+
+                // Use the higher of GATT connections and peat-btle peer count
+                val effectiveBleCount = maxOf(bleConnected, blePeerCount)
 
                 val url = prefs.upstreamUrl
 
                 val parts = mutableListOf<String>()
                 if (upstreamConnected) parts.add("Server \u2713")
-                if (bleRunning) {
-                    if (blePeerCount > 0) parts.add("BLE: $blePeerCount peer${if (blePeerCount != 1) "s" else ""}")
-                    else parts.add("BLE scanning...")
+                if (effectiveBleCount > 0) {
+                    parts.add("BLE: $effectiveBleCount peer${if (effectiveBleCount != 1) "s" else ""}")
+                } else if (bleStatus != "off" && bleStatus != "not started") {
+                    parts.add("BLE: $bleStatus")
                 }
 
                 if (parts.isNotEmpty()) {

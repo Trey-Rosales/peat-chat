@@ -43,31 +43,50 @@ class PeatBleService(
     private var gattServer: BluetoothGattServer? = null
     private val connectedGattClients = mutableMapOf<String, BluetoothGatt>() // address → client connection
     private val gattServerDevices = mutableSetOf<String>() // addresses connected to our GATT server
+    private val pendingConnections = mutableSetOf<String>() // addresses we're trying to connect to
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var tickJob: Job? = null
     private var running = false
+    private var localAddress: String = ""
+
+    // Diagnostic status visible in the connection bar
+    var status: String = "not started"
+        private set
+    var discoveredCount: Int = 0
+        private set
+    var connectedCount: Int = 0
+        private set
 
     fun start() {
         if (running) return
         val adapter = bluetoothAdapter ?: run {
-            Log.e(TAG, "Bluetooth adapter not available on this device")
+            status = "No Bluetooth adapter"
+            Log.e(TAG, status)
             return
         }
         if (!adapter.isEnabled) {
-            Log.e(TAG, "Bluetooth is OFF — enable it in system settings")
+            status = "Bluetooth OFF — enable in settings"
+            Log.e(TAG, status)
             return
         }
 
         running = true
+        status = "starting..."
+        localAddress = try { adapter.address ?: "" } catch (_: Throwable) { "" }
         Log.i(TAG, "Starting BLE service...")
-        Log.i(TAG, "  Adapter: ${adapter.name}, address: ${adapter.address}")
-        Log.i(TAG, "  LE supported: ${adapter.isMultipleAdvertisementSupported}")
+        Log.i(TAG, "  Adapter: ${adapter.name}, addr: $localAddress")
+        Log.i(TAG, "  LE adv supported: ${adapter.isMultipleAdvertisementSupported}")
+
+        val problems = mutableListOf<String>()
 
         startGattServer()
-        startAdvertising()
-        startScanning()
+        startAdvertising(problems)
+        startScanning(problems)
         startTickLoop()
-        Log.i(TAG, "BLE service started successfully")
+
+        status = if (problems.isEmpty()) "scanning + advertising"
+                 else "partial: ${problems.joinToString(", ")}"
+        Log.i(TAG, "BLE service status: $status")
     }
 
     fun stop() {
@@ -84,23 +103,26 @@ class PeatBleService(
 
     // --- Scanning (Central role) ---
 
-    private fun startScanning() {
+    private fun startScanning(problems: MutableList<String>) {
         scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null) {
+            problems.add("no scanner")
             Log.w(TAG, "BLE scanner not available")
             return
         }
 
-        // Don't use a ScanFilter for the 128-bit UUID — some Android devices
-        // silently fail to match 128-bit UUIDs in advertising packets.
-        // Instead, scan for all connectable devices and filter in the callback.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
             .build()
 
-        scanner?.startScan(null, settings, scanCallback)
-        Log.i(TAG, "BLE scanning started (unfiltered, checking in callback)")
+        try {
+            scanner?.startScan(null, settings, scanCallback)
+            Log.i(TAG, "BLE scanning started")
+        } catch (e: Throwable) {
+            problems.add("scan failed: ${e.message}")
+            Log.e(TAG, "BLE scan start failed: ${e.message}")
+        }
     }
 
     private fun stopScanning() {
@@ -130,6 +152,7 @@ class PeatBleService(
 
             if (!hasMfgMagic && !hasServiceUuid) return // Not a Peat device
 
+            discoveredCount++
             Log.i(TAG, "Discovered Peat device: $address (${name ?: "unnamed"}) rssi=$rssi mfg=$hasMfgMagic uuid=$hasServiceUuid")
 
             // Extract mesh_id from service data if available
@@ -138,23 +161,43 @@ class PeatBleService(
 
             node.onBleDiscovered(address, name, rssi, meshId, now)
 
-            // Auto-connect if not already connected (either direction)
-            if (!connectedGattClients.containsKey(address) && !gattServerDevices.contains(address)) {
-                Log.i(TAG, "Auto-connecting to $address")
-                connectToDevice(device)
+            // Auto-connect if not already connected or pending
+            if (!connectedGattClients.containsKey(address) &&
+                !gattServerDevices.contains(address) &&
+                !pendingConnections.contains(address)) {
+                // Limit concurrent connection attempts
+                if (pendingConnections.size < 2 && connectedGattClients.size < 3) {
+                    status = "connecting to ${address.takeLast(5)}..."
+                    Log.i(TAG, "Auto-connecting to $address")
+                    connectToDevice(device)
+                }
+            }
+
+            if (connectedCount == 0) {
+                status = "found ${discoveredCount}x, connecting..."
             }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE scan failed: error $errorCode (1=already started, 2=app registration failed, 3=internal error, 4=feature unsupported)")
+            val reason = when (errorCode) {
+                1 -> "already started"
+                2 -> "app registration failed"
+                3 -> "internal error"
+                4 -> "feature unsupported"
+                5 -> "out of hardware resources"
+                else -> "error $errorCode"
+            }
+            status = "scan failed: $reason"
+            Log.e(TAG, "BLE scan failed: $reason")
         }
     }
 
     // --- Advertising (Peripheral role) ---
 
-    private fun startAdvertising() {
+    private fun startAdvertising(problems: MutableList<String>) {
         advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
         if (advertiser == null) {
+            problems.add("no advertiser")
             Log.w(TAG, "BLE advertiser not available")
             return
         }
@@ -195,7 +238,16 @@ class PeatBleService(
         }
 
         override fun onStartFailure(errorCode: Int) {
-            Log.e(TAG, "BLE advertising failed: error $errorCode")
+            val reason = when (errorCode) {
+                ADVERTISE_FAILED_DATA_TOO_LARGE -> "data too large"
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "too many advertisers"
+                ADVERTISE_FAILED_ALREADY_STARTED -> "already started"
+                ADVERTISE_FAILED_INTERNAL_ERROR -> "internal error"
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "feature unsupported"
+                else -> "error $errorCode"
+            }
+            status = "adv failed: $reason"
+            Log.e(TAG, "BLE advertising failed: $reason")
         }
     }
 
@@ -234,19 +286,25 @@ class PeatBleService(
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
-        override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+        override fun onConnectionStateChange(device: BluetoothDevice, status_code: Int, newState: Int) {
             val address = device.address
             val now = System.currentTimeMillis().toULong()
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "GATT server: peer connected from $address")
+                    connectedCount++
+                    this@PeatBleService.status = "peer connected: ${address.takeLast(5)}"
+                    Log.i(TAG, "GATT server: peer connected from $address (status=$status_code)")
                     gattServerDevices.add(address)
                     node.onBleConnected(address, now)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "GATT server: peer disconnected from $address")
+                    connectedCount = (connectedCount - 1).coerceAtLeast(0)
+                    Log.i(TAG, "GATT server: peer disconnected from $address (status=$status_code)")
                     gattServerDevices.remove(address)
                     node.onBleDisconnected(address)
+                    if (connectedCount == 0) {
+                        this@PeatBleService.status = "scanning + advertising"
+                    }
                 }
             }
         }
@@ -298,11 +356,23 @@ class PeatBleService(
     private fun connectToDevice(device: BluetoothDevice) {
         val address = device.address
         if (connectedGattClients.containsKey(address)) return
-        if (gattServerDevices.contains(address)) return // already connected via server role
+        if (gattServerDevices.contains(address)) return
+        if (pendingConnections.contains(address)) return
 
+        pendingConnections.add(address)
         Log.i(TAG, "GATT client: connecting to $address")
-        val gatt = device.connectGatt(context, false, gattClientCallback, BluetoothDevice.TRANSPORT_LE)
-        connectedGattClients[address] = gatt
+        try {
+            val gatt = device.connectGatt(context, false, gattClientCallback, BluetoothDevice.TRANSPORT_LE)
+            if (gatt != null) {
+                connectedGattClients[address] = gatt
+            } else {
+                pendingConnections.remove(address)
+                Log.w(TAG, "connectGatt returned null for $address")
+            }
+        } catch (e: Throwable) {
+            pendingConnections.remove(address)
+            Log.e(TAG, "connectGatt failed for $address: ${e.message}")
+        }
     }
 
     private fun disconnectAllClients() {
@@ -316,22 +386,28 @@ class PeatBleService(
     }
 
     private val gattClientCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status_code: Int, newState: Int) {
             val address = gatt.device.address
             val now = System.currentTimeMillis().toULong()
+            pendingConnections.remove(address)
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "GATT client: connected to $address")
+                    connectedCount++
+                    this@PeatBleService.status = "connected: ${address.takeLast(5)}"
+                    Log.i(TAG, "GATT client: connected to $address (status=$status_code)")
                     node.onBleConnected(address, now)
-                    // Request higher MTU for efficient document sync
                     gatt.requestMtu(TARGET_MTU)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "GATT client: disconnected from $address")
+                    connectedCount = (connectedCount - 1).coerceAtLeast(0)
+                    Log.i(TAG, "GATT client: disconnected from $address (status=$status_code)")
                     node.onBleDisconnected(address)
                     connectedGattClients.remove(address)
-                    gatt.close()
+                    try { gatt.close() } catch (_: Throwable) {}
+                    if (connectedCount == 0) {
+                        this@PeatBleService.status = "scanning + advertising"
+                    }
                 }
             }
         }
