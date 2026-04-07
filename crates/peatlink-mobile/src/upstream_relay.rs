@@ -245,9 +245,10 @@ async fn handle_upstream_message(
             if msg_id.is_empty() { return; }
 
             {
+                let key = format!("relay-in-{}", msg_id);
                 let mut ids = seen_ids.write().await;
-                if ids.contains(&msg_id) { return; }
-                ids.insert(msg_id);
+                if ids.contains(&key) { return; }
+                ids.insert(key);
             }
 
             // Check if this message's room_id matches a local Hub room
@@ -291,9 +292,10 @@ async fn handle_upstream_message(
                         }
                         let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         if msg_id.is_empty() { continue; }
+                        let key = format!("relay-in-{}", msg_id);
                         let mut ids = seen_ids.write().await;
-                        if ids.contains(&msg_id) { continue; }
-                        ids.insert(msg_id.clone());
+                        if ids.contains(&key) { continue; }
+                        ids.insert(key);
                         drop(ids);
 
                         if let Ok(chat_msg) = serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone()) {
@@ -368,11 +370,12 @@ async fn filter_for_upstream(
             let msg = data.get("message")?;
             let msg_id = msg.get("id")?.as_str()?.to_string();
 
-            // Dedup check
+            // Dedup: only skip if relay already forwarded this specific message
             {
+                let key = format!("relay-out-{}", msg_id);
                 let mut ids = seen_ids.write().await;
-                if ids.contains(&msg_id) { return None; }
-                ids.insert(msg_id);
+                if ids.contains(&key) { return None; }
+                ids.insert(key);
             }
 
             let room_id = data.get("room_id")?.as_str()?;

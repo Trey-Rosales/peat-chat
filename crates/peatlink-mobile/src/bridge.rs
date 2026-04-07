@@ -97,6 +97,9 @@ async fn bridge_loop(
 
     let mut peer_interval = tokio::time::interval(Duration::from_secs(5));
 
+    // Track BLE peers locally (since peat-btle's peer list may be empty)
+    let mut ble_peer_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
     tracing::info!("BLE↔WS bridge started for room '{}'", room_name);
 
     loop {
@@ -106,12 +109,13 @@ async fn bridge_loop(
                 if let Ok(text) = String::from_utf8(data) {
                     if text.starts_with(WS_PREFIX) {
                         let json = &text[WS_PREFIX.len()..];
-                        // Mark this content as seen so we don't echo it back to BLE
-                        let hash = format!("ble-rx-{}", fxhash(json));
+                        // Mark content hash so we don't echo it back to BLE
+                        // Use "ble-" prefix so relay's forwarding isn't blocked
+                        let hash = format!("ble-echo-{}", fxhash(json));
                         {
                             let mut ids = seen_ids.write().await;
                             if ids.contains(&hash) {
-                                continue; // already processed this exact message
+                                continue;
                             }
                             ids.insert(hash);
                         }
@@ -140,13 +144,13 @@ async fn bridge_loop(
                 match &event {
                     BlePeerEvent::PeerConnected(info) => {
                         tracing::info!("BLE peer connected: {} ({})", info.name, info.id);
+                        ble_peer_names.insert(info.id.clone(), info.name.clone());
                         broadcast_ble_peer_update(&hub, &room_name, info, "joined", &self_node_id).await;
-
-                        // Send room history to new peer via BLE so they get caught up
                         sync_room_history_to_ble(&hub, &room_name, &ble_send_tx).await;
                     }
                     BlePeerEvent::PeerDisconnected(info) => {
                         tracing::info!("BLE peer disconnected: {} ({})", info.name, info.id);
+                        ble_peer_names.remove(&info.id);
                         broadcast_ble_peer_update(&hub, &room_name, info, "left", &self_node_id).await;
                     }
                 }
@@ -169,7 +173,9 @@ async fn bridge_loop(
 
             // === Periodic BLE peer state → mesh_state ===
             _ = peer_interval.tick() => {
-                broadcast_ble_mesh_state(&hub, &room_name, &ble_manager, &self_node_id).await;
+                if !ble_peer_names.is_empty() {
+                    broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peer_names, &self_node_id).await;
+                }
             }
 
             _ = shutdown_rx.recv() => {
@@ -212,11 +218,12 @@ async fn handle_ble_ws_message(
                         return;
                     }
 
+                    let key = format!("ble-in-{}", msg_id);
                     let mut ids = seen_ids.write().await;
-                    if ids.contains(&msg_id) {
+                    if ids.contains(&key) {
                         return;
                     }
-                    ids.insert(msg_id);
+                    ids.insert(key);
                     drop(ids);
 
                     // Check if room exists locally
@@ -305,14 +312,13 @@ async fn forward_ws_to_ble(
         _ => {}
     }
 
-    // Universal dedup — check content hash to prevent echo loops
-    let hash = format!("ble-rx-{}", fxhash(broadcast));
+    // Check echo prevention — only block if this exact content came from BLE
+    let hash = format!("ble-echo-{}", fxhash(broadcast));
     {
-        let mut ids = seen_ids.write().await;
+        let ids = seen_ids.read().await;
         if ids.contains(&hash) {
             return; // This came from BLE — don't echo back
         }
-        ids.insert(hash);
     }
 
     let payload = format!("{}{}", WS_PREFIX, broadcast);
@@ -395,7 +401,46 @@ async fn sync_room_history_to_ble(
     }
 }
 
-/// Broadcast BLE peers as mesh_state with connected_via field.
+/// Broadcast BLE peers from local tracking map (not peat-btle's internal list).
+#[cfg(feature = "bluetooth")]
+async fn broadcast_ble_mesh_state_from_map(
+    hub: &Arc<Hub>,
+    room_name: &str,
+    peers: &std::collections::HashMap<String, String>,
+    self_node_id: &str,
+) {
+    let chat_id = crate::ws_server::chat_id_from_name(room_name);
+    let room_id = crate::ws_server::chat_id_hex(&chat_id);
+
+    let ble_peers: Vec<serde_json::Value> = peers
+        .iter()
+        .map(|(id, name)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "short_id": if id.len() >= 12 { &id[..12] } else { &id[..] },
+                "transport": "btle",
+                "latency_ms": 0,
+                "state": "connected",
+                "connected_at": crate::ws_server::now_ms(),
+                "connected_via": self_node_id,
+            })
+        })
+        .collect();
+
+    let msg = crate::ws_server::make_json(
+        "ble_mesh_state",
+        &serde_json::json!({
+            "room_id": room_id,
+            "peers": ble_peers,
+        }),
+    );
+    let msg_arc = Arc::new(msg);
+    let _ = hub.downstream_tx.send(msg_arc.clone());
+    let _ = hub.passthrough_tx.send(msg_arc);
+}
+
+/// Broadcast BLE peers as mesh_state with connected_via field (from peat-btle).
 #[cfg(feature = "bluetooth")]
 async fn broadcast_ble_mesh_state(
     hub: &Arc<Hub>,
