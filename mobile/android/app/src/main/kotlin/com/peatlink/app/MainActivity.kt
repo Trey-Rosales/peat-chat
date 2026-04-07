@@ -407,10 +407,21 @@ class MainActivity : AppCompatActivity() {
 
                 val url = prefs.upstreamUrl
 
+                val bleSent = bleService?.totalSent ?: 0
+                val bleRecv = bleService?.totalReceived ?: 0
+                val blePending = bleService?.pendingSendCount ?: 0
+
                 val parts = mutableListOf<String>()
                 if (upstreamConnected) parts.add("Server \u2713")
                 if (effectiveBleCount > 0) {
-                    parts.add("BLE: $effectiveBleCount peer${if (effectiveBleCount != 1) "s" else ""}")
+                    var blePart = "BLE: $effectiveBleCount peer${if (effectiveBleCount != 1) "s" else ""}"
+                    if (bleSent > 0 || bleRecv > 0) {
+                        blePart += " \u2191$bleSent \u2193$bleRecv"
+                    }
+                    if (blePending > 0) {
+                        blePart += " (${blePending} queued)"
+                    }
+                    parts.add(blePart)
                 } else if (bleStatus != "off" && bleStatus != "not started") {
                     parts.add("BLE: $bleStatus")
                 }

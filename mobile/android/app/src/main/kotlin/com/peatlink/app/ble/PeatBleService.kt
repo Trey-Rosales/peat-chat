@@ -350,9 +350,9 @@ class PeatBleService(
 
                 Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
                 node.onBleDataReceived(address, value.map { it.toUByte() }, now)
-                // Reassemble chunks and push complete messages to bridge
                 val complete = reassembleChunked(value)
                 if (complete != null) {
+                    totalReceived++
                     node.pushBleRecv(complete.map { it.toUByte() })
                 }
                 if (responseNeeded) {
@@ -525,8 +525,20 @@ class PeatBleService(
 
     private var tickCount = 0
     private var lastDataSize = 0
-    private var negotiatedMtu = 23 // default, updated in onMtuChanged
-    private val CHUNK_HEADER_SIZE = 4 // [type(1), msgId(1), seq(1), total(1)]
+    private var negotiatedMtu = 23
+    private val CHUNK_HEADER_SIZE = 4
+
+    // Write queue — only one GATT write at a time
+    private val writeQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
+    @Volatile private var writeInFlight = false
+
+    // Sync progress tracking
+    var pendingSendCount: Int = 0
+        private set
+    var totalSent: Int = 0
+        private set
+    var totalReceived: Int = 0
+        private set
 
     // Reassembly buffer for incoming chunked messages
     private val reassemblyBuffer = mutableMapOf<Int, MutableMap<Int, ByteArray>>() // msgId → (seq → data)
@@ -574,58 +586,73 @@ class PeatBleService(
      * Chunk header (4 bytes): [type, msgId, seqNum, totalChunks]
      * type: 0x00 = single (no chunking), 0x01 = chunked
      */
+    /**
+     * Queue data for broadcast to all BLE peers with automatic chunking.
+     */
     private fun broadcastToAllPeers(data: ByteArray) {
         val maxPayload = (negotiatedMtu - 3 - CHUNK_HEADER_SIZE).coerceAtLeast(100)
 
         if (data.size <= maxPayload) {
-            // Small enough to send as single message (no chunking header needed)
-            sendRawToAllPeers(data)
+            writeQueue.add(data)
         } else {
-            // Chunk it
             val msgId = nextMsgId++
             val chunks = data.toList().chunked(maxPayload)
             val total = chunks.size.coerceAtMost(255)
-
             for ((seq, chunk) in chunks.withIndex()) {
                 if (seq >= 255) break
                 val header = byteArrayOf(0x01, msgId, seq.toByte(), total.toByte())
-                val packet = header + chunk.toByteArray()
-                sendRawToAllPeers(packet)
-            }
-
-            if (chunks.size > 1) {
-                Log.d(TAG, "Chunked ${data.size} bytes into ${chunks.size} packets (msgId=$msgId)")
+                writeQueue.add(header + chunk.toByteArray())
             }
         }
+        pendingSendCount = writeQueue.size
+        drainWriteQueue()
     }
 
-    private fun sendRawToAllPeers(data: ByteArray) {
-        // Write to peers where we're the GATT client
+    /**
+     * Send ONE packet from the queue. Called after each successful write callback.
+     */
+    private fun drainWriteQueue() {
+        if (writeInFlight) return
+        val packet = writeQueue.poll() ?: return
+        writeInFlight = true
+        pendingSendCount = writeQueue.size
+        totalSent++
+
+        // Write to GATT client connections
         for ((address, gatt) in connectedGattClients.toMap()) {
             try {
                 val service = gatt.getService(PEAT_SERVICE_UUID) ?: continue
                 val char = service.getCharacteristic(PEAT_SYNC_CHAR_UUID) ?: continue
-                char.value = data
+                char.value = packet
                 char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 gatt.writeCharacteristic(char)
             } catch (e: Throwable) {
-                Log.w(TAG, "Failed to write to $address: ${e.message}")
+                Log.w(TAG, "Write failed to $address: ${e.message}")
             }
         }
 
-        // Notify peers connected to our GATT server
-        val server = gattServer ?: return
-        val service = server.getService(PEAT_SERVICE_UUID) ?: return
-        val char = service.getCharacteristic(PEAT_SYNC_CHAR_UUID) ?: return
-        char.value = data
-
-        for (address in gattServerDevices.toList()) {
-            try {
-                val device = bluetoothAdapter?.getRemoteDevice(address) ?: continue
-                server.notifyCharacteristicChanged(device, char, false)
-            } catch (e: Throwable) {
-                Log.w(TAG, "Failed to notify $address: ${e.message}")
+        // Notify GATT server clients
+        val server = gattServer
+        val svc = server?.getService(PEAT_SERVICE_UUID)
+        val chr = svc?.getCharacteristic(PEAT_SYNC_CHAR_UUID)
+        if (chr != null) {
+            chr.value = packet
+            for (address in gattServerDevices.toList()) {
+                try {
+                    val device = bluetoothAdapter?.getRemoteDevice(address) ?: continue
+                    server.notifyCharacteristicChanged(device, chr, false)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Notify failed to $address: ${e.message}")
+                }
             }
+        }
+
+        // For WRITE_TYPE_NO_RESPONSE, there's no onCharacteristicWrite callback.
+        // Use a small delay then send the next packet.
+        scope.launch {
+            delay(20) // 20ms between writes — allows BLE controller to flush
+            writeInFlight = false
+            drainWriteQueue()
         }
     }
 
