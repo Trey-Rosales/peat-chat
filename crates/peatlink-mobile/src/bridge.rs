@@ -119,7 +119,7 @@ async fn bridge_loop(
                             }
                             ids.insert(hash);
                         }
-                        handle_ble_ws_message(json, &hub, &room_name, &seen_ids, &voice_incoming_tx).await;
+                        handle_ble_ws_message(json, &hub, &room_name, &seen_ids, &voice_incoming_tx, &mut ble_peer_names, &ble_send_tx).await;
                     }
                 }
             }
@@ -147,12 +147,24 @@ async fn bridge_loop(
                         ble_peer_names.insert(info.id.clone(), info.name.clone());
                         broadcast_ble_peer_update(&hub, &room_name, info, "joined", &self_node_id).await;
 
-                        // Register BLE peer with Go server so Mac can see and DM them
+                        // Register BLE peer with Go server (initial name, will be updated by hello)
                         let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
                             "peer_id": info.id,
                             "peer_name": info.name,
                         }));
                         let _ = hub.passthrough_tx.send(Arc::new(reg));
+
+                        // Send our callsign to the BLE peer so they know who we are
+                        let our_name = hub.default_display_name.read().await.clone();
+                        let hello = serde_json::json!({
+                            "type": "ble_hello",
+                            "data": {
+                                "node_id": self_node_id,
+                                "callsign": our_name,
+                            }
+                        });
+                        let payload = format!("{}{}", WS_PREFIX, hello);
+                        let _ = ble_send_tx.send(payload.into_bytes());
 
                         sync_room_history_to_ble(&hub, &room_name, &ble_send_tx).await;
                     }
@@ -207,6 +219,8 @@ async fn handle_ble_ws_message(
     room_name: &str,
     seen_ids: &SeenIds,
     voice_incoming_tx: &mpsc::UnboundedSender<crate::VoiceFrame>,
+    ble_peer_names: &mut std::collections::HashMap<String, String>,
+    ble_send_tx: &mpsc::UnboundedSender<Vec<u8>>,
 ) {
     let Ok(envelope) = serde_json::from_str::<serde_json::Value>(json) else {
         return;
@@ -251,6 +265,34 @@ async fn handle_ble_ws_message(
                         // DM or other room — send via downstream
                         let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
                     }
+                }
+            }
+        }
+
+        // BLE handshake — remote peer is telling us their callsign and node_id
+        "ble_hello" => {
+            if let Some(data) = envelope.get("data") {
+                let node_id = data.get("node_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let callsign = data.get("callsign").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                if !node_id.is_empty() && !callsign.is_empty() {
+                    tracing::info!("BLE hello from {} ({})", callsign, &node_id[..node_id.len().min(12)]);
+
+                    // Update peer name in our local map
+                    // Find the peer by checking existing entries (may be registered under MAC address)
+                    let old_keys: Vec<String> = ble_peer_names.keys().cloned().collect();
+                    for key in old_keys {
+                        ble_peer_names.insert(key, callsign.clone());
+                    }
+                    // Also add by node_id
+                    ble_peer_names.insert(node_id.clone(), callsign.clone());
+
+                    // Re-register with Go server using the real callsign
+                    let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
+                        "peer_id": node_id,
+                        "peer_name": callsign,
+                    }));
+                    let _ = hub.passthrough_tx.send(Arc::new(reg));
                 }
             }
         }
