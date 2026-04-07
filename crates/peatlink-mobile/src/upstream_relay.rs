@@ -309,9 +309,11 @@ async fn handle_upstream_message(
             }
         }
 
-        // Peer/mesh state — send via downstream channel directly to WebView
-        // so upstream member counts aren't overridden by local Hub's own mesh_state
-        "peer_update" | "mesh_state" | "room_joined" | "dm_opened" => {
+        // Server broadcasts — send via downstream channel directly to WebView
+        "peer_update" | "mesh_state" | "room_joined" | "dm_opened"
+        | "cot_state" | "marker_created" | "marker_deleted"
+        | "voice_state" | "voice_channel_created" | "voice_peer_joined"
+        | "voice_peer_left" | "voice_speaking_broadcast" => {
             let _ = hub.downstream_tx.send(Arc::new(text.to_string()));
         }
 

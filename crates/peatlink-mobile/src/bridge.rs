@@ -308,7 +308,7 @@ async fn forward_ws_to_ble(
 
     // Skip types that shouldn't be forwarded to BLE peers
     match msg_type {
-        "mesh_state" | "ble_mesh_state" | "identity" | "name_assigned" => return,
+        "identity" | "name_assigned" => return,
         _ => {}
     }
 
