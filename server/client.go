@@ -177,11 +177,17 @@ func (c *Client) readPump() {
 
 			c.mu.RLock()
 			name := c.name
+			senderID := c.identity.ID
 			c.mu.RUnlock()
-			if d.SenderName != "" {
+			if d.SenderName != "" && d.SenderName != name {
+				// Different sender (BLE peer relayed through us) — use a
+				// synthetic sender ID so the UI distinguishes them from us
+				name = d.SenderName
+				senderID = "ble-" + d.SenderName
+			} else if d.SenderName != "" {
 				name = d.SenderName
 			}
-			chatMsg := NewChatMessage(c.identity.ID, name, d.Content)
+			chatMsg := NewChatMessage(senderID, name, d.Content)
 			if d.MessageID != "" {
 				chatMsg.ID = d.MessageID
 			}
