@@ -165,7 +165,7 @@ class MainActivity : AppCompatActivity() {
             addJavascriptInterface(object {
                 @JavascriptInterface
                 fun startPtt(senderId: String, senderName: String) {
-                    bleVoice?.startTransmitting(senderId, senderName)
+                    bleVoice?.startTransmitting()
                 }
 
                 @JavascriptInterface
@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
 
                 @JavascriptInterface
                 fun isTransmitting(): Boolean {
-                    return bleVoice?.isTransmitting ?: false
+                    return bleVoice?.transmitting ?: false
                 }
 
                 @JavascriptInterface
@@ -184,27 +184,11 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 @JavascriptInterface
-                fun pollIncomingFrames(): String {
-                    val frames = bleVoice?.drainIncomingPcmFrames() ?: emptyList()
-                    val arr = JSONArray()
-                    for (frame in frames) {
-                        arr.put(JSONObject().apply {
-                            put("sender_id", frame.senderId)
-                            put("sender_name", frame.senderName)
-                            put("pcm", Base64.encodeToString(frame.pcm, Base64.NO_WRAP))
-                        })
-                    }
-                    return arr.toString()
-                }
+                fun pollIncomingFrames(): String { return "[]" }
 
                 @JavascriptInterface
                 fun sendPcmFrame(base64Pcm: String, senderId: String, senderName: String) {
-                    try {
-                        val pcm = Base64.decode(base64Pcm, Base64.DEFAULT)
-                        bleVoice?.sendPcmFrame(pcm, senderId, senderName)
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "sendPcmFrame failed: ${e.message}")
-                    }
+                    // Audio now flows natively, not through WebView
                 }
             }, "PeatLinkVoice")
         }
@@ -313,11 +297,13 @@ class MainActivity : AppCompatActivity() {
                     bleService = svc
                     Log.i(TAG, "BLE platform service started")
 
-                    // Start BLE voice audio service
-                    val voice = BleVoiceService(mobileNode)
+                    // Start BLE voice audio service (native, no WebView)
+                    val voice = BleVoiceService()
                     voice.start()
                     bleVoice = voice
-                    Log.i(TAG, "BLE voice service started")
+                    // Wire voice to BLE transport
+                    svc.voiceService = voice
+                    Log.i(TAG, "BLE voice service started (native Opus 8kbps)")
                 } catch (e: Throwable) {
                     Log.w(TAG, "BLE mesh/service failed: ${e.message}")
                 }

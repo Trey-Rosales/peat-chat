@@ -3,121 +3,117 @@ package com.peatlink.app.ble
 import android.annotation.SuppressLint
 import android.media.*
 import android.util.Log
-import com.peatlink.ffi.MobileNode
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- * BLE voice audio service — captures audio via AudioRecord, encodes with
- * Android's MediaCodec (Opus), sends frames over BLE mesh via MobileNode.
- * Receives Opus frames from BLE peers and plays via AudioTrack.
+ * Native BLE voice service — completely bypasses WebView.
  *
- * PTT model: call startTransmitting() when PTT pressed, stopTransmitting() when released.
- * Playback runs continuously, playing any frames received from BLE peers.
+ * Audio path:
+ *   Capture: AudioRecord → PCM → MediaCodec Opus 8kbps → queued frames
+ *   Send: PeatBleService tick loop reads frames → GATT write (type byte 0xAA + opus data)
+ *   Receive: GATT notification with 0xAA prefix → decode Opus → jitter buffer → AudioTrack
+ *
+ * Half-duplex PTT model. 8kHz mono Opus at 6-8kbps = ~1KB/s, well within BLE budget.
  */
 @SuppressLint("MissingPermission")
-class BleVoiceService(private val node: MobileNode) {
-
-    data class PendingPcmFrame(
-        val senderId: String,
-        val senderName: String,
-        val pcm: ByteArray,
-    )
+class BleVoiceService {
 
     companion object {
         private const val TAG = "BleVoice"
-        private const val SAMPLE_RATE = 16000 // 16kHz — good balance of quality vs bandwidth
-        private const val FRAME_SIZE_MS = 20  // 20ms frames — standard Opus frame size
-        private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_SIZE_MS / 1000 // 320 samples
-        private const val BITRATE = 24000 // 24kbps — good voice quality, ~3KB/s
-        private const val PLAYBACK_POLL_MS = 10L
-        private const val MAX_PENDING_PCM_FRAMES = 64
+        const val AUDIO_FRAME_PREFIX: Byte = 0xAA.toByte() // distinguishes audio from data
+        private const val SAMPLE_RATE = 8000  // 8kHz narrowband — minimum for voice
+        private const val FRAME_SIZE_MS = 20
+        private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_SIZE_MS / 1000 // 160 samples
+        private const val BITRATE = 8000 // 8kbps Opus — ~1KB/s, leaves headroom for mesh
+        private const val FRAMES_PER_BATCH = 3 // batch 3 frames = 60ms per GATT write
+        private const val JITTER_BUFFER_MS = 80L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var captureJob: Job? = null
-    private var playbackJob: Job? = null
 
+    // Capture
     private var audioRecord: AudioRecord? = null
-    private var audioTrack: AudioTrack? = null
     private var encoder: MediaCodec? = null
-    private var bridgeEncoder: MediaCodec? = null
-    private var decoder: MediaCodec? = null
-    private val pendingIncomingPcm = ConcurrentLinkedQueue<PendingPcmFrame>()
+    private var captureJob: Job? = null
+    @Volatile var transmitting = false
+        private set
 
-    private var transmitting = false
+    // Playback
+    private var audioTrack: AudioTrack? = null
+    private var decoder: MediaCodec? = null
+    private var playbackJob: Job? = null
+    private val incomingFrames = ConcurrentLinkedQueue<ByteArray>()
+
+    // Outgoing queue — PeatBleService reads from this
+    val outgoingAudioFrames = ConcurrentLinkedQueue<ByteArray>()
+
     private var running = false
 
-    /**
-     * Start the playback loop (runs continuously to play received BLE audio).
-     */
     fun start() {
         if (running) return
         running = true
         initPlayback()
-        initBridgeEncoder()
         startPlaybackLoop()
-        Log.i(TAG, "BLE voice service started")
+        Log.i(TAG, "BLE voice service started (${SAMPLE_RATE}Hz, ${BITRATE}bps Opus)")
     }
 
     fun stop() {
-        if (!running) return
         running = false
         stopTransmitting()
-        captureJob?.cancel()
         playbackJob?.cancel()
         releasePlayback()
-        releaseBridgeEncoder()
         Log.i(TAG, "BLE voice service stopped")
     }
 
-    /**
-     * Start transmitting (PTT pressed).
-     * Captures audio from mic, encodes as Opus, sends via BLE.
-     */
-    fun startTransmitting(senderId: String, senderName: String) {
+    fun startTransmitting() {
         if (transmitting) return
         transmitting = true
         initCapture()
-        captureJob = scope.launch {
-            captureLoop(senderId, senderName)
-        }
-        Log.i(TAG, "Transmitting started")
+        captureJob = scope.launch { captureLoop() }
+        Log.i(TAG, "PTT: transmitting")
     }
 
-    /**
-     * Stop transmitting (PTT released).
-     */
     fun stopTransmitting() {
         if (!transmitting) return
         transmitting = false
         captureJob?.cancel()
-        captureJob = null
         releaseCapture()
-        Log.i(TAG, "Transmitting stopped")
+        Log.i(TAG, "PTT: stopped")
     }
 
-    val isTransmitting: Boolean get() = transmitting
+    /**
+     * Called by PeatBleService when GATT data with AUDIO_FRAME_PREFIX arrives.
+     */
+    fun onAudioFrameReceived(opusData: ByteArray) {
+        incomingFrames.add(opusData)
+    }
 
-    // --- Capture (mic → Opus → BLE) ---
+    // --- Capture ---
 
     private fun initCapture() {
         val bufSize = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(FRAME_SAMPLES * 2) // at least one frame
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(FRAME_SAMPLES * 2 * 4)
 
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufSize
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT, bufSize
         )
 
-        // Use MediaCodec for Opus encoding
-        encoder = createOpusEncoder()
+        encoder = try {
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+                val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
+                fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
+                fmt.setInteger(MediaFormat.KEY_COMPLEXITY, 3) // lower complexity = less CPU
+                configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                start()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Opus encoder unavailable: ${e.message}")
+            null
+        }
 
         audioRecord?.startRecording()
     }
@@ -131,137 +127,112 @@ class BleVoiceService(private val node: MobileNode) {
         encoder = null
     }
 
-    private fun initBridgeEncoder() {
-        if (bridgeEncoder != null) return
-        bridgeEncoder = createOpusEncoder()
-    }
-
-    private fun releaseBridgeEncoder() {
-        try { bridgeEncoder?.stop() } catch (_: Throwable) {}
-        try { bridgeEncoder?.release() } catch (_: Throwable) {}
-        bridgeEncoder = null
-    }
-
-    private fun createOpusEncoder(): MediaCodec? {
-        return try {
-            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
-                val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
-                format.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
-                format.setInteger(MediaFormat.KEY_COMPLEXITY, 5)
-                configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                start()
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "MediaCodec Opus encoder not available: ${e.message}")
-            null
-        }
-    }
-
-    private suspend fun captureLoop(senderId: String, senderName: String) {
-        val pcmBuffer = ShortArray(FRAME_SAMPLES)
-        val record = audioRecord ?: return
+    private suspend fun captureLoop() {
+        val pcmBuf = ShortArray(FRAME_SAMPLES)
+        val batchBuffer = mutableListOf<ByteArray>()
 
         while (transmitting) {
-            val read = record.read(pcmBuffer, 0, FRAME_SAMPLES)
-            if (read <= 0) {
-                delay(5)
-                continue
-            }
+            val read = audioRecord?.read(pcmBuf, 0, FRAME_SAMPLES) ?: -1
+            if (read <= 0) { delay(5); continue }
 
             val enc = encoder
             if (enc != null) {
-                // Encode with MediaCodec
-                val encoded = encodeFrame(enc, pcmBuffer, read)
+                val encoded = encodeOpusFrame(enc, pcmBuf, read)
                 if (encoded != null) {
-                    node.sendVoiceFrame(encoded.map { it.toUByte() }, senderId, senderName)
+                    batchBuffer.add(encoded)
+                    if (batchBuffer.size >= FRAMES_PER_BATCH) {
+                        // Combine frames with length prefix: [len1(2), data1, len2(2), data2, ...]
+                        val packet = buildBatchPacket(batchBuffer)
+                        outgoingAudioFrames.add(packet)
+                        batchBuffer.clear()
+                    }
                 }
             } else {
-                // Fallback: send raw PCM (higher bandwidth but always works)
-                val rawBytes = ByteArray(read * 2)
+                // No Opus — send raw PCM (higher bandwidth)
+                val raw = ByteArray(read * 2)
                 for (i in 0 until read) {
-                    rawBytes[i * 2] = (pcmBuffer[i].toInt() and 0xFF).toByte()
-                    rawBytes[i * 2 + 1] = (pcmBuffer[i].toInt() shr 8 and 0xFF).toByte()
+                    raw[i * 2] = (pcmBuf[i].toInt() and 0xFF).toByte()
+                    raw[i * 2 + 1] = (pcmBuf[i].toInt() shr 8).toByte()
                 }
-                node.sendVoiceFrame(rawBytes.map { it.toUByte() }, senderId, senderName)
+                outgoingAudioFrames.add(raw)
             }
+        }
+        // Flush remaining
+        if (batchBuffer.isNotEmpty()) {
+            outgoingAudioFrames.add(buildBatchPacket(batchBuffer))
         }
     }
 
-    private fun encodeFrame(codec: MediaCodec, pcm: ShortArray, sampleCount: Int): ByteArray? {
-        // Feed PCM to encoder
+    private fun buildBatchPacket(frames: List<ByteArray>): ByteArray {
+        var totalSize = 0
+        for (f in frames) totalSize += 2 + f.size
+        val packet = ByteArray(totalSize)
+        var offset = 0
+        for (f in frames) {
+            packet[offset] = (f.size and 0xFF).toByte()
+            packet[offset + 1] = (f.size shr 8 and 0xFF).toByte()
+            f.copyInto(packet, offset + 2)
+            offset += 2 + f.size
+        }
+        return packet
+    }
+
+    private fun encodeOpusFrame(codec: MediaCodec, pcm: ShortArray, count: Int): ByteArray? {
         val inputIdx = codec.dequeueInputBuffer(5000)
         if (inputIdx >= 0) {
-            val inputBuf = codec.getInputBuffer(inputIdx) ?: return null
-            inputBuf.clear()
-            val byteArray = ByteArray(sampleCount * 2)
-            for (i in 0 until sampleCount) {
-                byteArray[i * 2] = (pcm[i].toInt() and 0xFF).toByte()
-                byteArray[i * 2 + 1] = (pcm[i].toInt() shr 8 and 0xFF).toByte()
+            val buf = codec.getInputBuffer(inputIdx) ?: return null
+            buf.clear()
+            val bytes = ByteArray(count * 2)
+            for (i in 0 until count) {
+                bytes[i * 2] = (pcm[i].toInt() and 0xFF).toByte()
+                bytes[i * 2 + 1] = (pcm[i].toInt() shr 8).toByte()
             }
-            inputBuf.put(byteArray)
-            codec.queueInputBuffer(inputIdx, 0, byteArray.size, 0, 0)
+            buf.put(bytes)
+            codec.queueInputBuffer(inputIdx, 0, bytes.size, 0, 0)
         }
-
-        // Get encoded output
         val info = MediaCodec.BufferInfo()
-        val outputIdx = codec.dequeueOutputBuffer(info, 5000)
-        if (outputIdx >= 0) {
-            val outputBuf = codec.getOutputBuffer(outputIdx) ?: return null
-            val encoded = ByteArray(info.size)
-            outputBuf.get(encoded)
-            codec.releaseOutputBuffer(outputIdx, false)
-            return encoded
+        val outIdx = codec.dequeueOutputBuffer(info, 5000)
+        if (outIdx >= 0) {
+            val buf = codec.getOutputBuffer(outIdx) ?: return null
+            val out = ByteArray(info.size)
+            buf.get(out)
+            codec.releaseOutputBuffer(outIdx, false)
+            return out
         }
-
         return null
     }
 
-    // --- Playback (BLE → Opus decode → speaker) ---
+    // --- Playback ---
 
     private fun initPlayback() {
         val bufSize = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
+            SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(FRAME_SAMPLES * 4)
 
         audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .build()
-            )
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(AudioFormat.Builder()
+                .setSampleRate(SAMPLE_RATE)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setBufferSizeInBytes(bufSize)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+            .setTransferMode(AudioTrack.MODE_STREAM).build()
 
-        // Try to create Opus decoder
-        try {
-            decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
-            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
-            // Opus decoder needs CSD (codec-specific data) — provide minimal header
-            val csd0 = ByteArray(19) // OpusHead
-            csd0[0] = 'O'.code.toByte(); csd0[1] = 'p'.code.toByte()
-            csd0[2] = 'u'.code.toByte(); csd0[3] = 's'.code.toByte()
-            csd0[4] = 'H'.code.toByte(); csd0[5] = 'e'.code.toByte()
-            csd0[6] = 'a'.code.toByte(); csd0[7] = 'd'.code.toByte()
-            csd0[8] = 1 // version
-            csd0[9] = 1 // channels
-            // rest is zeros (pre-skip, sample rate, gain, mapping)
-            format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd0))
-            decoder?.configure(format, null, null, 0)
-            decoder?.start()
+        decoder = try {
+            MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+                val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, 1)
+                val csd0 = ByteArray(19)
+                "OpusHead".toByteArray().copyInto(csd0)
+                csd0[8] = 1; csd0[9] = 1 // version=1, channels=1
+                fmt.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd0))
+                configure(fmt, null, null, 0)
+                start()
+            }
         } catch (e: Throwable) {
-            Log.w(TAG, "MediaCodec Opus decoder not available: ${e.message}")
-            decoder = null
+            Log.w(TAG, "Opus decoder unavailable: ${e.message}")
+            null
         }
 
         audioTrack?.play()
@@ -278,92 +249,56 @@ class BleVoiceService(private val node: MobileNode) {
 
     private fun startPlaybackLoop() {
         playbackJob = scope.launch {
-            while (isActive && running) {
-                val frames = node.recvVoiceFrames()
-                for (frame in frames) {
-                    val audioBytes = ByteArray(frame.data.size) { frame.data[it].toByte() }
-                    playFrame(audioBytes, frame.senderId, frame.senderName)
+            while (running) {
+                val frame = incomingFrames.poll()
+                if (frame != null) {
+                    playBatchPacket(frame)
+                } else {
+                    delay(5)
                 }
-                delay(PLAYBACK_POLL_MS)
             }
         }
     }
 
-    private fun playFrame(data: ByteArray, senderId: String, senderName: String) {
+    private fun playBatchPacket(packet: ByteArray) {
         val track = audioTrack ?: return
-        val dec = decoder
+        var offset = 0
+        while (offset + 2 <= packet.size) {
+            val len = (packet[offset].toInt() and 0xFF) or ((packet[offset + 1].toInt() and 0xFF) shl 8)
+            offset += 2
+            if (offset + len > packet.size) break
+            val opusFrame = packet.copyOfRange(offset, offset + len)
+            offset += len
 
-        if (dec != null) {
-            // Decode Opus frame
-            val pcm = decodeFrame(dec, data)
-            if (pcm != null) {
-                enqueueIncomingPcm(senderId, senderName, pcm)
-                track.write(pcm, 0, pcm.size)
+            val dec = decoder
+            if (dec != null) {
+                val pcm = decodeOpusFrame(dec, opusFrame)
+                if (pcm != null) {
+                    track.write(pcm, 0, pcm.size)
+                }
+            } else {
+                // Raw PCM fallback
+                track.write(opusFrame, 0, opusFrame.size)
             }
-        } else {
-            // Raw PCM fallback
-            enqueueIncomingPcm(senderId, senderName, data)
-            track.write(data, 0, data.size)
         }
     }
 
-    private fun enqueueIncomingPcm(senderId: String, senderName: String, pcm: ByteArray) {
-        pendingIncomingPcm.add(PendingPcmFrame(senderId, senderName, pcm))
-        while (pendingIncomingPcm.size > MAX_PENDING_PCM_FRAMES) {
-            pendingIncomingPcm.poll() ?: break
-        }
-    }
-
-    fun drainIncomingPcmFrames(): List<PendingPcmFrame> {
-        val frames = mutableListOf<PendingPcmFrame>()
-        while (true) {
-            val frame = pendingIncomingPcm.poll() ?: break
-            frames.add(frame)
-        }
-        return frames
-    }
-
-    fun sendPcmFrame(pcmBytes: ByteArray, senderId: String, senderName: String) {
-        if (pcmBytes.isEmpty()) return
-
-        val sampleCount = pcmBytes.size / 2
-        val pcmBuffer = ShortArray(sampleCount)
-        for (i in 0 until sampleCount) {
-            val lo = pcmBytes[i * 2].toInt() and 0xFF
-            val hi = pcmBytes[i * 2 + 1].toInt()
-            pcmBuffer[i] = ((hi shl 8) or lo).toShort()
-        }
-
-        val encoded = synchronized(this) {
-            bridgeEncoder?.let { encodeFrame(it, pcmBuffer, sampleCount) }
-        }
-        if (encoded != null) {
-            node.sendVoiceFrame(encoded.map { it.toUByte() }, senderId, senderName)
-            return
-        }
-
-        node.sendVoiceFrame(pcmBytes.map { it.toUByte() }, senderId, senderName)
-    }
-
-    private fun decodeFrame(codec: MediaCodec, opus: ByteArray): ByteArray? {
+    private fun decodeOpusFrame(codec: MediaCodec, opus: ByteArray): ByteArray? {
         val inputIdx = codec.dequeueInputBuffer(5000)
         if (inputIdx >= 0) {
-            val inputBuf = codec.getInputBuffer(inputIdx) ?: return null
-            inputBuf.clear()
-            inputBuf.put(opus)
+            val buf = codec.getInputBuffer(inputIdx) ?: return null
+            buf.clear(); buf.put(opus)
             codec.queueInputBuffer(inputIdx, 0, opus.size, 0, 0)
         }
-
         val info = MediaCodec.BufferInfo()
-        val outputIdx = codec.dequeueOutputBuffer(info, 5000)
-        if (outputIdx >= 0) {
-            val outputBuf = codec.getOutputBuffer(outputIdx) ?: return null
+        val outIdx = codec.dequeueOutputBuffer(info, 5000)
+        if (outIdx >= 0) {
+            val buf = codec.getOutputBuffer(outIdx) ?: return null
             val pcm = ByteArray(info.size)
-            outputBuf.get(pcm)
-            codec.releaseOutputBuffer(outputIdx, false)
+            buf.get(pcm)
+            codec.releaseOutputBuffer(outIdx, false)
             return pcm
         }
-
         return null
     }
 }

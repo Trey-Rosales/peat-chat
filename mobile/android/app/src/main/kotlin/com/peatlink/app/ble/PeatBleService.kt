@@ -354,10 +354,15 @@ class PeatBleService(
                     knownPeatDevices.add(address)
                 }
 
-                Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
-                node.onBleDataReceived(address, value.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecvFrom(address, value.map { it.toUByte() })
+                // Check if this is an audio frame (prefix 0xAA)
+                if (value.isNotEmpty() && value[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
+                    voiceService?.onAudioFrameReceived(value.copyOfRange(1, value.size))
+                } else {
+                    Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
+                    node.onBleDataReceived(address, value.map { it.toUByte() }, now)
+                    node.pushBleRecvFrom(address, value.map { it.toUByte() })
+                }
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -522,10 +527,14 @@ class PeatBleService(
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
                 val data = characteristic.value ?: return
                 val now = System.currentTimeMillis().toULong()
-                Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
-                node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
+                    voiceService?.onAudioFrameReceived(data.copyOfRange(1, data.size))
+                } else {
+                    Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
+                    node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
+                    node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                }
             }
         }
 
@@ -533,10 +542,14 @@ class PeatBleService(
             if (characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
                 val data = characteristic.value ?: return
                 val now = System.currentTimeMillis().toULong()
-                Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
-                node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
                 totalReceived++
-                node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
+                    voiceService?.onAudioFrameReceived(data.copyOfRange(1, data.size))
+                } else {
+                    Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
+                    node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
+                    node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                }
             }
         }
     }
@@ -545,6 +558,9 @@ class PeatBleService(
 
     private var tickCount = 0
     private var lastDataSize = 0
+
+    // Direct reference to voice service for native audio transport
+    var voiceService: BleVoiceService? = null
     private var negotiatedMtu = 23
 
     // Write queue — only one GATT write at a time
@@ -582,8 +598,22 @@ class PeatBleService(
                         sent++
                     }
 
-                    if (tickCount % 10 == 0 && (sent > 0 || knownPeatDevices.isNotEmpty())) {
-                        Log.i(TAG, "Tick #$tickCount: sent $sent bridge msgs, mesh=${meshData?.size ?: 0}b, peers=${knownPeatDevices.size}")
+                    // Send queued audio frames (native path, no WebView)
+                    var audioSent = 0
+                    voiceService?.let { vs ->
+                        while (true) {
+                            val audioFrame = vs.outgoingAudioFrames.poll() ?: break
+                            // Prefix with 0xAA to distinguish audio from data
+                            val packet = ByteArray(1 + audioFrame.size)
+                            packet[0] = BleVoiceService.AUDIO_FRAME_PREFIX
+                            audioFrame.copyInto(packet, 1)
+                            broadcastToAllPeers(packet)
+                            audioSent++
+                        }
+                    }
+
+                    if (tickCount % 10 == 0 && (sent > 0 || audioSent > 0 || knownPeatDevices.isNotEmpty())) {
+                        Log.i(TAG, "Tick #$tickCount: data=$sent audio=$audioSent peers=${knownPeatDevices.size}")
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Tick error: ${e.message}")
