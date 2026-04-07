@@ -1,145 +1,81 @@
-use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
-use bytes::Bytes;
-use futures_util::StreamExt;
-use iroh::endpoint::presets;
-use iroh::protocol::Router;
-use iroh::{Endpoint, EndpointAddr, PublicKey, SecretKey};
-use iroh_gossip::api::{Event, GossipSender};
-use iroh_gossip::net::Gossip;
-use iroh_gossip::proto::TopicId;
-use tokio::sync::mpsc;
+use peat_mesh::config::{IrohConfig, MeshConfig, MeshDiscoveryConfig};
+use peat_mesh::mesh::{PeatMesh, PeatMeshBuilder, PeatMeshEvent};
+use peat_mesh::storage::AutomergeStore;
+use tokio::sync::broadcast;
 
-use crate::message::{ChatId, WireMessage};
+use crate::identity::Identity;
 
-/// Events emitted by the mesh networking layer.
-pub enum MeshEvent {
-    MessageReceived {
-        from: String,
-        wire_msg: WireMessage,
-    },
-    PeerJoined {
-        peer_id: String,
-        chat_id: ChatId,
-    },
-    PeerLeft {
-        peer_id: String,
-        chat_id: ChatId,
-    },
-}
-
-/// Manages the iroh P2P endpoint, gossip protocol, and connection router.
+/// Wraps PeatMesh, AutomergeStore, and sync infrastructure.
 pub struct MeshNetwork {
-    endpoint: Endpoint,
-    gossip: Gossip,
-    _router: Router,
-    senders: HashMap<ChatId, GossipSender>,
-    event_tx: mpsc::UnboundedSender<MeshEvent>,
+    mesh: PeatMesh,
+    store: Arc<AutomergeStore>,
 }
 
 impl MeshNetwork {
-    pub async fn new(
-        secret_key: SecretKey,
-        event_tx: mpsc::UnboundedSender<MeshEvent>,
-    ) -> Result<Self> {
-        let endpoint = Endpoint::builder(presets::N0)
-            .secret_key(secret_key)
-            .bind()
-            .await?;
+    /// Create a new mesh network backed by peat-mesh.
+    pub async fn new(identity: &Identity, data_dir: PathBuf) -> Result<Self> {
+        let store_path = data_dir.join("peat-store");
+        std::fs::create_dir_all(&store_path)?;
 
-        let gossip = Gossip::builder().spawn(endpoint.clone());
+        // Open persistent AutomergeStore
+        let store = Arc::new(
+            AutomergeStore::open(&store_path)
+                .map_err(|e| anyhow::anyhow!("failed to open store: {}", e))?,
+        );
 
-        // Router dispatches incoming connections to the gossip protocol handler
-        let router = Router::builder(endpoint.clone())
-            .accept(iroh_gossip::ALPN, gossip.clone())
-            .spawn();
+        // Configure peat-mesh with our identity's key seed
+        let config = MeshConfig {
+            node_id: Some(identity.device_id_string()),
+            storage_path: Some(data_dir.clone()),
+            discovery: MeshDiscoveryConfig {
+                mdns_enabled: true,
+                service_name: "peatlink".to_string(),
+                ..Default::default()
+            },
+            iroh: IrohConfig {
+                secret_key: Some(identity.secret_key_bytes()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        Ok(Self {
-            endpoint,
-            gossip,
-            _router: router,
-            senders: HashMap::new(),
-            event_tx,
-        })
+        let mesh = PeatMeshBuilder::new(config)
+            .with_device_keypair(identity.keypair().clone())
+            .build();
+
+        Ok(Self { mesh, store })
     }
 
-    pub fn node_id(&self) -> String {
-        self.endpoint.id().to_string()
+    /// Start the mesh network.
+    pub fn start(&self) -> Result<()> {
+        self.mesh
+            .start()
+            .map_err(|e| anyhow::anyhow!("mesh start failed: {}", e))
     }
 
-    pub fn endpoint_addr(&self) -> EndpointAddr {
-        self.endpoint.addr()
+    /// Stop the mesh network.
+    pub fn stop(&self) -> Result<()> {
+        self.mesh
+            .stop()
+            .map_err(|e| anyhow::anyhow!("mesh stop failed: {}", e))
     }
 
-    /// Join a gossip topic for a chat room.
-    pub async fn join_topic(
-        &mut self,
-        chat_id: ChatId,
-        bootstrap_peers: Vec<PublicKey>,
-    ) -> Result<()> {
-        let topic_id = TopicId::from_bytes(chat_id);
-
-        let topic = self
-            .gossip
-            .subscribe_and_join(topic_id, bootstrap_peers)
-            .await?;
-
-        let (sender, receiver) = topic.split();
-
-        // Spawn task to process incoming gossip events
-        let event_tx = self.event_tx.clone();
-        let cid = chat_id;
-        tokio::spawn(async move {
-            let mut receiver = receiver;
-            while let Some(event) = receiver.next().await {
-                match event {
-                    Ok(Event::Received(msg)) => {
-                        if let Ok(wire_msg) =
-                            postcard::from_bytes::<WireMessage>(&msg.content)
-                        {
-                            let _ = event_tx.send(MeshEvent::MessageReceived {
-                                from: msg.delivered_from.to_string(),
-                                wire_msg,
-                            });
-                        }
-                    }
-                    Ok(Event::NeighborUp(id)) => {
-                        let _ = event_tx.send(MeshEvent::PeerJoined {
-                            peer_id: id.to_string(),
-                            chat_id: cid,
-                        });
-                    }
-                    Ok(Event::NeighborDown(id)) => {
-                        let _ = event_tx.send(MeshEvent::PeerLeft {
-                            peer_id: id.to_string(),
-                            chat_id: cid,
-                        });
-                    }
-                    Ok(Event::Lagged) => {
-                        tracing::warn!("gossip receiver lagged on topic");
-                    }
-                    Err(e) => {
-                        tracing::error!("gossip stream error: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        self.senders.insert(chat_id, sender);
-        Ok(())
+    /// Get the node ID.
+    pub fn node_id(&self) -> &str {
+        self.mesh.node_id()
     }
 
-    /// Broadcast a wire message to all peers in a chat topic.
-    pub async fn broadcast(&self, chat_id: &ChatId, msg: &WireMessage) -> Result<()> {
-        let sender = self
-            .senders
-            .get(chat_id)
-            .ok_or_else(|| anyhow::anyhow!("not subscribed to this chat topic"))?;
+    /// Subscribe to mesh events (peer join/leave, state changes).
+    pub fn subscribe_events(&self) -> broadcast::Receiver<PeatMeshEvent> {
+        self.mesh.subscribe_events()
+    }
 
-        let bytes = postcard::to_allocvec(msg)?;
-        sender.broadcast(Bytes::from(bytes)).await?;
-        Ok(())
+    /// Get a reference to the AutomergeStore for CRDT operations.
+    pub fn store(&self) -> &Arc<AutomergeStore> {
+        &self.store
     }
 }

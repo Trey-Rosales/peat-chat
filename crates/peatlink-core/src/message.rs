@@ -13,7 +13,7 @@ pub fn chat_id_from_name(name: &str) -> ChatId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: Uuid,
-    /// Sender's public key as a string.
+    /// Sender's device ID as a string.
     pub sender: String,
     /// Human-readable display name.
     pub sender_name: String,
@@ -48,14 +48,4 @@ impl ChatMessage {
         let secs = total_secs % 60;
         format!("{:02}:{:02}:{:02}", hours, mins, secs)
     }
-}
-
-/// Protocol messages exchanged over the gossip network.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WireMessage {
-    /// Broadcast a new chat message to the room.
-    Chat {
-        chat_id: ChatId,
-        message: ChatMessage,
-    },
 }

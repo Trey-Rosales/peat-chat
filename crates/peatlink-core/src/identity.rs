@@ -38,9 +38,9 @@ impl Identity {
         &self.keypair
     }
 
-    /// Get the iroh SecretKey derived from this identity (same Ed25519 seed).
-    pub fn iroh_secret_key(&self) -> iroh::SecretKey {
-        iroh::SecretKey::from_bytes(&self.keypair.secret_key_bytes())
+    /// Raw Ed25519 secret key bytes (32 bytes) for seeding iroh within peat-mesh.
+    pub fn secret_key_bytes(&self) -> [u8; 32] {
+        self.keypair.secret_key_bytes()
     }
 
     pub fn public_key_bytes(&self) -> [u8; 32] {
@@ -52,13 +52,9 @@ impl Identity {
         format!("{}", self.keypair.device_id())
     }
 
-    /// iroh node ID (used for gossip peer addressing).
-    pub fn iroh_node_id(&self) -> String {
-        self.iroh_secret_key().public().to_string()
-    }
-
+    /// Shortened device ID for display.
     pub fn short_id(&self) -> String {
-        let full = self.iroh_node_id();
+        let full = self.device_id_string();
         if full.len() >= 12 {
             full[..12].to_string()
         } else {

@@ -82,11 +82,11 @@ Then access `https://YOUR_LAN_IP:5173` from your mobile device.
 # Terminal 1
 cargo run -p peatlink-cli -- --name Alice --room general
 
-# Terminal 2 -- pass Alice's Node ID to bootstrap
-cargo run -p peatlink-cli -- --name Bob --room general --peer <alice-node-id>
+# Terminal 2 (same LAN -- peers auto-discover via mDNS)
+cargo run -p peatlink-cli -- --name Bob --room general
 ```
 
-Messages sync directly between peers via iroh gossip and persist to `~/.peatlink/` as Automerge documents.
+Peers discover each other automatically on the LAN via mDNS. Messages persist to `~/.peatlink/` via peat-mesh's AutomergeStore (redb-backed CRDT storage).
 
 ---
 
@@ -109,20 +109,21 @@ Messages sync directly between peers via iroh gossip and persist to `~/.peatlink
                |  peatlink     |    |     Go       |   |  peatlink       |
                |   -core       |    |    Server    |   |   -mobile       |
                |               |    |              |   |                 |
-               |  iroh gossip  |    |  WS relay +  |   |  axum + UniFFI |
-               |  automerge    |    |  voice sig + |   |  optional BLE  |
-               |               |    |  CoT broker  |   |                |
+               |  peat-mesh    |    |  WS relay +  |   |  axum + UniFFI |
+               |  CRDT sync    |    |  voice sig + |   |  optional BLE  |
+               |  mDNS disc.   |    |  CoT broker  |   |  (peat-btle)   |
                +---------------+    +--------------+   +-----------------+
 ```
 
 ### Core Components
 
-**`peatlink-core`** -- Rust library at the heart of everything.
+**`peatlink-core`** -- Rust library at the heart of everything. Built on the [Defense Unicorns PEAT ecosystem](https://github.com/defenseunicorns).
 
-- **Identity** -- Persistent Ed25519 keypair via `peat-mesh`. Same key derives both the peat-mesh device ID and iroh node ID.
-- **Mesh** -- iroh 0.97 endpoint with gossip pub/sub. Chat rooms map to gossip topics via `blake3(room_name)`.
-- **Messages** -- `ChatMessage` structs with UUID, sender, display name, timestamp, content, and optional reply-to. Serialized with postcard over the wire.
-- **Store** -- Automerge CRDT documents per chat room. Deduplicates by UUID. Persists to disk as `.automerge` files.
+- **Identity** -- Persistent Ed25519 keypair via `peat-mesh::security::DeviceKeypair`. Same key seeds the iroh transport inside peat-mesh.
+- **Mesh** -- `PeatMeshBuilder` configures transport (QUIC via iroh), mDNS discovery, and topology. No manual peer bootstrapping needed on LAN.
+- **Messages** -- `ChatMessage` structs with UUID, sender, display name, timestamp, content, and optional reply-to.
+- **Store** -- `peat-mesh::storage::AutomergeStore` (redb-backed) for CRDT persistence. Chat rooms map to store collections via `blake3(room_name)`. Automatic change notifications drive sync.
+- **Security** -- `FormationKey` support wired in for room-level authentication (challenge-response via HMAC-SHA256).
 
 **`peatlink-cli`** -- Interactive terminal client. Connects to rooms, shows message history, displays peer join/leave events.
 
@@ -223,10 +224,11 @@ peat-chat/
 │       └── peatlink_mobile.udl   #   UniFFI interface definition
 ├── server/                       # Go WebSocket relay + voice + CoT
 │   ├── hub.go                    #   room management, voice, CoT broker
-│   ├── client.go                 #   WebSocket client + CoT position
-│   ├── room.go                   #   room state + voice channels
+│   ├── client.go                 #   WebSocket client + CoT position tracking
+│   ├── room.go                   #   room state + voice channels + markers
 │   ├── message.go                #   all message types (chat, voice, CoT)
-│   └── *_test.go                 #   server unit tests
+│   ├── identity.go               #   blake3 room IDs, Ed25519 identity
+│   └── *_test.go                 #   server unit tests (48 tests)
 ├── web/                          # React + TypeScript frontend
 │   └── src/
 │       ├── components/           #   ChatView, Sidebar, MapViewer,
@@ -309,17 +311,21 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
 
 ## How It Works
 
-**Room IDs** are deterministic -- `blake3(room_name)` produces a 32-byte hash used as both the gossip topic and room identifier across all components.
+**Room IDs** are deterministic -- `blake3(room_name)` produces a 32-byte hash used as the room identifier and AutomergeStore collection key.
 
-**Identity** is persistent. On first run, an Ed25519 keypair is generated and saved. The same key material is reused for peat-mesh device identity and iroh peer addressing.
+**Identity** is persistent. On first run, an Ed25519 keypair is generated via `peat-mesh::security::DeviceKeypair` and saved. The same key seeds the iroh transport managed by peat-mesh.
 
-**Messages** are deduplicated by UUID. The P2P path stores them in Automerge CRDT documents for conflict-free merging. The WebSocket path keeps them in-memory with a 1000-message cap per room.
+**Messages** are deduplicated by UUID. The P2P path stores them in peat-mesh's `AutomergeStore` (redb-backed Automerge CRDTs) for conflict-free merging and persistent storage. The WebSocket path keeps them in-memory with a 1000-message cap per room.
+
+**Peer discovery** uses mDNS via peat-mesh -- peers on the same LAN automatically find and connect to each other without manual bootstrapping.
 
 **Mesh state** is broadcast every 5 seconds -- peer transport type, latency, and connection health. The web UI renders this as an interactive topology graph.
 
-**Voice channels** use WebRTC for peer-to-peer audio. The server acts as a dumb signaling relay -- it forwards SDP and ICE messages between peers without inspecting them. Push-to-talk mutes/unmutes the audio track without renegotiation.
+**Voice channels** use WebRTC for peer-to-peer audio. The server acts as a dumb signaling relay -- it forwards SDP and ICE messages between peers without inspecting them. Push-to-talk or open-mic mode; listen-only fallback when no mic is available.
 
-**CoT positions** are broadcast every 5 seconds to all room members. Markers carry full CoT metadata (type, how, ce, le, hae, stale, remarks) for future ATAK plugin interoperability.
+**CoT positions** are broadcast every 5 seconds to all room members. Markers carry full CoT metadata (type, how, ce, le, hae, stale, remarks) for ATAK plugin interoperability.
+
+**PEAT ecosystem** -- peatlink-core uses `peat-mesh` 0.8 for identity, transport, CRDT storage, and mDNS discovery. `peat-btle` 0.2 provides optional BLE mesh transport for mobile. Future integration planned with `peat-tak-bridge` for native ATAK CoT interop and `peat-gateway` for enterprise enrollment.
 
 ---
 
@@ -381,9 +387,9 @@ See [`scripts/build-mobile.sh`](scripts/build-mobile.sh) for cross-compilation d
 
 | Component | Libraries |
 |:----------|:----------|
-| **peatlink-core** | iroh 0.97, iroh-gossip 0.97, peat-mesh 0.7, automerge 0.7, tokio, blake3 |
+| **peatlink-core** | peat-mesh 0.8 (automerge-backend), automerge 0.7, tokio, blake3 |
 | **peatlink-cli** | clap 4, tracing |
-| **peatlink-mobile** | axum 0.7, uniffi 0.28, peat-btle 0.2 (optional) |
+| **peatlink-mobile** | axum 0.7, uniffi 0.28, peat-mesh 0.7, peat-btle 0.2 (optional) |
 | **Go server** | gorilla/websocket, blake3, google/uuid |
 | **Web** | React 18, Zustand 4.5, MapLibre GL 5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
 | **Testing** | Go `testing` (48 tests), Vitest (55 tests), React Testing Library |

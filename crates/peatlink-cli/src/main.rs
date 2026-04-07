@@ -17,10 +17,6 @@ struct Args {
     #[arg(short, long, default_value_os_t = default_data_dir())]
     data_dir: PathBuf,
 
-    /// Peer node ID (public key) to bootstrap from.
-    #[arg(short, long)]
-    peer: Option<String>,
-
     /// Chat room to join.
     #[arg(short, long, default_value = "general")]
     room: String,
@@ -42,28 +38,20 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    println!("PeatLink v0.1.0 — tactical mesh chat");
-    println!("=====================================");
+    println!("PeatLink v0.1.0 — tactical mesh chat (peat-mesh transport)");
+    println!("===========================================================");
 
     let mut node = PeatLinkNode::new(args.data_dir.clone(), args.name.clone()).await?;
     println!("Node ID:  {}", node.node_id());
+    println!("Device:   {}", node.device_id());
     println!("Name:     {}", args.name);
 
     node.run().await?;
 
-    // Parse bootstrap peer if provided
-    let peers = if let Some(ref peer_str) = args.peer {
-        let pk: iroh::PublicKey = peer_str
-            .parse()
-            .map_err(|e| anyhow::anyhow!("invalid peer ID '{}': {}", peer_str, e))?;
-        vec![pk]
-    } else {
-        vec![]
-    };
-
-    let chat_id = node.join_chat(&args.room, peers).await?;
+    let chat_id = node.join_chat(&args.room).await?;
     println!("Room:     {} ({})", args.room, &hex::encode(chat_id)[..16]);
-    println!("-------------------------------------");
+    println!("Discovery: mDNS (auto-connect to LAN peers)");
+    println!("-----------------------------------------------------------");
 
     // Show recent history
     let history = node.get_messages(&chat_id).await;
@@ -77,7 +65,7 @@ async fn main() -> Result<()> {
                 msg.content
             );
         }
-        println!("-------------------------------------");
+        println!("-----------------------------------------------------------");
     }
 
     println!("Type a message and press Enter. Commands: /quit /history");
@@ -122,11 +110,11 @@ async fn main() -> Result<()> {
                             message.sender_name,
                             message.content);
                     }
-                    Ok(NodeEvent::PeerConnected { peer_id, .. }) => {
+                    Ok(NodeEvent::PeerConnected { peer_id }) => {
                         let short = if peer_id.len() > 12 { &peer_id[..12] } else { &peer_id };
                         println!("  + peer connected: {}...", short);
                     }
-                    Ok(NodeEvent::PeerDisconnected { peer_id, .. }) => {
+                    Ok(NodeEvent::PeerDisconnected { peer_id }) => {
                         let short = if peer_id.len() > 12 { &peer_id[..12] } else { &peer_id };
                         println!("  - peer disconnected: {}...", short);
                     }

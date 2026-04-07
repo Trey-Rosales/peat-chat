@@ -1,13 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::Result;
-use iroh::PublicKey;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use peat_mesh::mesh::PeatMeshEvent;
+use tokio::sync::broadcast;
 
 use crate::identity::Identity;
-use crate::mesh::{MeshEvent, MeshNetwork};
-use crate::message::{chat_id_from_name, ChatId, ChatMessage, WireMessage};
+use crate::mesh::MeshNetwork;
+use crate::message::{chat_id_from_name, ChatId, ChatMessage};
 use crate::store::ChatStore;
 
 /// Events emitted by the node for the UI/CLI layer.
@@ -26,22 +25,19 @@ pub enum NodeEvent {
     },
     PeerConnected {
         peer_id: String,
-        chat_id: ChatId,
     },
     PeerDisconnected {
         peer_id: String,
-        chat_id: ChatId,
     },
 }
 
-/// The main PeatLink node — backed by peat-mesh identity and iroh-gossip transport.
+/// The main PeatLink node — backed by peat-mesh for identity, networking, and CRDT storage.
 pub struct PeatLinkNode {
     identity: Identity,
     display_name: String,
-    mesh: Arc<Mutex<MeshNetwork>>,
-    store: Arc<Mutex<ChatStore>>,
+    mesh: MeshNetwork,
+    store: ChatStore,
     event_tx: broadcast::Sender<NodeEvent>,
-    mesh_event_rx: Option<mpsc::UnboundedReceiver<MeshEvent>>,
 }
 
 impl PeatLinkNode {
@@ -52,23 +48,20 @@ impl PeatLinkNode {
         let identity = Identity::load_or_create(&data_dir.join("identity.key"))?;
         tracing::info!(
             device_id = %identity.device_id_string(),
-            iroh_id = %identity.short_id(),
+            short_id = %identity.short_id(),
             "loaded peat-mesh identity"
         );
 
-        let (mesh_event_tx, mesh_event_rx) = mpsc::unbounded_channel();
-        let mesh = MeshNetwork::new(identity.iroh_secret_key(), mesh_event_tx).await?;
-
-        let store = ChatStore::new(Some(data_dir.join("chats")));
+        let mesh = MeshNetwork::new(&identity, data_dir).await?;
+        let store = ChatStore::new(mesh.store().clone());
         let (event_tx, _) = broadcast::channel(256);
 
         Ok(Self {
             identity,
             display_name,
-            mesh: Arc::new(Mutex::new(mesh)),
-            store: Arc::new(Mutex::new(store)),
+            mesh,
+            store,
             event_tx,
-            mesh_event_rx: Some(mesh_event_rx),
         })
     }
 
@@ -76,9 +69,9 @@ impl PeatLinkNode {
         self.event_tx.subscribe()
     }
 
-    /// iroh node ID (for peer addressing).
+    /// peat-mesh node ID.
     pub fn node_id(&self) -> String {
-        self.identity.iroh_node_id()
+        self.mesh.node_id().to_string()
     }
 
     /// peat-mesh device ID.
@@ -90,67 +83,87 @@ impl PeatLinkNode {
         self.identity.short_id()
     }
 
-    /// Start the background mesh event processing loop. Call once after creation.
+    /// Start the background mesh event processing loop.
     pub async fn run(&mut self) -> Result<()> {
-        let mut mesh_event_rx = self
-            .mesh_event_rx
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("node already running"))?;
+        self.mesh.start()?;
 
-        let store = self.store.clone();
+        // Process mesh events (peer join/leave)
+        let mut mesh_events = self.mesh.subscribe_events();
         let event_tx = self.event_tx.clone();
+
+        tokio::spawn(async move {
+            loop {
+                match mesh_events.recv().await {
+                    Ok(PeatMeshEvent::PeerJoined(node_id)) => {
+                        let _ = event_tx.send(NodeEvent::PeerConnected {
+                            peer_id: node_id.as_str().to_string(),
+                        });
+                    }
+                    Ok(PeatMeshEvent::PeerLeft(node_id)) => {
+                        let _ = event_tx.send(NodeEvent::PeerDisconnected {
+                            peer_id: node_id.as_str().to_string(),
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("mesh event receiver lagged by {}", n);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Process store changes (new messages from remote sync)
+        let mut store_changes = self.store.subscribe_changes();
+        let store_ref = ChatStore::new(self.mesh.store().clone());
+        let event_tx2 = self.event_tx.clone();
         let my_node_id = self.node_id();
 
         tokio::spawn(async move {
-            while let Some(event) = mesh_event_rx.recv().await {
-                match event {
-                    MeshEvent::MessageReceived { wire_msg, .. } => match wire_msg {
-                        WireMessage::Chat { chat_id, message } => {
-                            if message.sender == my_node_id {
-                                continue;
-                            }
-                            let mut store = store.lock().await;
-                            let added = store.add_message(&chat_id, &message).unwrap_or(false);
-                            if added {
-                                let _ = store.save_chat(&chat_id);
-                                let _ = event_tx.send(NodeEvent::MessageReceived {
-                                    chat_id,
-                                    message,
-                                });
+            loop {
+                match store_changes.recv().await {
+                    Ok(key) => {
+                        if key.starts_with("chat_") {
+                            // A chat document changed — check for new messages
+                            // The key is "chat_{hex_chat_id}"
+                            if let Ok(chat_id_bytes) = hex::decode(key.trim_start_matches("chat_"))
+                            {
+                                if chat_id_bytes.len() == 32 {
+                                    let mut chat_id = [0u8; 32];
+                                    chat_id.copy_from_slice(&chat_id_bytes);
+                                    let messages = store_ref.get_messages(&chat_id);
+                                    // Emit the latest message if it's from someone else
+                                    if let Some(msg) = messages.last() {
+                                        if msg.sender != my_node_id {
+                                            let _ =
+                                                event_tx2.send(NodeEvent::MessageReceived {
+                                                    chat_id,
+                                                    message: msg.clone(),
+                                                });
+                                        }
+                                    }
+                                }
                             }
                         }
-                    },
-                    MeshEvent::PeerJoined { peer_id, chat_id } => {
-                        let _ = event_tx.send(NodeEvent::PeerConnected { peer_id, chat_id });
                     }
-                    MeshEvent::PeerLeft { peer_id, chat_id } => {
-                        let _ = event_tx.send(NodeEvent::PeerDisconnected { peer_id, chat_id });
-                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(_) => break,
                 }
             }
+        });
+
+        let _ = self.event_tx.send(NodeEvent::Ready {
+            node_id: self.node_id(),
         });
 
         Ok(())
     }
 
-    /// Join a chat room by name, optionally bootstrapping from known peers.
-    pub async fn join_chat(
-        &self,
-        room_name: &str,
-        bootstrap_peers: Vec<PublicKey>,
-    ) -> Result<ChatId> {
+    /// Join a chat room by name.
+    pub async fn join_chat(&self, room_name: &str) -> Result<ChatId> {
         let chat_id = chat_id_from_name(room_name);
 
-        {
-            let mut store = self.store.lock().await;
-            let _ = store.load_chat(&chat_id);
-            store.ensure_chat(&chat_id);
-        }
-
-        {
-            let mut mesh = self.mesh.lock().await;
-            mesh.join_topic(chat_id, bootstrap_peers).await?;
-        }
+        self.store.ensure_chat(&chat_id)?;
 
         let _ = self.event_tx.send(NodeEvent::ChatJoined {
             chat_id,
@@ -168,28 +181,13 @@ impl PeatLinkNode {
     ) -> Result<ChatMessage> {
         let msg = ChatMessage::new(self.node_id(), self.display_name.clone(), content);
 
-        {
-            let mut store = self.store.lock().await;
-            store.add_message(chat_id, &msg)?;
-            let _ = store.save_chat(chat_id);
-        }
-
-        let wire_msg = WireMessage::Chat {
-            chat_id: *chat_id,
-            message: msg.clone(),
-        };
-
-        {
-            let mesh = self.mesh.lock().await;
-            mesh.broadcast(chat_id, &wire_msg).await?;
-        }
+        self.store.add_message(chat_id, &msg)?;
 
         Ok(msg)
     }
 
     /// Retrieve all messages in a chat room.
     pub async fn get_messages(&self, chat_id: &ChatId) -> Vec<ChatMessage> {
-        let store = self.store.lock().await;
-        store.get_messages(chat_id)
+        self.store.get_messages(chat_id)
     }
 }
