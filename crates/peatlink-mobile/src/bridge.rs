@@ -141,12 +141,15 @@ async fn bridge_loop(
                 forward_ws_to_ble(&passthrough, &ble_manager, &seen_ids, &self_node_id).await;
             }
 
-            // === BLE peer events → peer_update in Hub ===
+            // === BLE peer events → peer_update in Hub + initial sync ===
             Some(event) = ble_event_rx.recv() => {
                 match &event {
                     BlePeerEvent::PeerConnected(info) => {
                         tracing::info!("BLE peer connected: {} ({})", info.name, info.id);
                         broadcast_ble_peer_update(&hub, &room_name, info, "joined", &self_node_id).await;
+
+                        // Send room history to new peer via BLE so they get caught up
+                        sync_room_history_to_ble(&hub, &room_name, &ble_manager, &self_node_id).await;
                     }
                     BlePeerEvent::PeerDisconnected(info) => {
                         tracing::info!("BLE peer disconnected: {} ({})", info.name, info.id);
@@ -365,6 +368,49 @@ async fn broadcast_ble_peer_update(
             break;
         }
     }
+}
+
+/// Send room history to BLE peers when they first connect.
+/// This syncs the new peer with messages from the Go server.
+#[cfg(feature = "bluetooth")]
+async fn sync_room_history_to_ble(
+    hub: &Arc<Hub>,
+    room_name: &str,
+    ble_manager: &Arc<BleManager>,
+    self_node_id: &str,
+) {
+    let chat_id = crate::ws_server::chat_id_from_name(room_name);
+    let room_id = crate::ws_server::chat_id_hex(&chat_id);
+
+    // Get room history from local Hub
+    let rooms = hub.rooms.read().await;
+    let messages = if let Some(room_arc) = rooms.get(&chat_id) {
+        let room = room_arc.read().await;
+        room.messages.clone()
+    } else {
+        return;
+    };
+    drop(rooms);
+
+    if messages.is_empty() {
+        tracing::info!("No room history to sync to BLE peer");
+        return;
+    }
+
+    tracing::info!("Syncing {} messages to BLE peer", messages.len());
+
+    // Send room_history envelope so the receiving peer's bridge injects it
+    let history_msg = serde_json::json!({
+        "type": "room_history",
+        "data": {
+            "room_id": room_id,
+            "messages": messages,
+        }
+    });
+
+    let payload = format!("{}{}", WS_PREFIX, history_msg);
+    let now = crate::ws_server::now_ms();
+    let _ = ble_manager.send_chat(self_node_id, &payload, now).await;
 }
 
 /// Broadcast BLE peers as mesh_state with connected_via field.

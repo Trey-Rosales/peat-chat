@@ -285,33 +285,28 @@ class PeatBleService(
         gattServerDevices.clear()
     }
 
-    // Track which addresses are confirmed Peat devices (passed manufacturer data check)
+    // Track which addresses are confirmed Peat devices
+    // Only added after: scan callback verifies mfg data, OR server receives a Peat characteristic write
     private val knownPeatDevices = mutableSetOf<String>()
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status_code: Int, newState: Int) {
             val address = device.address
-            val now = System.currentTimeMillis().toULong()
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "GATT server: incoming connection from $address (status=$status_code)")
+                    // Don't register with peat-btle yet — wait until they write to our
+                    // sync characteristic (proves they're a Peat device, not a random BLE device)
+                    Log.i(TAG, "GATT server: incoming connection from $address (unverified)")
                     gattServerDevices.add(address)
-                    // Register as discovered + connected so peat-btle tracks it
-                    val name = try { device.name } catch (_: Throwable) { null }
-                    node.onBleDiscovered(address, name, 0, "peatlink-default", now)
-                    node.onBleConnected(address, now)
-                    knownPeatDevices.add(address)
-                    connectedCount = knownPeatDevices.size
-                    this@PeatBleService.status = "peer connected: ${address.takeLast(5)}"
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "GATT server: peer disconnected from $address (status=$status_code)")
+                    Log.i(TAG, "GATT server: disconnected from $address")
                     gattServerDevices.remove(address)
                     if (knownPeatDevices.remove(address)) {
                         node.onBleDisconnected(address)
                         connectedCount = knownPeatDevices.size
                     }
-                    if (connectedCount == 0) {
+                    if (connectedCount == 0 && knownPeatDevices.isEmpty()) {
                         this@PeatBleService.status = "scanning + advertising"
                     }
                 }
@@ -338,13 +333,28 @@ class PeatBleService(
             preparedWrite: Boolean, responseNeeded: Boolean,
             offset: Int, value: ByteArray
         ) {
-            if (characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
+            if (characteristic.uuid == PEAT_SYNC_CHAR_UUID && value.isNotEmpty()) {
+                val address = device.address
                 val now = System.currentTimeMillis().toULong()
-                Log.d(TAG, "GATT server: received ${value.size} bytes from ${device.address}")
-                node.onBleDataReceived(device.address, value.map { it.toUByte() }, now)
+
+                // First write from this device = verified Peat peer
+                if (!knownPeatDevices.contains(address)) {
+                    Log.i(TAG, "GATT server: verified Peat peer $address (first sync write)")
+                    val name = try { device.name } catch (_: Throwable) { null }
+                    node.onBleDiscovered(address, name, 0, "peatlink-default", now)
+                    node.onBleConnected(address, now)
+                    knownPeatDevices.add(address)
+                    connectedCount = knownPeatDevices.size
+                    this@PeatBleService.status = "peer verified: ${address.takeLast(5)}"
+                }
+
+                Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
+                node.onBleDataReceived(address, value.map { it.toUByte() }, now)
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
+            } else if (responseNeeded) {
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             }
         }
 
@@ -458,8 +468,21 @@ class PeatBleService(
                 gatt.writeDescriptor(it)
             }
 
-            // Read initial document
+            // Read peer's initial document
             gatt.readCharacteristic(syncChar)
+
+            // Send our document to the peer (initial sync)
+            scope.launch {
+                delay(500) // small delay to let descriptor write complete
+                val doc = node.bleBuildDocument()
+                if (doc != null) {
+                    val bytes = ByteArray(doc.size) { doc[it].toByte() }
+                    syncChar.value = bytes
+                    syncChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    gatt.writeCharacteristic(syncChar)
+                    Log.i(TAG, "Sent initial document (${bytes.size} bytes) to ${gatt.device.address}")
+                }
+            }
 
             Log.i(TAG, "Subscribed to sync notifications from ${gatt.device.address}")
         }
