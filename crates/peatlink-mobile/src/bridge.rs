@@ -214,11 +214,10 @@ async fn bridge_loop(
     // Subscribe to local Hub room broadcasts (WS → BLE direction)
     let mut room_rx = hub.subscribe_room(&room_name).await;
 
-    // Also subscribe to downstream (catches DMs, reactions, etc. from upstream relay)
+    // Subscribe to downstream only (DMs, reactions, server broadcasts from upstream relay)
+    // Do NOT subscribe to passthrough — the bridge puts BLE messages on passthrough,
+    // and subscribing would create a self-loop where every received message echoes back
     let mut downstream_rx = hub.downstream_tx.subscribe();
-
-    // Also subscribe to passthrough (catches user-initiated actions: start_dm, CoT, etc.)
-    let mut passthrough_rx = hub.passthrough_tx.subscribe();
 
     let mut peer_interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -284,10 +283,8 @@ async fn bridge_loop(
                 forward_ws_to_ble(&downstream, &ble_send_tx, &seen_ids).await;
             }
 
-            // === WS → BLE: Passthrough messages (user actions: start_dm, CoT, voice, etc.) ===
-            Ok(passthrough) = passthrough_rx.recv() => {
-                forward_ws_to_ble(&passthrough, &ble_send_tx, &seen_ids).await;
-            }
+            // NOTE: passthrough is NOT subscribed — bridge puts messages on passthrough
+            // for the upstream relay, subscribing would create a self-loop
 
             // === BLE peer events → peer_update in Hub + initial sync ===
             Some(event) = ble_event_rx.recv() => {
