@@ -114,18 +114,71 @@
 - [ ] Contact history trails (breadcrumb paths on map)
 - [ ] Speed and heading indicators on contact markers
 - [ ] Automatic stale contact cleanup with configurable TTL
-- [ ] Formation-level COP (Common Operating Picture) aggregation
 - [ ] Sensor integration — bridge external sensor data as CoT events
+- [ ] Weather overlay (wind, precipitation, visibility) from open APIs or local sensors
 
 ### Alerts & Notifications
 - [ ] Configurable alert rules (proximity, geofence breach, peer disconnect)
 - [ ] Push notifications on mobile (via service worker)
 - [ ] Audio alerts for incoming messages / voice channel activity
 - [ ] Priority message flag (bypass normal notification settings)
+- [ ] Dead man's switch — alert when a contact stops reporting for configurable duration
 
 ---
 
-## Phase 5 — Platform & Scale
+## Phase 5 — Common Operating Picture (COP)
+
+The COP is a shared, synchronized tactical view across all nodes in a formation.
+Every participant sees the same picture — positions, markers, routes, boundaries,
+and overlays — with no central server required.
+
+### COP Architecture
+- [ ] COP defined as a named CRDT document collection in AutomergeStore
+- [ ] Each formation has one or more COP layers that sync via peat-mesh
+- [ ] Layers are composable: base map + contacts + markers + drawings + routes + sensor feeds
+- [ ] Conflict-free merge — two operators can edit the same COP offline and sync cleanly
+- [ ] peat-mesh hierarchical aggregation: cell-level COPs roll up into formation-level COP
+  - Leaf nodes report raw positions and observations
+  - Cell leaders aggregate and filter (reduce bandwidth 90%+)
+  - Formation HQ sees a consolidated picture without polling every node
+
+### COP Data Model
+- [ ] **Contacts layer** — all CoT positions (friendly, hostile, neutral, unknown)
+- [ ] **Markers layer** — shared waypoints, POIs, objectives, hazards
+- [ ] **Drawings layer** — lines, polygons, circles, free-draw (area markers, boundaries, sectors)
+- [ ] **Routes layer** — sequenced waypoints with timing, phase lines, checkpoints
+- [ ] **Sensor layer** — telemetry from IoT/peat-lite devices, camera feeds, environmental data
+- [ ] **Intel layer** — reports, images, documents attached to map locations
+- [ ] Each layer is independently toggleable, has its own TTL and sync priority
+
+### COP Sync & Federation
+- [ ] Real-time sync across all mesh transports (QUIC, BLE, LoRa bridge)
+- [ ] Bandwidth-aware sync — prioritize contacts and markers over drawings on constrained links
+- [ ] COP snapshots — point-in-time captures for AAR (After Action Review)
+- [ ] COP playback — timeline scrubbing to replay how the picture evolved
+- [ ] COP export to standard formats (KML/KMZ, GeoJSON, GPX, CoT XML package)
+- [ ] COP import from TAK data packages (.zip with CoT + attachments)
+- [ ] Federation — share COP between separate formations via peat-gateway or TAK Server relay
+- [ ] Selective sharing — expose only specific layers to federated partners
+
+### COP Permissions
+- [ ] View-only vs edit roles per layer
+- [ ] Layer ownership — creator can lock, archive, or transfer
+- [ ] Formation key required to subscribe to COP (leverages FormationKey auth)
+- [ ] Audit trail — who placed/edited/deleted each element, with timestamps
+
+### COP Integration Points
+- [ ] **ATAK plugin** — COP layers appear as TAK overlays; TAK drawings sync back to PeatLink
+- [ ] **Meshtastic bridge** — LoRa contacts appear on COP contact layer automatically
+- [ ] **Video streams** — camera feeds pinned to COP locations, viewable from the map
+- [ ] **Chat** — COP elements linkable in chat messages ("look at marker Alpha on COP")
+- [ ] **External COP systems** — adapter pattern for JBC-P, CPOF, C2 systems via CoT/OGC standards
+
+---
+
+## Phase 6 — Platform & Scale
+
+> Phases 1–5 are the core product. Phase 6 extends reach.
 
 ### Native Mobile Apps
 - [ ] Android app (Kotlin shell + embedded Rust server via peatlink-mobile)
