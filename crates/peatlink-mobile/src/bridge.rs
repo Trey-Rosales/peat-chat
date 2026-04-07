@@ -13,6 +13,16 @@ use tokio::sync::mpsc;
 use crate::upstream_relay::SeenIds;
 use crate::ws_server::{ChatMessage, Hub};
 
+/// Fast content hash for dedup (not cryptographic, just loop prevention).
+fn fxhash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 fn base64_encode(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(data)
@@ -96,9 +106,16 @@ async fn bridge_loop(
                 if let Ok(text) = String::from_utf8(data) {
                     if text.starts_with(WS_PREFIX) {
                         let json = &text[WS_PREFIX.len()..];
+                        // Mark this content as seen so we don't echo it back to BLE
+                        let hash = format!("ble-rx-{}", fxhash(json));
+                        {
+                            let mut ids = seen_ids.write().await;
+                            if ids.contains(&hash) {
+                                continue; // already processed this exact message
+                            }
+                            ids.insert(hash);
+                        }
                         handle_ble_ws_message(json, &hub, &room_name, &seen_ids, &voice_incoming_tx).await;
-                    } else {
-                        tracing::debug!("BLE recv: non-WS data ({} bytes)", text.len());
                     }
                 }
             }
@@ -283,28 +300,21 @@ async fn forward_ws_to_ble(
         .unwrap_or("");
 
     // Skip types that shouldn't be forwarded to BLE peers
-    // (mesh_state and peer_update are generated locally for BLE peers)
     match msg_type {
-        "mesh_state" | "ble_mesh_state" | "identity" => return,
+        "mesh_state" | "ble_mesh_state" | "identity" | "name_assigned" => return,
         _ => {}
     }
 
-    // For chat messages, check dedup
-    if msg_type == "message" {
-        if let Some(data) = envelope.get("data") {
-            if let Some(msg) = data.get("message") {
-                let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                if !msg_id.is_empty() {
-                    let ids = seen_ids.read().await;
-                    if ids.contains(msg_id) {
-                        return; // Already seen (came from BLE or already forwarded)
-                    }
-                }
-            }
+    // Universal dedup — check content hash to prevent echo loops
+    let hash = format!("ble-rx-{}", fxhash(broadcast));
+    {
+        let mut ids = seen_ids.write().await;
+        if ids.contains(&hash) {
+            return; // This came from BLE — don't echo back
         }
+        ids.insert(hash);
     }
 
-    // Send the full JSON with __ws: prefix directly via GATT
     let payload = format!("{}{}", WS_PREFIX, broadcast);
     let _ = ble_send_tx.send(payload.into_bytes());
 }
