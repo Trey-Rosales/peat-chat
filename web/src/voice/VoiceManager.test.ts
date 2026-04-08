@@ -101,6 +101,7 @@ describe('VoiceManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    ;(globalThis as any).window = {}
     sendFn = vi.fn()
     manager = new VoiceManager(sendFn)
   })
@@ -129,6 +130,20 @@ describe('VoiceManager', () => {
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
       audio: true,
     })
+  })
+
+  it('uses native bridge instead of WebView mic when BLE voice is available', async () => {
+    ;(globalThis as any).window = {
+      PeatLinkVoice: {
+        hasBleVoice: vi.fn().mockReturnValue(true),
+        setBridgeLocalMic: vi.fn(),
+      },
+    }
+
+    await manager.joinChannel('r1', 'vc1', [])
+
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
+    expect((globalThis as any).window.PeatLinkVoice.setBridgeLocalMic).toHaveBeenCalledWith(true)
   })
 
   it('creates offers to existing members', async () => {

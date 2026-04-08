@@ -170,6 +170,7 @@ export class VoiceManager {
     // AudioContext/getUserMedia may be limited
     try {
       const settings = useSettingsStore.getState()
+      const useNativeMicBridge = !!window.PeatLinkVoice?.hasBleVoice?.()
       this.localInputVolume = settings.inputVolume
       this.localMicMuted = true
       this.audioContext = new AudioContext()
@@ -184,17 +185,23 @@ export class VoiceManager {
       this.blePlaybackCursor = this.audioContext.currentTime
       await this.audioContext.resume().catch(() => {})
 
-      const constraints: MediaStreamConstraints = {
-        audio: settings.micDeviceId
-          ? { deviceId: { exact: settings.micDeviceId } }
-          : true,
-      }
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
-        this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
-        this.sourceNode.connect(this.gainNode)
-      } catch {
-        this._listenOnly = true
+      if (useNativeMicBridge) {
+        // Android relay devices use the native audio stack and feed PCM frames
+        // back through the bridge. Avoid double-capturing via WebView mic.
+        this.syncNativeMicBridge(true)
+      } else {
+        const constraints: MediaStreamConstraints = {
+          audio: settings.micDeviceId
+            ? { deviceId: { exact: settings.micDeviceId } }
+            : true,
+        }
+        try {
+          this.localStream = await navigator.mediaDevices.getUserMedia(constraints)
+          this.sourceNode = this.audioContext.createMediaStreamSource(this.localStream)
+          this.sourceNode.connect(this.gainNode)
+        } catch {
+          this._listenOnly = true
+        }
       }
 
       const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
@@ -202,7 +209,9 @@ export class VoiceManager {
         processedTrack.enabled = true
       }
 
-      this.syncNativeMicBridge()
+      if (!useNativeMicBridge) {
+        this.syncNativeMicBridge()
+      }
     } catch (err) {
       console.warn('Audio setup failed (BLE voice still available):', err)
       this._listenOnly = true

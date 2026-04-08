@@ -507,6 +507,18 @@ async fn handle_message(
             }
         }
 
+        "join_voice" | "leave_voice" | "voice_speaking" | "create_voice_channel" => {
+            // Forward to upstream if present, and also rebroadcast into the room so the
+            // BLE bridge can carry local voice control messages to connected peers.
+            let room_id_str = env
+                .data
+                .get("room_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+            rebroadcast_ble_control(hub, room_id_str, text).await;
+        }
+
         _ => {
             // Forward unrecognized message types to the passthrough channel
             // so the upstream relay can handle them (DMs, voice, CoT, etc.)
@@ -515,6 +527,16 @@ async fn handle_message(
     }
 
     true
+}
+
+async fn rebroadcast_ble_control(hub: &Arc<Hub>, room_id_str: &str, raw_text: &str) {
+    if room_id_str.is_empty() {
+        return;
+    }
+    if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+        let room = room_arc.read().await;
+        let _ = room.tx.send(Arc::new(raw_text.to_string()));
+    }
 }
 
 fn broadcast_mesh_state(room: &Room, room_id: &str) {

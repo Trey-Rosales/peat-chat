@@ -1,4 +1,4 @@
-import { useState, useCallback, Component, type ReactNode } from 'react'
+import { useState, Component, type ReactNode } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
 
@@ -69,7 +69,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
     }
   }
 
-  const toggleMute = useCallback(() => {
+  const toggleMute = () => {
     const newMuted = !muted
     setMuted(newMuted)
     // Android native mute
@@ -78,7 +78,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
     }
     // Web client: mute/unmute the local audio track
     // (VoiceManager handles this through setMuted which controls track.enabled)
-  }, [muted])
+  }
 
   return (
     <div className="border-t border-pl-border bg-pl-header px-3 py-2 shrink-0">

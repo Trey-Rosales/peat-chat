@@ -148,6 +148,22 @@ describe('chatStore - mesh', () => {
     expect(useChatStore.getState().meshPeers['r1']).toHaveLength(1)
   })
 
+  it('merges BLE peers without duplicating relay entries', () => {
+    useChatStore.getState().setMeshPeers('r1', [
+      { id: 'relay-1', name: 'Relay', short_id: 'relay-1', transport: 'btle', latency_ms: 0, state: 'connected', connected_at: 1000 },
+      { id: 'mac-1', name: 'Mac', short_id: 'mac-1', transport: 'tcp', latency_ms: 10, state: 'connected', connected_at: 1000, connected_via: 'relay-1' },
+    ])
+
+    useChatStore.getState().mergeMeshPeers('r1', [
+      { id: 'relay-1', name: 'Relay', short_id: 'relay-1', transport: 'btle', latency_ms: 0, state: 'connected', connected_at: 1000 },
+    ])
+
+    const peers = useChatStore.getState().meshPeers['r1']
+    expect(peers).toHaveLength(2)
+    expect(peers.filter((p) => p.id === 'relay-1')).toHaveLength(1)
+    expect(peers.find((p) => p.id === 'mac-1')?.connected_via).toBe('relay-1')
+  })
+
   it('toggles mesh viewer', () => {
     expect(useChatStore.getState().meshViewerOpen).toBe(false)
     useChatStore.getState().toggleMeshViewer()

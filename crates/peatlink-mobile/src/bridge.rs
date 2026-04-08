@@ -34,6 +34,56 @@ fn filter_self_from_mesh(json: &str, self_node_id: &str) -> Option<String> {
     Some(serde_json::to_string(&envelope).ok()?)
 }
 
+fn rewrite_relayed_mesh_for_ble(
+    mut envelope: serde_json::Value,
+    source_peer_id: &str,
+    ble_peers: &BlePeerDirectory,
+) -> Option<String> {
+    let data = envelope.get_mut("data")?;
+    let peers = data.get_mut("peers")?.as_array_mut()?;
+    let (relay_id, relay_name) = ble_peers
+        .resolve_sender(source_peer_id)
+        .unwrap_or_else(|| (source_peer_id.to_string(), source_peer_id.to_string()));
+
+    if relay_id.is_empty() {
+        return serde_json::to_string(&envelope).ok();
+    }
+
+    let mut saw_relay = false;
+    for peer in peers.iter_mut() {
+        let peer_id = peer.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if peer_id == relay_id {
+            saw_relay = true;
+            if let Some(obj) = peer.as_object_mut() {
+                obj.remove("connected_via");
+                obj.insert(
+                    "transport".to_string(),
+                    serde_json::Value::String("btle".to_string()),
+                );
+            }
+            continue;
+        }
+
+        if peer.get("connected_via").is_none() {
+            peer["connected_via"] = serde_json::Value::String(relay_id.clone());
+        }
+    }
+
+    if !saw_relay {
+        peers.push(serde_json::json!({
+            "id": relay_id,
+            "name": relay_name,
+            "short_id": if relay_id.len() >= 12 { &relay_id[..12] } else { &relay_id[..] },
+            "transport": "btle",
+            "latency_ms": 0,
+            "state": "connected",
+            "connected_at": crate::ws_server::now_ms(),
+        }));
+    }
+
+    serde_json::to_string(&envelope).ok()
+}
+
 /// Fast content hash for dedup (not cryptographic, just loop prevention).
 fn fxhash(s: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
@@ -528,7 +578,6 @@ async fn handle_ble_ws_message(
         | "room_joined"
         | "room_history"
         | "peer_update"
-        | "mesh_state"
         | "message_edited"
         | "message_deleted"
         | "reaction_updated"
@@ -546,6 +595,12 @@ async fn handle_ble_ws_message(
         | "marker_created"
         | "marker_deleted" => {
             let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
+        }
+
+        "mesh_state" => {
+            let rewritten = rewrite_relayed_mesh_for_ble(envelope, source_peer_id, ble_peers)
+                .unwrap_or_else(|| json.to_string());
+            let _ = hub.downstream_tx.send(Arc::new(rewritten));
         }
 
         // CoT position from BLE peer — inject sender info from peer names
@@ -742,7 +797,22 @@ async fn broadcast_ble_mesh_state_from_map(
     let chat_id = crate::ws_server::chat_id_from_name(room_name);
     let room_id = crate::ws_server::chat_id_hex(&chat_id);
 
-    let ble_peers: Vec<serde_json::Value> = peers
+    let ble_peers_local: Vec<serde_json::Value> = peers
+        .iter()
+        .map(|(id, name)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "short_id": if id.len() >= 12 { &id[..12] } else { &id[..] },
+                "transport": "btle",
+                "latency_ms": 0,
+                "state": "connected",
+                "connected_at": crate::ws_server::now_ms(),
+            })
+        })
+        .collect();
+
+    let ble_peers_upstream: Vec<serde_json::Value> = peers
         .iter()
         .map(|(id, name)| {
             serde_json::json!({
@@ -758,16 +828,22 @@ async fn broadcast_ble_mesh_state_from_map(
         })
         .collect();
 
-    let msg = crate::ws_server::make_json(
+    let local_msg = crate::ws_server::make_json(
         "ble_mesh_state",
         &serde_json::json!({
             "room_id": room_id,
-            "peers": ble_peers,
+            "peers": ble_peers_local,
         }),
     );
-    let msg_arc = Arc::new(msg);
-    let _ = hub.downstream_tx.send(msg_arc.clone());
-    let _ = hub.passthrough_tx.send(msg_arc);
+    let upstream_msg = crate::ws_server::make_json(
+        "ble_mesh_state",
+        &serde_json::json!({
+            "room_id": room_id,
+            "peers": ble_peers_upstream,
+        }),
+    );
+    let _ = hub.downstream_tx.send(Arc::new(local_msg));
+    let _ = hub.passthrough_tx.send(Arc::new(upstream_msg));
 }
 
 /// Broadcast BLE peers as mesh_state with connected_via field (from peat-btle).

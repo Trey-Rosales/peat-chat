@@ -288,10 +288,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
   mergeMeshPeers: (roomId, blePeers) => {
     const meshPeers = { ...get().meshPeers }
-    // Keep existing non-BLE peers (no connected_via), replace BLE peers with fresh list
+    // Replace stale BTLE entries with the latest BLE snapshot while preserving
+    // relayed non-BTLE peers such as TCP clients hanging off a relay node.
     const existing = meshPeers[roomId] || []
-    const nonBle = existing.filter((p) => !p.connected_via)
-    meshPeers[roomId] = [...nonBle, ...blePeers]
+    const preserved = existing.filter((p) => p.transport !== 'btle')
+    meshPeers[roomId] = [...preserved, ...blePeers]
     set({ meshPeers })
   },
   toggleMeshViewer: () => {
