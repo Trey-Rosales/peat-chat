@@ -23,6 +23,7 @@ interface Props {
   onDisconnect: () => void
   onPTTStart: () => void
   onPTTEnd: () => void
+  onMuteToggle?: (muted: boolean) => void
 }
 
 const VOICE_MODES = ['ptt', 'noise_gate', 'auto'] as const
@@ -40,7 +41,7 @@ export function VoiceBar(props: Props) {
   )
 }
 
-function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
+function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle }: Props) {
   const activeVoice = useChatStore((s) => s.activeVoice)
   const rooms = useChatStore((s) => s.rooms)
   const voiceState = useChatStore((s) => s.voiceState)
@@ -76,8 +77,8 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
     if (window.PeatLinkVoice?.setMicMuted) {
       window.PeatLinkVoice.setMicMuted(newMuted)
     }
-    // Web client: mute/unmute the local audio track
-    // (VoiceManager handles this through setMuted which controls track.enabled)
+    // Web client: mute/unmute WebRTC audio via VoiceManager gain node
+    onMuteToggle?.(newMuted)
   }
 
   return (

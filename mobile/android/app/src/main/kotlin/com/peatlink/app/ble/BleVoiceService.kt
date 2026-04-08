@@ -33,7 +33,7 @@ class BleVoiceService {
         private const val FRAME_SIZE_MS = 20
         private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_SIZE_MS / 1000 // 160 samples
         private const val BITRATE = 8000
-        private const val FRAMES_PER_BATCH = 3
+        private const val FRAMES_PER_BATCH = 1
         private const val SILENCE_TIMEOUT_MS = 300L // stop sending after 300ms of silence
     }
 
@@ -104,12 +104,10 @@ class BleVoiceService {
 
     private fun initVad() {
         vad = try {
-            // Load VAD in a completely isolated way — catches NoClassDefFoundError,
-            // UnsatisfiedLinkError, and any other native library issues
-            val builder = Class.forName("com.konovalov.vad.Vad")
-                .getMethod("builder")
-                .invoke(null)
-            // If we got here, the library loaded. Use the builder API.
+            // Probe if the Vad native library loads successfully.
+            // Class.forName triggers static initialization which loads libvad_jni.so.
+            Class.forName("com.konovalov.vad.Vad")
+            // If we get here, the native library loaded successfully.
             Vad.builder()
                 .setModel(com.konovalov.vad.config.Model.WEB_RTC_GMM)
                 .setSampleRate(SampleRate.SAMPLE_RATE_8K)
@@ -502,11 +500,24 @@ class BleVoiceService {
 
     private fun startPlaybackLoop() {
         playbackJob = scope.launch {
+            val jitterMs = 60L
+            var lastFrameTime = 0L
+
             while (running) {
                 val frame = incomingFrames.poll()
                 if (frame != null) {
+                    val now = System.currentTimeMillis()
+                    if (lastFrameTime == 0L) {
+                        // First frame — wait for jitter buffer to fill
+                        delay(jitterMs)
+                    }
+                    lastFrameTime = now
                     playBatchPacket(frame)
                 } else {
+                    if (lastFrameTime > 0L && System.currentTimeMillis() - lastFrameTime > 500L) {
+                        // Extended silence — reset jitter state
+                        lastFrameTime = 0L
+                    }
                     delay(5)
                 }
             }
@@ -535,7 +546,8 @@ class BleVoiceService {
                     }
                 }
             } else {
-                track.write(opusFrame, 0, opusFrame.size)
+                // Opus decoder unavailable — cannot play locally, but still bridge
+                // raw frames for WebRTC decode on the other end
                 decodedPcmForBridge.add(opusFrame)
                 while (decodedPcmForBridge.size > MAX_BRIDGE_FRAMES) {
                     decodedPcmForBridge.poll()

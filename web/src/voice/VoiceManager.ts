@@ -338,6 +338,15 @@ export class VoiceManager {
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         this.detachRemoteBleRelay(peerId)
+        // Clear speaking indicator for this peer
+        if (this.send) {
+            this.send('voice_speaking', {
+                room_id: this.roomId,
+                channel_id: this.channelId,
+                peer_id: peerId,
+                speaking: false,
+            })
+        }
         this.peers.delete(peerId)
         const el = this.audioElements.get(peerId)
         if (el) {
@@ -405,7 +414,11 @@ export class VoiceManager {
       return
     }
 
-    await pc.addIceCandidate(ice)
+    try {
+      await pc.addIceCandidate(ice)
+    } catch (err) {
+      console.warn(`Failed to add ICE candidate from ${fromId}:`, err)
+    }
   }
 
   private async flushPendingIce(peerId: string, pc: RTCPeerConnection): Promise<void> {
@@ -413,7 +426,11 @@ export class VoiceManager {
     if (!queued || queued.length === 0) return
     this.pendingIce.delete(peerId)
     for (const ice of queued) {
-      await pc.addIceCandidate(ice)
+      try {
+        await pc.addIceCandidate(ice)
+      } catch (err) {
+        console.warn(`Failed to add queued ICE candidate for ${peerId}:`, err)
+      }
     }
   }
 
@@ -490,6 +507,7 @@ export class VoiceManager {
   }
 
   private _bleSpeakingState = false
+  private _loggedSampleRate = false
 
   private startBleBridge(): void {
     if (!window.PeatLinkVoice?.hasBleVoice?.()) return
@@ -566,6 +584,10 @@ export class VoiceManager {
 
     const sampleCount = Math.floor(pcmBytes.length / 2)
     const buffer = this.audioContext.createBuffer(1, sampleCount, BLE_SAMPLE_RATE)
+    if (!this._loggedSampleRate) {
+        console.info(`BLE→WebRTC relay: buffer=${BLE_SAMPLE_RATE}Hz, context=${this.audioContext.sampleRate}Hz`)
+        this._loggedSampleRate = true
+    }
     const channel = buffer.getChannelData(0)
     for (let i = 0; i < sampleCount; i++) {
       const lo = pcmBytes[i * 2]
@@ -622,6 +644,12 @@ export class VoiceManager {
           this.audioContext.sampleRate,
           chain
         )
+
+        // Cap pending samples to prevent memory leak (10 frames = 200ms @ 8kHz)
+        const maxPending = BLE_FRAME_SAMPLES * 10
+        if (chain.pendingSamples.length > maxPending) {
+            chain.pendingSamples.splice(0, chain.pendingSamples.length - BLE_FRAME_SAMPLES * 5)
+        }
 
         while (chain.pendingSamples.length >= BLE_FRAME_SAMPLES) {
           const frame = chain.pendingSamples.splice(0, BLE_FRAME_SAMPLES)

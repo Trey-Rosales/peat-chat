@@ -173,6 +173,7 @@ func (c *Client) readPump() {
 					continue
 				}
 				// sender_id not a registered BLE peer — fall through to relay's own identity
+				log.Printf("BLE peer %s not registered, using relay identity for message from %s", d.SenderID, d.SenderName)
 			}
 
 			c.mu.RLock()

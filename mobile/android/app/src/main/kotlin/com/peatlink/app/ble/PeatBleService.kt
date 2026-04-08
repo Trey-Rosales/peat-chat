@@ -46,8 +46,11 @@ class PeatBleService(
     private val pendingConnections = mutableSetOf<String>() // addresses we're trying to connect to
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var tickJob: Job? = null
+    private var audioJob: Job? = null
     private var running = false
     private var localAddress: String = ""
+    private val connectionLock = Object()
+    @Volatile var voiceActive: Boolean = false
 
     // Diagnostic status visible in the connection bar
     var status: String = "not started"
@@ -83,6 +86,7 @@ class PeatBleService(
         startAdvertising(problems)
         startScanning(problems)
         startTickLoop()
+        startAudioDrainLoop()
 
         status = if (problems.isEmpty()) "scanning + advertising"
                  else "partial: ${problems.joinToString(", ")}"
@@ -93,6 +97,9 @@ class PeatBleService(
         if (!running) return
         running = false
         tickJob?.cancel()
+        tickJob = null
+        audioJob?.cancel()
+        audioJob = null
         stopScanning()
         stopAdvertising()
         stopGattServer()
@@ -293,24 +300,26 @@ class PeatBleService(
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status_code: Int, newState: Int) {
             val address = device.address
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    // Don't register with peat-btle yet — wait until they write to our
-                    // sync characteristic (proves they're a Peat device, not a random BLE device)
-                    Log.i(TAG, "GATT server: incoming connection from $address (unverified)")
-                    gattServerDevices.add(address)
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "GATT server: disconnected from $address")
-                    gattServerDevices.remove(address)
-                    if (knownPeatDevices.remove(address)) {
-                        node.onBleDisconnected(address)
-                        connectedCount = knownPeatDevices.size
+            synchronized(connectionLock) {
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        Log.i(TAG, "GATT server: incoming connection from $address (unverified)")
+                        gattServerDevices.add(address)
                     }
-                    if (connectedCount == 0 && knownPeatDevices.isEmpty()) {
-                        this@PeatBleService.status = "scanning + advertising"
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        Log.i(TAG, "GATT server: disconnected from $address")
+                        gattServerDevices.remove(address)
+                        if (knownPeatDevices.remove(address)) {
+                            node.onBleDisconnected(address)
+                            connectedCount = knownPeatDevices.size
+                        }
+                        if (connectedCount == 0 && knownPeatDevices.isEmpty()) {
+                            this@PeatBleService.status = "scanning + advertising"
+                        }
                     }
+                    else -> {}
                 }
+                Unit
             }
         }
 
@@ -355,13 +364,24 @@ class PeatBleService(
                 }
 
                 totalReceived++
-                // Check if this is an audio frame (prefix 0xAA)
-                if (value.isNotEmpty() && value[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
-                    voiceService?.onAudioFrameReceived(value.copyOfRange(1, value.size))
-                } else {
-                    Log.d(TAG, "GATT server: received ${value.size} bytes from $address")
-                    node.onBleDataReceived(address, value.map { it.toUByte() }, now)
-                    node.pushBleRecvFrom(address, value.map { it.toUByte() })
+                // Reassemble chunked messages before processing
+                val data = reassembleOrPassthrough(address, value)
+                if (data != null) {
+                    // Check if this is an audio frame (prefix 0xAA)
+                    if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
+                        voiceService?.onAudioFrameReceived(data.copyOfRange(1, data.size))
+                    } else {
+                        val text = String(data, Charsets.UTF_8)
+                        if (text.startsWith("__ws:")) {
+                            // Bridge protocol — route to Rust bridge only
+                            Log.d(TAG, "GATT server: received bridge data (${data.size} bytes) from $address")
+                            node.pushBleRecvFrom(address, data.map { it.toUByte() })
+                        } else {
+                            // peat-btle sync document — route to mesh layer only
+                            Log.d(TAG, "GATT server: received mesh data (${data.size} bytes) from $address")
+                            node.onBleDataReceived(address, data.map { it.toUByte() }, now)
+                        }
+                    }
                 }
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
@@ -422,29 +442,33 @@ class PeatBleService(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status_code: Int, newState: Int) {
             val address = gatt.device.address
             val now = System.currentTimeMillis().toULong()
-            pendingConnections.remove(address)
+            synchronized(connectionLock) {
+                pendingConnections.remove(address)
 
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    // Don't mark as Peat peer yet — wait for service discovery to confirm
-                    Log.i(TAG, "GATT client: connected to $address (unverified, discovering services...)")
-                    node.onBleConnected(address, now)
-                    gatt.requestMtu(TARGET_MTU)
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "GATT client: disconnected from $address (status=$status_code)")
-                    if (knownPeatDevices.remove(address)) {
-                        node.onBleDisconnected(address)
-                        node.notifyBlePeerDisconnected(address)
-                        connectedCount = knownPeatDevices.size
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        // Don't mark as Peat peer yet — wait for service discovery to confirm
+                        Log.i(TAG, "GATT client: connected to $address (unverified, discovering services...)")
+                        node.onBleConnected(address, now)
+                        gatt.requestMtu(TARGET_MTU)
                     }
-                    connectedGattClients.remove(address)
-                    pendingConnections.remove(address)
-                    try { gatt.close() } catch (_: Throwable) {}
-                    if (connectedCount == 0) {
-                        this@PeatBleService.status = "scanning + advertising"
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        Log.i(TAG, "GATT client: disconnected from $address (status=$status_code)")
+                        if (knownPeatDevices.remove(address)) {
+                            node.onBleDisconnected(address)
+                            node.notifyBlePeerDisconnected(address)
+                            connectedCount = knownPeatDevices.size
+                        }
+                        connectedGattClients.remove(address)
+                        pendingConnections.remove(address)
+                        try { gatt.close() } catch (_: Throwable) {}
+                        if (connectedCount == 0) {
+                            this@PeatBleService.status = "scanning + advertising"
+                        }
                     }
+                    else -> {}
                 }
+                Unit
             }
         }
 
@@ -525,30 +549,44 @@ class PeatBleService(
             gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int
         ) {
             if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
-                val data = characteristic.value ?: return
+                val rawData = characteristic.value ?: return
+                val address = gatt.device.address
                 val now = System.currentTimeMillis().toULong()
                 totalReceived++
+                val data = reassembleOrPassthrough(address, rawData) ?: return
                 if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
                     voiceService?.onAudioFrameReceived(data.copyOfRange(1, data.size))
                 } else {
-                    Log.d(TAG, "GATT client: read ${data.size} bytes from ${gatt.device.address}")
-                    node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
-                    node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                    val text = String(data, Charsets.UTF_8)
+                    if (text.startsWith("__ws:")) {
+                        Log.d(TAG, "GATT client: read bridge data (${data.size} bytes) from $address")
+                        node.pushBleRecvFrom(address, data.map { it.toUByte() })
+                    } else {
+                        Log.d(TAG, "GATT client: read mesh data (${data.size} bytes) from $address")
+                        node.onBleDataReceived(address, data.map { it.toUByte() }, now)
+                    }
                 }
             }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             if (characteristic.uuid == PEAT_SYNC_CHAR_UUID) {
-                val data = characteristic.value ?: return
+                val rawData = characteristic.value ?: return
+                val address = gatt.device.address
                 val now = System.currentTimeMillis().toULong()
                 totalReceived++
+                val data = reassembleOrPassthrough(address, rawData) ?: return
                 if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
                     voiceService?.onAudioFrameReceived(data.copyOfRange(1, data.size))
                 } else {
-                    Log.d(TAG, "GATT client: notification ${data.size} bytes from ${gatt.device.address}")
-                    node.onBleDataReceived(gatt.device.address, data.map { it.toUByte() }, now)
-                    node.pushBleRecvFrom(gatt.device.address, data.map { it.toUByte() })
+                    val text = String(data, Charsets.UTF_8)
+                    if (text.startsWith("__ws:")) {
+                        Log.d(TAG, "GATT client: notification bridge data (${data.size} bytes) from $address")
+                        node.pushBleRecvFrom(address, data.map { it.toUByte() })
+                    } else {
+                        Log.d(TAG, "GATT client: notification mesh data (${data.size} bytes) from $address")
+                        node.onBleDataReceived(address, data.map { it.toUByte() }, now)
+                    }
                 }
             }
         }
@@ -563,9 +601,12 @@ class PeatBleService(
     var voiceService: BleVoiceService? = null
     private var negotiatedMtu = 23
 
-    // Write queue — only one GATT write at a time
-    private val writeQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
+    // Dual priority write queues — audio first, then data
+    private val audioWriteQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
+    private val dataWriteQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     @Volatile private var writeInFlight = false
+    private var nextChunkId: Byte = 0
+    private val chunkBuffers = java.util.concurrent.ConcurrentHashMap<Byte, Array<ByteArray?>>()
 
     // Sync progress tracking
     var pendingSendCount: Int = 0
@@ -580,6 +621,12 @@ class PeatBleService(
             while (isActive && running) {
                 try {
                     tickCount++
+
+                    // Clear stale pending connections — if a connection hasn't completed in 30s, abandon it
+                    if (pendingConnections.isNotEmpty()) {
+                        pendingConnections.clear()
+                        Log.w(TAG, "Cleared stale pending connections")
+                    }
 
                     // Also run peat-btle tick for mesh state management
                     val now = System.currentTimeMillis().toULong()
@@ -598,27 +645,35 @@ class PeatBleService(
                         sent++
                     }
 
-                    // Send queued audio frames (native path, no WebView)
-                    var audioSent = 0
-                    voiceService?.let { vs ->
-                        while (true) {
-                            val audioFrame = vs.outgoingAudioFrames.poll() ?: break
-                            // Prefix with 0xAA to distinguish audio from data
-                            val packet = ByteArray(1 + audioFrame.size)
-                            packet[0] = BleVoiceService.AUDIO_FRAME_PREFIX
-                            audioFrame.copyInto(packet, 1)
-                            broadcastToAllPeers(packet)
-                            audioSent++
-                        }
-                    }
-
-                    if (tickCount % 10 == 0 && (sent > 0 || audioSent > 0 || knownPeatDevices.isNotEmpty())) {
-                        Log.i(TAG, "Tick #$tickCount: data=$sent audio=$audioSent peers=${knownPeatDevices.size}")
+                    if (tickCount % 10 == 0 && (sent > 0 || knownPeatDevices.isNotEmpty())) {
+                        Log.i(TAG, "Tick #$tickCount: data=$sent peers=${knownPeatDevices.size}")
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Tick error: ${e.message}")
                 }
-                delay(TICK_INTERVAL_MS)
+                val interval = if (voiceActive) 10000L else TICK_INTERVAL_MS
+                delay(interval)
+            }
+        }
+    }
+
+    private fun startAudioDrainLoop() {
+        audioJob = scope.launch {
+            while (isActive && running) {
+                try {
+                    voiceService?.let { vs ->
+                        while (true) {
+                            val audioFrame = vs.outgoingAudioFrames.poll() ?: break
+                            val packet = ByteArray(1 + audioFrame.size)
+                            packet[0] = BleVoiceService.AUDIO_FRAME_PREFIX
+                            audioFrame.copyInto(packet, 1)
+                            broadcastToAllPeers(packet)
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Audio drain error: ${e.message}")
+                }
+                delay(20) // 20ms — matches Opus frame duration
             }
         }
     }
@@ -628,41 +683,77 @@ class PeatBleService(
      * Messages larger than MTU are split into chunks with reassembly headers.
      *
      * Chunk header (4 bytes): [type, msgId, seqNum, totalChunks]
-     * type: 0x00 = single (no chunking), 0x01 = chunked
-     */
-    /**
-     * Queue data for broadcast to all BLE peers.
-     * Data must fit in a single GATT write (MTU - 3 bytes).
-     * Large messages should be split at the bridge level, not here.
+     * type: 0x01 = chunked
+     *
+     * Audio frames that exceed MTU are dropped (should never happen with Opus).
+     * Data messages are fragmented transparently.
      */
     private fun broadcastToAllPeers(data: ByteArray) {
         val maxWrite = negotiatedMtu - 3
-        if (data.size > maxWrite) {
-            Log.w(TAG, "Data too large for single GATT write: ${data.size} > $maxWrite, dropping")
+        if (data.size <= maxWrite) {
+            // Fits in single write
+            enqueueForSend(data)
             return
         }
-        writeQueue.add(data)
-        pendingSendCount = writeQueue.size
+        // Audio frames should never need fragmentation — log and drop if they do
+        if (data.isNotEmpty() && data[0] == BleVoiceService.AUDIO_FRAME_PREFIX) {
+            Log.w(TAG, "Audio frame too large: ${data.size} > $maxWrite, dropping")
+            return
+        }
+        // Fragment large data messages
+        val chunkPayloadSize = maxWrite - 4  // 4-byte chunk header
+        val chunkId = nextChunkId++
+        val totalChunks = ((data.size + chunkPayloadSize - 1) / chunkPayloadSize).coerceAtMost(255)
+        for (seq in 0 until totalChunks) {
+            val offset = seq * chunkPayloadSize
+            val end = (offset + chunkPayloadSize).coerceAtMost(data.size)
+            val chunkData = data.copyOfRange(offset, end)
+            val packet = ByteArray(4 + chunkData.size)
+            packet[0] = 0x01  // chunked
+            packet[1] = chunkId
+            packet[2] = seq.toByte()
+            packet[3] = totalChunks.toByte()
+            chunkData.copyInto(packet, 4)
+            enqueueForSend(packet)
+        }
+    }
+
+    private fun enqueueForSend(packet: ByteArray) {
+        val isAudio = packet.isNotEmpty() && packet[0] == BleVoiceService.AUDIO_FRAME_PREFIX
+        if (isAudio) {
+            while (audioWriteQueue.size > 20) audioWriteQueue.poll()
+            audioWriteQueue.add(packet)
+        } else {
+            while (dataWriteQueue.size > 100) dataWriteQueue.poll()
+            dataWriteQueue.add(packet)
+        }
+        pendingSendCount = audioWriteQueue.size + dataWriteQueue.size
         drainWriteQueue()
     }
 
     /**
      * Send ONE packet from the queue. Called after each successful write callback.
+     * Audio packets are dequeued first (priority), then data packets.
      */
     private fun drainWriteQueue() {
         if (writeInFlight) return
-        val packet = writeQueue.poll() ?: return
+        val packet = audioWriteQueue.poll() ?: dataWriteQueue.poll() ?: return
         writeInFlight = true
-        pendingSendCount = writeQueue.size
+        pendingSendCount = audioWriteQueue.size + dataWriteQueue.size
         totalSent++
 
-        // Write to GATT client connections (with response for reliability)
+        val isAudio = packet.isNotEmpty() && packet[0] == BleVoiceService.AUDIO_FRAME_PREFIX
+
+        // Write to GATT client connections
         for ((address, gatt) in connectedGattClients.toMap()) {
             try {
                 val service = gatt.getService(PEAT_SERVICE_UUID) ?: continue
                 val char = service.getCharacteristic(PEAT_SYNC_CHAR_UUID) ?: continue
                 char.value = packet
-                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                char.writeType = if (isAudio)
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                else
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 gatt.writeCharacteristic(char)
             } catch (e: Throwable) {
                 Log.w(TAG, "Write failed to $address: ${e.message}")
@@ -692,6 +783,38 @@ class PeatBleService(
             writeInFlight = false
             drainWriteQueue()
         }
+    }
+
+    /**
+     * Reassemble chunked messages or pass through single-write messages.
+     * Returns the complete message when all chunks are received, or null if waiting.
+     */
+    private fun reassembleOrPassthrough(address: String, value: ByteArray): ByteArray? {
+        if (value.size < 4 || value[0] != 0x01.toByte()) {
+            return value  // not chunked, pass through as-is
+        }
+        val chunkId = value[1]
+        val seqNum = value[2].toInt() and 0xFF
+        val totalChunks = value[3].toInt() and 0xFF
+        if (totalChunks == 0 || seqNum >= totalChunks) return null
+
+        val chunks = chunkBuffers.getOrPut(chunkId) { arrayOfNulls(totalChunks) }
+        if (seqNum < chunks.size) {
+            chunks[seqNum] = value.copyOfRange(4, value.size)
+        }
+        // Check if all chunks received
+        if (chunks.all { it != null }) {
+            chunkBuffers.remove(chunkId)
+            val total = chunks.sumOf { it!!.size }
+            val assembled = ByteArray(total)
+            var offset = 0
+            for (chunk in chunks) {
+                chunk!!.copyInto(assembled, offset)
+                offset += chunk.size
+            }
+            return assembled
+        }
+        return null  // waiting for more chunks
     }
 
 }

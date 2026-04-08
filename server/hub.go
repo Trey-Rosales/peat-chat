@@ -53,13 +53,39 @@ func (h *Hub) Run() {
 			// Remove from all rooms BEFORE closing send channel
 			// to prevent broadcast goroutines from sending on a closed channel
 			h.removeFromAllRooms(client)
+
+			// Clean up BLE peers registered through this relay
 			h.mu.Lock()
+			var staleBleIDs []string
+			for id, bp := range h.blePeers {
+				if bp.Relay == client {
+					staleBleIDs = append(staleBleIDs, id)
+					delete(h.blePeers, id)
+				}
+			}
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				delete(h.clientsByID, client.identity.ID)
 				close(client.send)
 			}
 			h.mu.Unlock()
+
+			if len(staleBleIDs) > 0 {
+				log.Printf("cleaned up %d BLE peer(s) for disconnected relay %s: %v",
+					len(staleBleIDs), client.identity.ID, staleBleIDs)
+				// Remove BLE peers from voice channels in every room the relay was in
+				h.mu.RLock()
+				rooms := make([]*Room, 0, len(h.rooms))
+				for _, room := range h.rooms {
+					rooms = append(rooms, room)
+				}
+				h.mu.RUnlock()
+				for _, room := range rooms {
+					if leftChannels := room.LeaveAllBleVoiceChannels(staleBleIDs); len(leftChannels) > 0 {
+						h.broadcastVoiceState(room)
+					}
+				}
+			}
 
 		case <-meshTicker.C:
 			h.mu.RLock()
@@ -267,6 +293,9 @@ func (h *Hub) broadcastMeshStateLocked(room *Room) {
 func (h *Hub) getBlePeerMeshData() []MeshPeerData {
 	var peers []MeshPeerData
 	for _, bp := range h.blePeers {
+		if bp.Relay == nil {
+			continue // stale entry — skip
+		}
 		peers = append(peers, MeshPeerData{
 			ID:           bp.PeerID,
 			Name:         bp.PeerName,

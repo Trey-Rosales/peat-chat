@@ -88,6 +88,10 @@ export default function App() {
     useChatStore.getState().clearActiveVoice()
   }, [])
 
+  const handleMuteToggle = useCallback((muted: boolean) => {
+    voiceManagerRef.current?.setMuted(muted)
+  }, [])
+
   const handlePTTStart = () => {
     try {
       const activeVoice = useChatStore.getState().activeVoice
@@ -195,6 +199,7 @@ export default function App() {
             onLeaveVoice={leaveVoice}
             onPTTStart={handlePTTStart}
             onPTTEnd={handlePTTEnd}
+            onMuteToggle={handleMuteToggle}
             send={send}
           />
         </div>

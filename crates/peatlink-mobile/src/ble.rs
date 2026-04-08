@@ -80,7 +80,7 @@ pub struct BleMeshConfig {
 pub struct BleManager {
     mesh: RwLock<Option<PeatMesh>>,
     running: RwLock<bool>,
-    event_tx: mpsc::UnboundedSender<BlePeerEvent>,
+    event_tx: RwLock<mpsc::UnboundedSender<BlePeerEvent>>,
 }
 
 impl BleManager {
@@ -88,8 +88,15 @@ impl BleManager {
         Self {
             mesh: RwLock::new(None),
             running: RwLock::new(false),
-            event_tx,
+            event_tx: RwLock::new(event_tx),
         }
+    }
+
+    /// Replace the event sender so that a new bridge session receives events.
+    /// Must be called *before* `start()` so the ChatObserver captures the new
+    /// sender.
+    pub async fn replace_event_tx(&self, tx: mpsc::UnboundedSender<BlePeerEvent>) {
+        *self.event_tx.write().await = tx;
     }
 
     pub async fn start(&self, config: BleMeshConfig) -> Result<(), PeatLinkError> {
@@ -118,7 +125,7 @@ impl BleManager {
 
         // Register observer for peer events
         let observer = Arc::new(ChatObserver {
-            event_tx: self.event_tx.clone(),
+            event_tx: self.event_tx.read().await.clone(),
         });
         mesh.add_observer(observer);
 

@@ -58,14 +58,16 @@ pub struct MobileNode {
     seen_ids: upstream_relay::SeenIds,
 
     /// Outgoing voice frames (Kotlin → bridge → BLE)
-    voice_outgoing_tx: tokio::sync::mpsc::UnboundedSender<VoiceFrame>,
+    /// Sender is behind RwLock so it can be swapped when the bridge restarts.
+    voice_outgoing_tx: RwLock<tokio::sync::mpsc::UnboundedSender<VoiceFrame>>,
     voice_outgoing_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>>,
     /// Incoming voice frames (BLE → bridge → Kotlin)
     voice_incoming_tx: tokio::sync::mpsc::UnboundedSender<VoiceFrame>,
     voice_incoming_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<VoiceFrame>>,
 
     /// Direct BLE data transport (bypasses peat-btle)
-    ble_recv_tx: tokio::sync::mpsc::UnboundedSender<BleInboundPacket>,
+    /// Sender is behind RwLock so it can be swapped when the bridge restarts.
+    ble_recv_tx: RwLock<tokio::sync::mpsc::UnboundedSender<BleInboundPacket>>,
     ble_recv_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<BleInboundPacket>>>,
     ble_send_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ble_send_rx: RwLock<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
@@ -75,7 +77,7 @@ pub struct MobileNode {
     #[cfg(feature = "bluetooth")]
     ble_event_rx: RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<ble::BlePeerEvent>>>,
     #[cfg(feature = "bluetooth")]
-    ble_peer_event_tx: tokio::sync::mpsc::UnboundedSender<ble::BlePeerEvent>,
+    ble_peer_event_tx: RwLock<tokio::sync::mpsc::UnboundedSender<ble::BlePeerEvent>>,
     #[cfg(feature = "bluetooth")]
     bridge_handle: RwLock<Option<bridge::BridgeHandle>>,
 }
@@ -129,18 +131,18 @@ impl MobileNode {
             hub: RwLock::new(None),
             upstream_handle: RwLock::new(None),
             seen_ids: upstream_relay::new_seen_ids(),
-            voice_outgoing_tx,
+            voice_outgoing_tx: RwLock::new(voice_outgoing_tx),
             voice_outgoing_rx: RwLock::new(Some(voice_outgoing_rx)),
             voice_incoming_tx,
             voice_incoming_rx: RwLock::new(voice_incoming_rx),
-            ble_recv_tx,
+            ble_recv_tx: RwLock::new(ble_recv_tx),
             ble_recv_rx: RwLock::new(Some(ble_recv_rx)),
             ble_send_tx,
             ble_send_rx: RwLock::new(ble_send_rx),
             #[cfg(feature = "bluetooth")]
             ble_manager,
             #[cfg(feature = "bluetooth")]
-            ble_peer_event_tx,
+            ble_peer_event_tx: RwLock::new(ble_peer_event_tx),
             #[cfg(feature = "bluetooth")]
             bridge_handle: RwLock::new(None),
             #[cfg(feature = "bluetooth")]
@@ -328,36 +330,52 @@ impl MobileNode {
                 callsign,
                 shared_secret,
             };
+
+            // Fresh channels are created each time so that a stop/start cycle
+            // does not orphan receivers.  The stored senders are swapped so
+            // that FFI callers (push_ble_recv_from, send_voice_frame, etc.)
+            // always feed into the *current* bridge session.
+            //
+            // The ble_event sender must be replaced *before* ble_manager.start()
+            // so the ChatObserver it registers captures the new sender.
+            let (ble_event_tx, ble_event_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (voice_tx, voice_outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (ble_recv_tx, ble_recv_rx) = tokio::sync::mpsc::unbounded_channel();
+
+            self.runtime.block_on(async {
+                // Swap senders so FFI callers feed the new channels.
+                self.ble_manager.replace_event_tx(ble_event_tx.clone()).await;
+                *self.ble_peer_event_tx.write().await = ble_event_tx;
+                *self.voice_outgoing_tx.write().await = voice_tx;
+                *self.ble_recv_tx.write().await = ble_recv_tx;
+                // Drop stale receivers from a previous session (if any).
+                let _ = self.ble_event_rx.write().await.take();
+                let _ = self.voice_outgoing_rx.write().await.take();
+                let _ = self.ble_recv_rx.write().await.take();
+            });
+
+            // Start the mesh.  ChatObserver inside captures the fresh event_tx.
             self.runtime.block_on(self.ble_manager.start(config))?;
 
-            // Start the BLE ↔ WS bridge if the Hub is available
+            // Start the BLE ↔ WS bridge if the Hub is available.
             self.runtime.block_on(async {
                 if let Some(hub) = self.hub.read().await.clone() {
-                    if let Some(event_rx) = self.ble_event_rx.write().await.take() {
-                        let node_id = self.identity.read().await.clone();
-                        let voice_rx = self.voice_outgoing_rx.write().await.take();
-                        let ble_recv_rx = self
-                            .ble_recv_rx
-                            .write()
-                            .await
-                            .take()
-                            .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1);
-                        let handle = bridge::start_bridge(
-                            hub,
-                            self.ble_manager.clone(),
-                            event_rx,
-                            "general".to_string(),
-                            self.seen_ids.clone(),
-                            node_id,
-                            voice_rx.unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1),
-                            self.voice_incoming_tx.clone(),
-                            ble_recv_rx,
-                            self.ble_send_tx.clone(),
-                        )
-                        .await;
-                        *self.bridge_handle.write().await = Some(handle);
-                        tracing::info!("BLE↔WS bridge started");
-                    }
+                    let node_id = self.identity.read().await.clone();
+                    let handle = bridge::start_bridge(
+                        hub,
+                        self.ble_manager.clone(),
+                        ble_event_rx,
+                        "general".to_string(),
+                        self.seen_ids.clone(),
+                        node_id,
+                        voice_outgoing_rx,
+                        self.voice_incoming_tx.clone(),
+                        ble_recv_rx,
+                        self.ble_send_tx.clone(),
+                    )
+                    .await;
+                    *self.bridge_handle.write().await = Some(handle);
+                    tracing::info!("BLE↔WS bridge started");
                 }
             });
 
@@ -509,14 +527,16 @@ impl MobileNode {
             sender_name,
             timestamp: ws_server::now_ms(),
         };
-        let _ = self.voice_outgoing_tx.send(frame);
+        let rt = self.runtime.clone();
+        let _ = rt.block_on(self.voice_outgoing_tx.read()).send(frame);
     }
 
     // --- Direct BLE data transport ---
 
     /// Push data received from a BLE GATT peer (called by Kotlin).
     pub fn push_ble_recv_from(&self, peer_id: String, data: Vec<u8>) {
-        let _ = self.ble_recv_tx.send(BleInboundPacket { peer_id, data });
+        let rt = self.runtime.clone();
+        let _ = rt.block_on(self.ble_recv_tx.read()).send(BleInboundPacket { peer_id, data });
     }
 
     /// Backward-compatible helper for callers that don't know the source peer.
@@ -536,8 +556,9 @@ impl MobileNode {
                 last_seen_ms: 0,
                 transport: "btle".to_string(),
             };
-            let _ = self
-                .ble_peer_event_tx
+            let rt = self.runtime.clone();
+            let _ = rt
+                .block_on(self.ble_peer_event_tx.read())
                 .send(ble::BlePeerEvent::PeerConnected(info));
         }
     }
@@ -554,8 +575,9 @@ impl MobileNode {
                 last_seen_ms: 0,
                 transport: "btle".to_string(),
             };
-            let _ = self
-                .ble_peer_event_tx
+            let rt = self.runtime.clone();
+            let _ = rt
+                .block_on(self.ble_peer_event_tx.read())
                 .send(ble::BlePeerEvent::PeerDisconnected(info));
         }
     }

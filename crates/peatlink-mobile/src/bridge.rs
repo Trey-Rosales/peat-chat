@@ -274,6 +274,9 @@ async fn bridge_loop(
     // Track BLE peers locally (since peat-btle's peer list may be empty)
     let mut ble_peers = BlePeerDirectory::default();
 
+    // Voice-aware mesh sync rate-limiting (Serval Rhizome-inspired backoff)
+    let mut last_voice_activity = std::time::Instant::now() - Duration::from_secs(60);
+
     tracing::info!("BLE↔WS bridge started for room '{}'", room_name);
 
     loop {
@@ -393,6 +396,7 @@ async fn bridge_loop(
 
             // === Voice: outgoing audio frames → BLE ===
             Some(frame) = voice_outgoing_rx.recv() => {
+                last_voice_activity = std::time::Instant::now();
                 let voice_json = serde_json::json!({
                     "type": "voice_audio",
                     "data": {
@@ -408,6 +412,10 @@ async fn bridge_loop(
 
             // === Periodic BLE peer state → mesh_state ===
             _ = peer_interval.tick() => {
+                // Skip mesh broadcast if voice was active in the last 2 seconds (Serval-inspired backoff)
+                if last_voice_activity.elapsed() < Duration::from_secs(2) {
+                    continue;
+                }
                 if !ble_peers.names_by_id.is_empty() {
                     broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peers.names_by_id, &self_node_id).await;
                 }
@@ -488,6 +496,7 @@ async fn handle_ble_ws_message(
                                     "room_id": room_id,
                                     "content": chat_msg.content,
                                     "message_id": chat_msg.id,
+                                    "sender_id": chat_msg.sender,
                                     "sender_name": chat_msg.sender_name,
                                 }),
                             );
@@ -601,6 +610,8 @@ async fn handle_ble_ws_message(
             let rewritten = rewrite_relayed_mesh_for_ble(envelope, source_peer_id, ble_peers)
                 .unwrap_or_else(|| json.to_string());
             let _ = hub.downstream_tx.send(Arc::new(rewritten));
+            // Also forward original to upstream so Go server sees BLE peer mesh view
+            let _ = hub.passthrough_tx.send(Arc::new(json.to_string()));
         }
 
         // CoT position from BLE peer — inject sender info from peer names
@@ -678,9 +689,11 @@ async fn forward_ws_to_ble(
     // Skip types that shouldn't be forwarded to BLE peers
     match msg_type {
         "identity" | "name_assigned" | "ble_mesh_state"
-        // Voice signaling uses WebRTC which BLE peers can't use — skip entirely
-        // to prevent cascading failures and crashes
-        | "voice_offer_relay" | "voice_answer_relay" | "voice_ice_relay" => return,
+        | "voice_offer_relay" | "voice_answer_relay" | "voice_ice_relay"
+        // Voice control actions rebroadcast by rebroadcast_ble_control() —
+        // these are user-initiated actions, not server events, and
+        // voice_speaking is too chatty for BLE GATT bandwidth
+        | "join_voice" | "leave_voice" | "voice_speaking" | "create_voice_channel" => return,
         _ => {}
     }
 

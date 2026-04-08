@@ -109,11 +109,17 @@ export function useWebSocket(
           }
           break
         case 'room_history':
-          if (typeof (data as any).room_id !== 'string') break
+          if (typeof (data as any).room_id !== 'string') {
+            console.warn('Dropped malformed room_history:', JSON.stringify(data).slice(0, 200))
+            break
+          }
           state.setRoomHistory((data as any).room_id, Array.isArray((data as any).messages) ? (data as any).messages : [])
           break
         case 'message':
-          if (typeof (data as any).room_id !== 'string' || !(data as any).message || typeof (data as any).message !== 'object') break
+          if (typeof (data as any).room_id !== 'string' || !(data as any).message || typeof (data as any).message !== 'object') {
+            console.warn('Dropped malformed message:', JSON.stringify(data).slice(0, 200))
+            break
+          }
           state.addMessage((data as any).room_id, (data as any).message)
           break
         case 'peer_update':
@@ -196,7 +202,7 @@ export function useWebSocket(
           state.addVoicePeer((data as any).room_id, (data as any).channel_id, {
             id: (data as any).peer_id,
             name: typeof (data as any).name === 'string' ? (data as any).name : '',
-            short_id: '',
+            short_id: typeof (data as any).short_id === 'string' ? (data as any).short_id : '',
             speaking: false,
           })
           try { signalingRef?.current?.handlePeerJoined((data as any).peer_id, typeof (data as any).name === 'string' ? (data as any).name : undefined) } catch {}

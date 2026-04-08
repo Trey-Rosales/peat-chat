@@ -201,20 +201,40 @@ async fn run_relay(
             }
 
             // Relay channel: chat messages from local WS server and BLE bridge
-            Ok(relay_msg) = relay_rx.recv() => {
-                if let Some(fwd) = filter_for_upstream(
-                    &relay_msg, seen_ids, &upstream_self_id, hub
-                ).await {
-                    if ws_tx.send(Message::Text(fwd)).await.is_err() {
+            result = relay_rx.recv() => {
+                match result {
+                    Ok(relay_msg) => {
+                        if let Some(fwd) = filter_for_upstream(
+                            &relay_msg, seen_ids, &upstream_self_id, hub
+                        ).await {
+                            if ws_tx.send(Message::Text(fwd)).await.is_err() {
+                                return RelayResult::Disconnected;
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("relay_rx lagged, dropped {} messages", n);
+                    }
+                    Err(_) => {
                         return RelayResult::Disconnected;
                     }
                 }
             }
 
             // Passthrough: non-chat actions → forward as-is
-            Ok(passthrough) = passthrough_rx.recv() => {
-                if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
-                    return RelayResult::Disconnected;
+            result = passthrough_rx.recv() => {
+                match result {
+                    Ok(passthrough) => {
+                        if ws_tx.send(Message::Text((*passthrough).clone())).await.is_err() {
+                            return RelayResult::Disconnected;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("passthrough_rx lagged, dropped {} messages", n);
+                    }
+                    Err(_) => {
+                        return RelayResult::Disconnected;
+                    }
                 }
             }
 

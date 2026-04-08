@@ -12,10 +12,11 @@ interface Props {
   onLeaveVoice: () => void
   onPTTStart: () => void
   onPTTEnd: () => void
+  onMuteToggle?: (muted: boolean) => void
   send: (type: string, data: any) => void
 }
 
-export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, onPTTStart, onPTTEnd, send }: Props) {
+export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, onPTTStart, onPTTEnd, onMuteToggle, send }: Props) {
   const displayName = useChatStore((s) => s.displayName)
   const shortId = useChatStore((s) => s.shortId)
   const connected = useChatStore((s) => s.connected)
@@ -211,7 +212,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
       )}
 
       {/* Voice bar */}
-      <VoiceBar onDisconnect={onLeaveVoice} onPTTStart={onPTTStart} onPTTEnd={onPTTEnd} />
+      <VoiceBar onDisconnect={onLeaveVoice} onPTTStart={onPTTStart} onPTTEnd={onPTTEnd} onMuteToggle={onMuteToggle} />
     </div>
   )
 }

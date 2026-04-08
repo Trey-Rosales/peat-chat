@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -274,6 +275,7 @@ func (r *Room) Broadcast(data []byte, exclude *Client) {
 			case c.send <- data:
 			default:
 				// drop if buffer full
+				log.Printf("WARNING: dropped message for client %s (send buffer full)", c.identity.ShortID)
 			}
 		}
 	}
@@ -428,6 +430,43 @@ func (r *Room) LeaveAllVoiceChannels(client *Client) []string {
 		if vc.Members[client] {
 			delete(vc.Members, client)
 			delete(vc.Speaking, client)
+			leftIDs = append(leftIDs, vc.ID)
+		}
+		vc.mu.Unlock()
+	}
+	return leftIDs
+}
+
+// LeaveAllBleVoiceChannels removes all BLE peers with matching peerIDs from every
+// voice channel in this room. Returns the channel IDs any of them were in.
+func (r *Room) LeaveAllBleVoiceChannels(peerIDs []string) []string {
+	if len(peerIDs) == 0 {
+		return nil
+	}
+	r.mu.RLock()
+	channels := make([]*VoiceChannel, 0, len(r.VoiceChannels))
+	for _, vc := range r.VoiceChannels {
+		channels = append(channels, vc)
+	}
+	r.mu.RUnlock()
+
+	idSet := make(map[string]bool, len(peerIDs))
+	for _, id := range peerIDs {
+		idSet[id] = true
+	}
+
+	var leftIDs []string
+	for _, vc := range channels {
+		vc.mu.Lock()
+		removed := false
+		for id := range idSet {
+			if _, ok := vc.BleMembers[id]; ok {
+				delete(vc.BleMembers, id)
+				delete(vc.BleSpeaking, id)
+				removed = true
+			}
+		}
+		if removed {
 			leftIDs = append(leftIDs, vc.ID)
 		}
 		vc.mu.Unlock()
