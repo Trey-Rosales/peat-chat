@@ -665,8 +665,7 @@ async fn handle_ble_ws_message(
             }
             let cot_json = serde_json::to_string(&cot).unwrap_or_default();
 
-            // Store position in local room and broadcast cot_state so relay WebView
-            // shows the BLE peer's GPS position
+            // Store as normalized CotContact format and broadcast cot_state
             let chat_id = crate::ws_server::chat_id_from_name(room_name);
             let rid = crate::ws_server::chat_id_hex(&chat_id);
             let rooms = hub.rooms.read().await;
@@ -674,7 +673,22 @@ async fn handle_ble_ws_message(
                 let mut room = room_arc.write().await;
                 if let Some(data) = cot.get("data") {
                     let sid = data.get("sender_id").and_then(|v| v.as_str()).unwrap_or(source_peer_id);
-                    room.cot_positions.insert(sid.to_string(), data.clone());
+                    let sname = data.get("sender_name").and_then(|v| v.as_str()).unwrap_or("");
+                    let now = crate::ws_server::now_ms();
+                    // Normalize to CotContact format matching Go server output
+                    let contact = serde_json::json!({
+                        "uid": sid,
+                        "callsign": sname,
+                        "short_id": if sid.len() >= 12 { &sid[..12] } else { sid },
+                        "cot_type": data.get("cot_type").and_then(|v| v.as_str()).unwrap_or("a-f-G-U-C"),
+                        "lat": data.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        "lon": data.get("lon").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        "hae": data.get("hae").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        "ce": data.get("ce").and_then(|v| v.as_f64()).unwrap_or(9999999.0),
+                        "time": now,
+                        "stale": now + 30000,
+                    });
+                    room.cot_positions.insert(sid.to_string(), contact);
                 }
                 // Broadcast full cot_state to local clients
                 let contacts: Vec<serde_json::Value> = room.cot_positions.values().cloned().collect();

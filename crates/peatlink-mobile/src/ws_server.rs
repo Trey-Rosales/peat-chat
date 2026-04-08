@@ -737,16 +737,27 @@ async fn handle_message(
             let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
             let sender_id = env.data.get("sender_id").and_then(|v| v.as_str())
                 .unwrap_or(&session.identity).to_string();
+            let sender_name = env.data.get("sender_name").and_then(|v| v.as_str())
+                .unwrap_or(&session.name).to_string();
 
             if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
                 let mut room = room_arc.write().await;
-                // Store position
-                let mut pos_data = env.data.clone();
-                if !pos_data.get("sender_id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
-                    pos_data["sender_id"] = serde_json::Value::String(session.identity.clone());
-                    pos_data["sender_name"] = serde_json::Value::String(session.name.clone());
-                }
-                room.cot_positions.insert(sender_id, pos_data);
+                let now = now_ms();
+                // Store as normalized CotContact format (matching Go server's output)
+                // so cot_state broadcasts are consistent regardless of source.
+                let contact = serde_json::json!({
+                    "uid": sender_id,
+                    "callsign": sender_name,
+                    "short_id": if sender_id.len() >= 12 { &sender_id[..12] } else { sender_id.as_str() },
+                    "cot_type": env.data.get("cot_type").and_then(|v| v.as_str()).unwrap_or("a-f-G-U-C"),
+                    "lat": env.data.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    "lon": env.data.get("lon").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    "hae": env.data.get("hae").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    "ce": env.data.get("ce").and_then(|v| v.as_f64()).unwrap_or(9999999.0),
+                    "time": now,
+                    "stale": now + 30000,
+                });
+                room.cot_positions.insert(sender_id, contact);
 
                 // Broadcast cot_state to room
                 let contacts: Vec<serde_json::Value> = room.cot_positions.values().cloned().collect();
