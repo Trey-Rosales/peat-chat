@@ -3,15 +3,15 @@ import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
 
 // Error boundary to prevent voice UI crashes from blanking the entire app
-class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false }
-  static getDerivedStateFromError() { return { hasError: true } }
+class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string }> {
+  state = { hasError: false, errorMsg: '' }
+  static getDerivedStateFromError(err: Error) { return { hasError: true, errorMsg: err?.message || 'Unknown' } }
   componentDidCatch(err: Error) { console.warn('VoiceBar crashed:', err) }
   render() {
     if (this.state.hasError) {
       return (
         <div className="border-t border-pl-border bg-pl-header px-3 py-2 text-xs text-red-400">
-          Voice UI error — <button onClick={() => this.setState({ hasError: false })} className="underline">retry</button>
+          Voice: {this.state.errorMsg} — <button onClick={() => this.setState({ hasError: false, errorMsg: '' })} className="underline">retry</button>
         </div>
       )
     }
@@ -57,7 +57,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   const channels = voiceState[activeVoice.roomId] || []
   const channel = channels.find((c) => c.id === activeVoice.channelId)
 
-  const keyLabel = pttKey === ' ' ? 'Space' : pttKey.length === 1 ? pttKey.toUpperCase() : pttKey
+  const keyLabel = !pttKey ? 'Space' : pttKey === ' ' ? 'Space' : pttKey.length === 1 ? pttKey.toUpperCase() : pttKey
 
   const cycleMode = () => {
     const idx = VOICE_MODES.indexOf(voiceMode as any)
