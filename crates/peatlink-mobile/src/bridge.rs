@@ -357,11 +357,17 @@ async fn bridge_loop(
 
                         // Send our callsign to the BLE peer so they know who we are
                         let our_name = hub.default_display_name.read().await.clone();
+                        let display = if our_name.is_empty() {
+                            // Fallback: use short node_id if callsign not set yet
+                            format!("node-{}", &self_node_id[..self_node_id.len().min(8)])
+                        } else {
+                            our_name
+                        };
                         let hello = serde_json::json!({
                             "type": "ble_hello",
                             "data": {
                                 "node_id": self_node_id,
-                                "callsign": our_name,
+                                "callsign": display,
                             }
                         });
                         let payload = format!("{}{}", WS_PREFIX, hello);
@@ -539,7 +545,12 @@ async fn handle_ble_ws_message(
                     .unwrap_or("")
                     .to_string();
 
-                if !node_id.is_empty() && !callsign.is_empty() {
+                if !node_id.is_empty() {
+                    let callsign = if callsign.is_empty() {
+                        format!("node-{}", &node_id[..node_id.len().min(8)])
+                    } else {
+                        callsign
+                    };
                     tracing::info!(
                         "BLE hello from {} ({})",
                         callsign,
