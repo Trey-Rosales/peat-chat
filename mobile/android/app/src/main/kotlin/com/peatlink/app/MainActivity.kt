@@ -3,11 +3,15 @@ package com.peatlink.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Base64
 import android.util.Log
 import android.view.Gravity
@@ -75,6 +79,20 @@ class MainActivity : AppCompatActivity() {
     private var wifiDirectService: PeatWifiDirectService? = null
     private var serverStarted = false
     private var connStatusJob: Job? = null
+
+    // Foreground service for background mesh
+    private var meshService: PeatMeshService? = null
+    private var serviceBound = false
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            meshService = (binder as PeatMeshService.LocalBinder).service
+            serviceBound = true
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            meshService = null
+            serviceBound = false
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -268,6 +286,19 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }, "PeatLinkVoice")
+
+            // JavaScript bridge for background mesh / settings
+            addJavascriptInterface(object {
+                @JavascriptInterface
+                fun setBackgroundMode(enabled: Boolean) {
+                    runOnUiThread { this@MainActivity.setBackgroundMode(enabled) }
+                }
+
+                @JavascriptInterface
+                fun isBackgroundModeActive(): Boolean {
+                    return meshService?.isRunning == true
+                }
+            }, "PeatLinkSettings")
         }
         rootLayout.addView(webView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -520,6 +551,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setBackgroundMode(enabled: Boolean) {
+        if (enabled) {
+            val intent = Intent(this, PeatMeshService::class.java).apply {
+                action = PeatMeshService.ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            bindService(Intent(this, PeatMeshService::class.java), serviceConnection, BIND_AUTO_CREATE)
+
+            // Pass references to the service after a short delay to let binding complete
+            scope.launch {
+                delay(500)
+                meshService?.mobileNode = node as? com.peatlink.ffi.MobileNode
+                meshService?.bleService = bleService
+                meshService?.bleVoice = bleVoice
+                meshService?.wifiDirectService = wifiDirectService
+            }
+        } else {
+            if (serviceBound) {
+                unbindService(serviceConnection)
+                serviceBound = false
+            }
+            val intent = Intent(this, PeatMeshService::class.java).apply {
+                action = PeatMeshService.ACTION_STOP
+            }
+            startService(intent)
+            meshService = null
+        }
+    }
+
     private fun startConnStatusPolling() {
         connStatusJob?.cancel()
         connStatusJob = scope.launch {
@@ -581,6 +645,11 @@ class MainActivity : AppCompatActivity() {
                     connBar.setBackgroundColor(Color.parseColor("#1b2b34"))
                     connBar.setTextColor(Color.parseColor("#8696a0"))
                     connBar.text = "\u2699 Tap to connect to a server"
+                }
+
+                // Update foreground service notification with current status
+                if (parts.isNotEmpty()) {
+                    meshService?.updateNotification(parts.joinToString(" | "))
                 }
 
                 // Periodically re-send callsign to keep it synced
@@ -693,10 +762,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        connStatusJob?.cancel()
         scope.cancel()
+
+        // If background service is running, DON'T tear down the mesh --
+        // just unbind the activity. The service keeps everything alive.
+        if (meshService?.isRunning == true) {
+            if (serviceBound) {
+                unbindService(serviceConnection)
+                serviceBound = false
+            }
+            try { discovery?.stopDiscovery() } catch (_: Throwable) {}
+            webView.destroy()
+            super.onDestroy()
+            return
+        }
+
+        // Normal teardown (no background service)
         try { discovery?.stopDiscovery() } catch (_: Throwable) {}
         webView.destroy()
+
+        if (serviceBound) {
+            try { unbindService(serviceConnection) } catch (_: Throwable) {}
+            serviceBound = false
+        }
 
         try { bleVoice?.stop() } catch (_: Throwable) {}
         bleVoice = null
@@ -715,5 +804,7 @@ class MainActivity : AppCompatActivity() {
                 n.destroy()
             }.start()
         }
+
+        super.onDestroy()
     }
 }

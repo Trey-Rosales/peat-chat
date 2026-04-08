@@ -12,6 +12,7 @@ interface SettingsStore {
   protomapsApiKey: string
   mapStyle: 'dark' | 'light' | 'topo' | 'satellite'
   locationEnabled: boolean
+  backgroundMode: boolean
 
   setMicDevice: (id: string) => void
   setSpeakerDevice: (id: string) => void
@@ -23,6 +24,7 @@ interface SettingsStore {
   setProtomapsApiKey: (key: string) => void
   setMapStyle: (style: 'dark' | 'light' | 'topo' | 'satellite') => void
   setLocationEnabled: (enabled: boolean) => void
+  setBackgroundMode: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -38,6 +40,7 @@ export const useSettingsStore = create<SettingsStore>()(
       protomapsApiKey: '',
       mapStyle: 'dark',
       locationEnabled: false,
+      backgroundMode: false,
 
       setMicDevice: (id) => set({ micDeviceId: id }),
       setSpeakerDevice: (id) => set({ speakerDeviceId: id }),
@@ -49,6 +52,10 @@ export const useSettingsStore = create<SettingsStore>()(
       setProtomapsApiKey: (key) => set({ protomapsApiKey: key }),
       setMapStyle: (style) => set({ mapStyle: style }),
       setLocationEnabled: (enabled) => set({ locationEnabled: enabled }),
+      setBackgroundMode: (enabled) => {
+        (window as any).PeatLinkSettings?.setBackgroundMode?.(enabled)
+        set({ backgroundMode: enabled })
+      },
     }),
     {
       name: 'peatlink-settings',

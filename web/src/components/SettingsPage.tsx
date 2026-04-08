@@ -32,6 +32,8 @@ export function SettingsPage({ onClose, send }: Props) {
   const setProtomapsApiKey = useSettingsStore((s) => s.setProtomapsApiKey)
   const locationEnabled = useSettingsStore((s) => s.locationEnabled)
   const setLocationEnabled = useSettingsStore((s) => s.setLocationEnabled)
+  const backgroundMode = useSettingsStore((s) => s.backgroundMode)
+  const setBackgroundMode = useSettingsStore((s) => s.setBackgroundMode)
 
   const [nameInput, setNameInput] = useState(displayName)
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([])
@@ -222,6 +224,32 @@ export function SettingsPage({ onClose, send }: Props) {
               </select>
               <p className="text-xs text-pl-text-sec/60">
                 Preferred network path for mesh connections. Default priority: TCP &gt; WiFi Direct &gt; BLE.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm text-pl-text">Keep Mesh Alive in Background</label>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setBackgroundMode(!backgroundMode)}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${
+                    backgroundMode ? 'bg-pl-accent' : 'bg-pl-input'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                      backgroundMode ? 'translate-x-6' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+                <span className="text-xs text-pl-text-sec">
+                  {backgroundMode
+                    ? 'Mesh stays active when app is backgrounded'
+                    : 'Mesh stops when app is backgrounded'}
+                </span>
+              </div>
+              <p className="text-xs text-pl-text-sec/60">
+                Runs a foreground service to keep BLE, WiFi Direct, and the Rust server alive (Android only)
               </p>
             </div>
           </section>
