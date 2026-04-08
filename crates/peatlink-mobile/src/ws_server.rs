@@ -1047,6 +1047,13 @@ async fn rebroadcast_ble_control(hub: &Arc<Hub>, room_id_str: &str, raw_text: &s
 }
 
 fn broadcast_mesh_state(room: &Room, room_id: &str) {
+    // Only broadcast if there are 2+ local members. With 1 member (just the
+    // local WebView), this would send empty peers which overwrites upstream
+    // mesh_state (from the Go server) and ble_mesh_state (from the bridge),
+    // causing the mesh viewer to go blank on relay phones.
+    if room.members.len() < 2 {
+        return;
+    }
     // For each member, send a mesh_state with all OTHER members
     for (cid, _) in &room.members {
         let peers: Vec<serde_json::Value> = room
