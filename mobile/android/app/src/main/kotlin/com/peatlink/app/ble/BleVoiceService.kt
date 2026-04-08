@@ -84,26 +84,32 @@ class BleVoiceService {
     fun start() {
         if (running) return
         running = true
-        initPlayback()
-        initBridgeEncoder()
-        initVad()
-        startPlaybackLoop()
+        try { initPlayback() } catch (e: Throwable) { Log.e(TAG, "Playback init failed: ${e.message}") }
+        try { initBridgeEncoder() } catch (e: Throwable) { Log.e(TAG, "Bridge encoder init failed: ${e.message}") }
+        // VAD init is lazy — only when continuous mode is activated
+        try { startPlaybackLoop() } catch (e: Throwable) { Log.e(TAG, "Playback loop failed: ${e.message}") }
         Log.i(TAG, "BLE voice service started (${SAMPLE_RATE}Hz, ${BITRATE}bps Opus)")
     }
 
     fun stop() {
         running = false
-        stopTransmitting()
-        stopContinuous()
-        playbackJob?.cancel()
-        releasePlayback()
-        releaseBridgeEncoder()
-        releaseVad()
+        try { stopTransmitting() } catch (_: Throwable) {}
+        try { stopContinuous() } catch (_: Throwable) {}
+        try { playbackJob?.cancel() } catch (_: Throwable) {}
+        try { releasePlayback() } catch (_: Throwable) {}
+        try { releaseBridgeEncoder() } catch (_: Throwable) {}
+        try { releaseVad() } catch (_: Throwable) {}
         Log.i(TAG, "BLE voice service stopped")
     }
 
     private fun initVad() {
         vad = try {
+            // Load VAD in a completely isolated way — catches NoClassDefFoundError,
+            // UnsatisfiedLinkError, and any other native library issues
+            val builder = Class.forName("com.konovalov.vad.Vad")
+                .getMethod("builder")
+                .invoke(null)
+            // If we got here, the library loaded. Use the builder API.
             Vad.builder()
                 .setModel(com.konovalov.vad.config.Model.WEB_RTC_GMM)
                 .setSampleRate(SampleRate.SAMPLE_RATE_8K)
@@ -111,7 +117,7 @@ class BleVoiceService {
                 .setMode(Mode.NORMAL)
                 .build()
         } catch (e: Throwable) {
-            Log.w(TAG, "WebRTC VAD unavailable: ${e.message}")
+            Log.w(TAG, "WebRTC VAD unavailable: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -193,7 +199,11 @@ class BleVoiceService {
     /** Start continuous voice-activated transmission (noise gate or auto mode) */
     fun startContinuous() {
         if (continuousCaptureJob != null) return
-        initCapture()
+        try { initCapture() } catch (e: Throwable) { Log.e(TAG, "Capture init failed: ${e.message}"); return }
+        // Lazy VAD init — only load native library when actually needed
+        if (vad == null && voiceMode == VoiceMode.AUTO) {
+            try { initVad() } catch (e: Throwable) { Log.w(TAG, "VAD init failed, using energy gate: ${e.message}") }
+        }
         continuousCaptureJob = scope.launch { continuousCaptureLoop() }
         Log.i(TAG, "Continuous capture started (mode=$voiceMode, threshold=${noiseGateThresholdDb}dB)")
     }
