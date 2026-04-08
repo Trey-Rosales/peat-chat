@@ -49,11 +49,13 @@ class BleVoiceService {
 
     // Capture
     private var audioRecord: AudioRecord? = null
+    private var noiseSuppressor: android.media.audiofx.NoiseSuppressor? = null
     private var encoder: MediaCodec? = null
     private var captureJob: Job? = null
     private var continuousCaptureJob: Job? = null
     @Volatile var transmitting = false
         private set
+    @Volatile var muted = false // mic mute
 
     // Playback
     private var audioTrack: AudioTrack? = null
@@ -220,6 +222,8 @@ class BleVoiceService {
             val db = if (rms > 0) (20 * Math.log10(rms / 32768.0)).toFloat() else -96f
             currentMicLevelDb = db
 
+            if (muted) { voiceDetected = false; continue }
+
             // Determine if voice is active
             val isVoice = when (voiceMode) {
                 VoiceMode.NOISE_GATE -> db > noiseGateThresholdDb
@@ -309,9 +313,25 @@ class BleVoiceService {
         }
 
         audioRecord?.startRecording()
+
+        // Enable platform noise suppression (free, OEM-provided)
+        val sessionId = audioRecord?.audioSessionId ?: 0
+        if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = try {
+                android.media.audiofx.NoiseSuppressor.create(sessionId).also {
+                    it.enabled = true
+                    Log.i(TAG, "Platform NoiseSuppressor enabled")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "NoiseSuppressor failed: ${e.message}")
+                null
+            }
+        }
     }
 
     private fun releaseCapture() {
+        try { noiseSuppressor?.release() } catch (_: Throwable) {}
+        noiseSuppressor = null
         try { audioRecord?.stop() } catch (_: Throwable) {}
         try { audioRecord?.release() } catch (_: Throwable) {}
         audioRecord = null
@@ -327,6 +347,7 @@ class BleVoiceService {
         while (transmitting) {
             val read = audioRecord?.read(pcmBuf, 0, FRAME_SAMPLES) ?: -1
             if (read <= 0) { delay(5); continue }
+            if (muted) continue // skip encoding when muted
 
             val enc = encoder
             if (enc != null) {

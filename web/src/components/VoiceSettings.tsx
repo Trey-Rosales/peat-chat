@@ -13,6 +13,7 @@ export function VoiceSettings() {
 
   const [micLevel, setMicLevel] = useState(-96)
   const [isActive, setIsActive] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -180,6 +181,26 @@ export function VoiceSettings() {
           Hold the mic button or press Space to talk
         </div>
       )}
+
+      {/* Mic Mute Toggle */}
+      <div className="pt-2 border-t border-pl-border mt-2">
+        <button
+          onClick={() => {
+            const newMuted = !isMuted
+            setIsMuted(newMuted)
+            if (window.PeatLinkVoice?.setMicMuted) {
+              window.PeatLinkVoice.setMicMuted(newMuted)
+            }
+          }}
+          className={`w-full py-2 rounded text-sm font-medium transition ${
+            isMuted
+              ? 'bg-red-600 text-white'
+              : 'bg-pl-input text-pl-text-sec hover:text-pl-text'
+          }`}
+        >
+          {isMuted ? '🔇 Mic Muted' : '🎙️ Mic Active'}
+        </button>
+      </div>
     </div>
   )
 }

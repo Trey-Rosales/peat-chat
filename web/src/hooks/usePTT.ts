@@ -18,6 +18,8 @@ declare global {
       getMicLevelDb?(): number
       isVoiceDetected?(): boolean
       getVoiceMode?(): string
+      setMicMuted?(muted: boolean): void
+      isMicMuted?(): boolean
     }
   }
 }

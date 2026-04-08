@@ -218,6 +218,16 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 @JavascriptInterface
+                fun setMicMuted(muted: Boolean) {
+                    bleVoice?.muted = muted
+                }
+
+                @JavascriptInterface
+                fun isMicMuted(): Boolean {
+                    return bleVoice?.muted ?: false
+                }
+
+                @JavascriptInterface
                 fun getVoiceMode(): String {
                     return when (bleVoice?.voiceMode) {
                         BleVoiceService.VoiceMode.NOISE_GATE -> "noise_gate"
