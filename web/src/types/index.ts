@@ -38,6 +38,7 @@ export interface VoiceMember {
   name: string
   short_id: string
   speaking: boolean
+  muted?: boolean
 }
 
 export interface VoiceChannel {

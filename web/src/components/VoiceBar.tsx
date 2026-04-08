@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
 
@@ -5,6 +6,14 @@ interface Props {
   onDisconnect: () => void
   onPTTStart: () => void
   onPTTEnd: () => void
+}
+
+const VOICE_MODES = ['ptt', 'noise_gate', 'auto'] as const
+const MODE_LABELS: Record<string, string> = {
+  ptt: 'PTT',
+  noise_gate: 'GATE',
+  auto: 'AUTO',
+  open: 'OPEN',
 }
 
 export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
@@ -15,6 +24,7 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   const pttKey = useSettingsStore((s) => s.pttKey)
   const voiceMode = useSettingsStore((s) => s.voiceMode)
   const setVoiceMode = useSettingsStore((s) => s.setVoiceMode)
+  const [muted, setMuted] = useState(false)
 
   if (!activeVoice) return null
 
@@ -23,19 +33,24 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   const channel = channels.find((c) => c.id === activeVoice.channelId)
 
   const keyLabel = pttKey === ' ' ? 'Space' : pttKey.length === 1 ? pttKey.toUpperCase() : pttKey
-  const isOpen = voiceMode === 'open'
 
-  const toggleMode = () => {
-    if (isOpen) {
-      // Switching to PTT — mute
-      onPTTEnd()
-      setVoiceMode('ptt')
-    } else {
-      // Switching to open — unmute
-      setVoiceMode('open')
-      onPTTStart()
+  const cycleMode = () => {
+    const idx = VOICE_MODES.indexOf(voiceMode as any)
+    const next = VOICE_MODES[(idx + 1) % VOICE_MODES.length]
+    setVoiceMode(next)
+    if (window.PeatLinkVoice?.setVoiceMode) {
+      window.PeatLinkVoice.setVoiceMode(next)
     }
   }
+
+  const toggleMute = useCallback(() => {
+    const newMuted = !muted
+    setMuted(newMuted)
+    // Android native mute
+    if (window.PeatLinkVoice?.setMicMuted) {
+      window.PeatLinkVoice.setMicMuted(newMuted)
+    }
+  }, [muted])
 
   return (
     <div className="border-t border-pl-border bg-pl-header px-3 py-2 shrink-0">
@@ -44,10 +59,10 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
         <div className="relative shrink-0">
           <div
             className={`w-3 h-3 rounded-full ${
-              localSpeaking ? 'bg-pl-accent' : 'bg-pl-accent/50'
+              muted ? 'bg-red-500' : localSpeaking ? 'bg-pl-accent' : 'bg-pl-accent/50'
             }`}
           />
-          {localSpeaking && (
+          {localSpeaking && !muted && (
             <div className="absolute inset-0 w-3 h-3 rounded-full bg-pl-accent animate-ping" />
           )}
         </div>
@@ -56,29 +71,52 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-pl-accent truncate">
             {channel?.name || 'Voice Connected'}
+            {muted && <span className="text-red-400 ml-1">(Muted)</span>}
           </div>
           <div className="text-[10px] text-pl-text-sec truncate">
             {room?.name} · {channel?.members.length || 0} member{(channel?.members.length || 0) !== 1 ? 's' : ''}
           </div>
         </div>
 
-        {/* PTT / Open mic toggle */}
+        {/* Mic mute button */}
         <button
-          onClick={toggleMode}
+          onClick={toggleMute}
+          className={`p-1.5 rounded-lg transition shrink-0 ${
+            muted
+              ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30'
+              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover'
+          }`}
+          title={muted ? 'Unmute mic' : 'Mute mic'}
+        >
+          {muted ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.55-.9l4.17 4.18L21 19.73 4.27 3z"/>
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+          )}
+        </button>
+
+        {/* Voice mode cycle button */}
+        <button
+          onClick={cycleMode}
           className={`px-2 py-1 rounded-md text-[10px] font-medium transition shrink-0 ${
-            isOpen
+            voiceMode !== 'ptt'
               ? 'bg-pl-accent/20 text-pl-accent'
               : 'bg-pl-input text-pl-text-sec hover:text-pl-text'
           }`}
-          title={isOpen ? 'Switch to push-to-talk' : 'Switch to open mic'}
+          title={`Voice mode: ${voiceMode} (tap to cycle)`}
         >
-          {isOpen ? 'OPEN' : 'PTT'}
+          {MODE_LABELS[voiceMode] || 'PTT'}
         </button>
 
         {/* PTT hint (desktop only, PTT mode only) */}
-        {!isOpen && (
+        {voiceMode === 'ptt' && (
           <div className="text-[10px] text-pl-text-sec/60 shrink-0 hidden md:block">
-            Hold <kbd className="px-1 py-0.5 bg-pl-input rounded text-pl-text-sec text-[9px] font-mono">{keyLabel}</kbd>
+            <kbd className="px-1 py-0.5 bg-pl-input rounded text-pl-text-sec text-[9px] font-mono">{keyLabel}</kbd>
           </div>
         )}
 

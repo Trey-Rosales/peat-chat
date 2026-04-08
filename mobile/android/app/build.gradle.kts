@@ -50,4 +50,5 @@ dependencies {
     implementation("com.github.gkonovalov:android-vad:2.0.1") {
         exclude(group = "com.microsoft.onnxruntime")
     }
+    testImplementation("junit:junit:4.13.2")
 }

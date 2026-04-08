@@ -622,7 +622,10 @@ async fn forward_ws_to_ble(
 
     // Skip types that shouldn't be forwarded to BLE peers
     match msg_type {
-        "identity" | "name_assigned" | "ble_mesh_state" => return,
+        "identity" | "name_assigned" | "ble_mesh_state"
+        // Voice signaling uses WebRTC which BLE peers can't use — skip entirely
+        // to prevent cascading failures and crashes
+        | "voice_offer_relay" | "voice_answer_relay" | "voice_ice_relay" => return,
         _ => {}
     }
 
