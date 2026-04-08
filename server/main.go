@@ -37,6 +37,7 @@ func main() {
 	atakEnabled := flag.Bool("atak", false, "enable ATAK CoT bridge")
 	atakUDP := flag.String("atak-udp", "239.2.3.1:6969", "ATAK multicast address:port")
 	atakTCP := flag.Int("atak-tcp", 4242, "ATAK TCP CoT port")
+	copURL := flag.String("cop-url", "", "COP server URL for TUI forwarding (e.g., http://localhost:3000)")
 	flag.Parse()
 
 	hub := NewHub()
@@ -53,6 +54,10 @@ func main() {
 		udpPort, err := strconv.Atoi(portStr)
 		if err != nil {
 			log.Fatalf("invalid --atak-udp port %q: %v", portStr, err)
+		}
+		if *copURL != "" {
+			bridge.copURL = *copURL
+			log.Printf("COP TUI forwarding enabled: %s", *copURL)
 		}
 		go bridge.Start(addr, udpPort, *atakTCP)
 	}

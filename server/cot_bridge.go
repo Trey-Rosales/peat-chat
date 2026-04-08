@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,9 @@ type CotBridge struct {
 
 	// Multicast address for outbound
 	multicastAddr *net.UDPAddr
+
+	// COP server URL for forwarding CoT to the TUI viewer (e.g., http://localhost:3000)
+	copURL string
 }
 
 // NewCotBridge creates a new ATAK CoT bridge attached to the given Hub.
@@ -315,6 +319,10 @@ func (b *CotBridge) ingestCot(uid, callsign, cotType, how string, lat, lon, hae,
 
 	// Broadcast updated CoT state to room members
 	b.hub.broadcastCotState(room)
+
+	// Forward to COP TUI viewer
+	cotXml := contactToXml(uid, callsign, cotType, lat, lon, hae, ce)
+	b.forwardToCOP(cotXml, "atak")
 }
 
 // findGeneralRoom returns the first public non-DM room, or nil if none exist.
@@ -350,6 +358,9 @@ func (b *CotBridge) BroadcastToATAK(contact *CotContact) {
 	xmlData := contactToXml(contact.UID, contact.Callsign, contact.CotType,
 		contact.Lat, contact.Lon, contact.Hae, contact.Ce)
 	b.sendCotRaw([]byte(xmlData))
+
+	// Also forward to COP TUI viewer
+	b.forwardToCOP(xmlData, "peatlink")
 }
 
 // BroadcastMarkerToATAK sends a CotMarker as CoT XML to all ATAK endpoints.
@@ -359,6 +370,9 @@ func (b *CotBridge) BroadcastMarkerToATAK(marker *CotMarker) {
 	}
 	xmlData := markerToXml(marker)
 	b.sendCotRaw([]byte(xmlData))
+
+	// Also forward to COP TUI viewer
+	b.forwardToCOP(xmlData, "peatlink")
 }
 
 // sendCotRaw sends raw CoT bytes to UDP multicast and all TCP clients.
@@ -455,4 +469,29 @@ func markerToXml(marker *CotMarker) string {
 		marker.Lat, marker.Lon, marker.Hae, marker.Ce, marker.Le,
 		marker.Name, remarks,
 	)
+}
+
+// --- COP TUI Integration ---
+
+// forwardToCOP sends CoT XML to the COP server's POST /cot endpoint
+// so the TUI viewer displays it. Non-blocking (fires in goroutine).
+func (b *CotBridge) forwardToCOP(cotXml string, source string) {
+	if b.copURL == "" {
+		return
+	}
+	go func() {
+		url := b.copURL + "/cot"
+		req, err := http.NewRequest("POST", url, strings.NewReader(cotXml))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/xml")
+		req.Header.Set("X-CoT-Source", source)
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return // COP server not running — silently skip
+		}
+		resp.Body.Close()
+	}()
 }
