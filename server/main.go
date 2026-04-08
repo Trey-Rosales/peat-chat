@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -33,10 +34,28 @@ var upgrader = websocket.Upgrader{
 func main() {
 	port := flag.Int("port", 8090, "server port")
 	webDir := flag.String("web", "", "path to web/dist directory (serves static files)")
+	atakEnabled := flag.Bool("atak", false, "enable ATAK CoT bridge")
+	atakUDP := flag.String("atak-udp", "239.2.3.1:6969", "ATAK multicast address:port")
+	atakTCP := flag.Int("atak-tcp", 4242, "ATAK TCP CoT port")
 	flag.Parse()
 
 	hub := NewHub()
 	go hub.Run()
+
+	// Start ATAK CoT bridge if enabled
+	if *atakEnabled {
+		bridge := NewCotBridge(hub)
+		hub.cotBridge = bridge
+		addr, portStr, err := net.SplitHostPort(*atakUDP)
+		if err != nil {
+			log.Fatalf("invalid --atak-udp address %q: %v", *atakUDP, err)
+		}
+		udpPort, err := strconv.Atoi(portStr)
+		if err != nil {
+			log.Fatalf("invalid --atak-udp port %q: %v", portStr, err)
+		}
+		go bridge.Start(addr, udpPort, *atakTCP)
+	}
 
 	// WebSocket endpoint
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

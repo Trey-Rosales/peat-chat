@@ -260,6 +260,13 @@ func (c *Client) readPump() {
 				} else {
 					room.SetCotPosition(c, pos)
 				}
+				// Forward to ATAK bridge
+				if c.hub.cotBridge != nil {
+					contact := c.toCotContact(pos)
+					if contact != nil {
+						go c.hub.cotBridge.BroadcastToATAK(contact)
+					}
+				}
 			}
 
 		case "create_marker":

@@ -22,6 +22,7 @@ type Hub struct {
 	clients     map[*Client]bool
 	clientsByID map[string]*Client  // identity.ID -> *Client for O(1) signaling relay
 	blePeers    map[string]*BlePeer // peer_id -> BlePeer (BLE peers reachable via relay)
+	cotBridge   *CotBridge          // ATAK CoT bridge (nil when disabled)
 	register    chan *Client
 	unregister  chan *Client
 	mu          sync.RWMutex
@@ -1118,6 +1119,17 @@ func (h *Hub) broadcastCotState(room *Room) {
 			Contacts: contacts,
 			Markers:  markers,
 		})
+	}
+
+	// Also push peat-chat contacts to ATAK
+	if h.cotBridge != nil {
+		allContacts := room.GetCotContacts(nil)
+		for i := range allContacts {
+			h.cotBridge.BroadcastToATAK(&allContacts[i])
+		}
+		for i := range markers {
+			h.cotBridge.BroadcastMarkerToATAK(&markers[i])
+		}
 	}
 }
 

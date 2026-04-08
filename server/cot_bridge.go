@@ -1,0 +1,458 @@
+package main
+
+import (
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"log"
+	"net"
+	"strings"
+	"sync"
+	"time"
+)
+
+// CotEventXml represents a CoT XML event from ATAK.
+type CotEventXml struct {
+	XMLName xml.Name     `xml:"event"`
+	UID     string       `xml:"uid,attr"`
+	Type    string       `xml:"type,attr"`
+	How     string       `xml:"how,attr"`
+	Time    string       `xml:"time,attr"`
+	Start   string       `xml:"start,attr"`
+	Stale   string       `xml:"stale,attr"`
+	Point   CotPointXml  `xml:"point"`
+	Detail  CotDetailXml `xml:"detail"`
+}
+
+// CotPointXml represents the <point> element in CoT XML.
+type CotPointXml struct {
+	Lat float64 `xml:"lat,attr"`
+	Lon float64 `xml:"lon,attr"`
+	Hae float64 `xml:"hae,attr"`
+	Ce  float64 `xml:"ce,attr"`
+	Le  float64 `xml:"le,attr"`
+}
+
+// CotDetailXml represents the <detail> element in CoT XML.
+type CotDetailXml struct {
+	Contact struct {
+		Callsign string `xml:"callsign,attr"`
+	} `xml:"contact"`
+	Group struct {
+		Name string `xml:"name,attr"`
+		Role string `xml:"role,attr"`
+	} `xml:"__group"`
+}
+
+// ExternalCotContact holds CoT data for an ATAK peer that has no WebSocket client.
+type ExternalCotContact struct {
+	UID      string
+	Callsign string
+	CotType  string
+	Lat      float64
+	Lon      float64
+	Hae      float64
+	Ce       float64
+	Time     time.Time
+}
+
+// CotBridge embeds UDP multicast + TCP CoT listeners directly in the Go server,
+// replacing the separate Node.js COP bridge.
+type CotBridge struct {
+	hub         *Hub
+	udpConn     *net.UDPConn
+	tcpListener net.Listener
+	tcpClients  map[net.Conn]bool
+	tcpMu       sync.RWMutex
+	running     bool
+	stopCh      chan struct{}
+
+	// Echo prevention: track ATAK-originated UIDs with last-seen time
+	atakOrigins map[string]time.Time
+	originMu    sync.RWMutex
+
+	// Multicast address for outbound
+	multicastAddr *net.UDPAddr
+}
+
+// NewCotBridge creates a new ATAK CoT bridge attached to the given Hub.
+func NewCotBridge(hub *Hub) *CotBridge {
+	return &CotBridge{
+		hub:         hub,
+		tcpClients:  make(map[net.Conn]bool),
+		stopCh:      make(chan struct{}),
+		atakOrigins: make(map[string]time.Time),
+	}
+}
+
+// Start launches the UDP multicast listener, TCP CoT server, and origin cleanup goroutine.
+func (b *CotBridge) Start(udpAddr string, udpPort, tcpPort int) error {
+	b.running = true
+
+	// Start UDP multicast listener
+	go b.listenUDP(udpAddr, udpPort)
+
+	// Start TCP CoT server
+	if tcpPort > 0 {
+		go b.listenTCP(tcpPort)
+	}
+
+	// Periodic origin cleanup (expire after 60s)
+	go b.cleanupOrigins()
+
+	log.Printf("ATAK CoT bridge started (UDP %s:%d, TCP :%d)", udpAddr, udpPort, tcpPort)
+	return nil
+}
+
+// Stop shuts down the bridge.
+func (b *CotBridge) Stop() {
+	b.running = false
+	close(b.stopCh)
+	if b.udpConn != nil {
+		b.udpConn.Close()
+	}
+	if b.tcpListener != nil {
+		b.tcpListener.Close()
+	}
+	b.tcpMu.Lock()
+	for conn := range b.tcpClients {
+		conn.Close()
+	}
+	b.tcpMu.Unlock()
+}
+
+// listenUDP joins the multicast group and reads incoming CoT packets.
+func (b *CotBridge) listenUDP(addr string, port int) {
+	group := net.ParseIP(addr)
+	if group == nil {
+		log.Printf("ATAK bridge: invalid multicast address %s", addr)
+		return
+	}
+
+	b.multicastAddr = &net.UDPAddr{IP: group, Port: port}
+
+	listenAddr := &net.UDPAddr{IP: net.IPv4zero, Port: port}
+	conn, err := net.ListenMulticastUDP("udp4", nil, &net.UDPAddr{IP: group, Port: port})
+	if err != nil {
+		// Fallback: try plain UDP if multicast join fails
+		var err2 error
+		var plainConn *net.UDPConn
+		plainConn, err2 = net.ListenUDP("udp4", listenAddr)
+		if err2 != nil {
+			log.Printf("ATAK bridge: UDP listen failed: %v (multicast: %v)", err2, err)
+			return
+		}
+		conn = plainConn
+		log.Printf("ATAK bridge: multicast join failed (%v), using plain UDP on :%d", err, port)
+	}
+	b.udpConn = conn
+
+	buf := make([]byte, 65536)
+	for b.running {
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			if !b.running {
+				return
+			}
+			log.Printf("ATAK bridge: UDP read error: %v", err)
+			continue
+		}
+		if n == 0 {
+			continue
+		}
+		b.handlePacket(buf[:n])
+	}
+}
+
+// listenTCP accepts CoT XML connections (events delimited by </event>).
+func (b *CotBridge) listenTCP(port int) {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		log.Printf("ATAK bridge: TCP listen on :%d failed: %v", port, err)
+		return
+	}
+	b.tcpListener = ln
+	log.Printf("ATAK bridge: TCP CoT server listening on :%d", port)
+
+	for b.running {
+		conn, err := ln.Accept()
+		if err != nil {
+			if !b.running {
+				return
+			}
+			log.Printf("ATAK bridge: TCP accept error: %v", err)
+			continue
+		}
+		b.tcpMu.Lock()
+		b.tcpClients[conn] = true
+		b.tcpMu.Unlock()
+		log.Printf("ATAK bridge: TCP client connected from %s", conn.RemoteAddr())
+		go b.handleTCPConn(conn)
+	}
+}
+
+func (b *CotBridge) handleTCPConn(conn net.Conn) {
+	defer func() {
+		b.tcpMu.Lock()
+		delete(b.tcpClients, conn)
+		b.tcpMu.Unlock()
+		conn.Close()
+		log.Printf("ATAK bridge: TCP client disconnected: %s", conn.RemoteAddr())
+	}()
+
+	var buf bytes.Buffer
+	readBuf := make([]byte, 4096)
+	for b.running {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		n, err := conn.Read(readBuf)
+		if err != nil {
+			if !b.running {
+				return
+			}
+			return
+		}
+		buf.Write(readBuf[:n])
+
+		// Extract complete events delimited by </event>
+		for {
+			data := buf.String()
+			idx := strings.Index(data, "</event>")
+			if idx < 0 {
+				break
+			}
+			eventStr := data[:idx+len("</event>")]
+			buf.Reset()
+			buf.WriteString(data[idx+len("</event>"):])
+
+			// Find the start of the <event tag
+			start := strings.Index(eventStr, "<event")
+			if start < 0 {
+				continue
+			}
+			b.handleXmlCot([]byte(eventStr[start:]))
+		}
+	}
+}
+
+// handlePacket dispatches a raw packet (UDP) as either XML CoT or TAK protobuf.
+func (b *CotBridge) handlePacket(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	if data[0] == '<' {
+		b.handleXmlCot(data)
+	} else if len(data) >= 3 && data[0] == 0xBF && data[1] == 0x01 && data[2] == 0xBF {
+		b.handleProtoCot(data)
+	}
+}
+
+func (b *CotBridge) handleXmlCot(data []byte) {
+	var ev CotEventXml
+	if err := xml.Unmarshal(data, &ev); err != nil {
+		return
+	}
+	if ev.UID == "" || ev.Point.Lat == 0 && ev.Point.Lon == 0 {
+		return
+	}
+	b.ingestCot(ev.UID, ev.Detail.Contact.Callsign, ev.Type, ev.How,
+		ev.Point.Lat, ev.Point.Lon, ev.Point.Hae, ev.Point.Ce)
+}
+
+func (b *CotBridge) handleProtoCot(data []byte) {
+	ev := DecodeTakProto(data)
+	if ev == nil || ev.UID == "" {
+		return
+	}
+	callsign := ev.Callsign
+	if callsign == "" {
+		callsign = ev.UID
+	}
+	b.ingestCot(ev.UID, callsign, ev.Type, ev.How,
+		ev.Lat, ev.Lon, ev.Hae, ev.Ce)
+}
+
+// ingestCot processes a decoded CoT event from ATAK into the peat-chat room system.
+func (b *CotBridge) ingestCot(uid, callsign, cotType, how string, lat, lon, hae, ce float64) {
+	if callsign == "" {
+		callsign = uid
+	}
+	if cotType == "" {
+		cotType = "a-f-G-U-C"
+	}
+
+	// Echo prevention: skip if this UID matches a peat-chat WebSocket client
+	b.hub.mu.RLock()
+	_, isLocalClient := b.hub.clientsByID[uid]
+	b.hub.mu.RUnlock()
+	if isLocalClient {
+		return
+	}
+
+	// Record as ATAK origin
+	b.originMu.Lock()
+	b.atakOrigins[uid] = time.Now()
+	b.originMu.Unlock()
+
+	// Find the "general" room (first public non-DM room, or create one)
+	room := b.findGeneralRoom()
+	if room == nil {
+		return
+	}
+
+	pos := &CotPosition{
+		Lat:  lat,
+		Lon:  lon,
+		Hae:  hae,
+		Ce:   ce,
+		Time: time.Now(),
+	}
+
+	room.SetExternalCotPosition(uid, callsign, cotType, pos)
+
+	// Broadcast updated CoT state to room members
+	b.hub.broadcastCotState(room)
+}
+
+// findGeneralRoom returns the first public non-DM room, or nil if none exist.
+func (b *CotBridge) findGeneralRoom() *Room {
+	b.hub.mu.RLock()
+	defer b.hub.mu.RUnlock()
+	for _, room := range b.hub.rooms {
+		room.mu.RLock()
+		isPublic := room.IsPublic
+		isDM := room.IsDM
+		room.mu.RUnlock()
+		if isPublic && !isDM {
+			return room
+		}
+	}
+	return nil
+}
+
+// BroadcastToATAK sends a CotContact as CoT XML to all ATAK endpoints (UDP multicast + TCP).
+// Skips contacts that originated from ATAK (echo prevention).
+func (b *CotBridge) BroadcastToATAK(contact *CotContact) {
+	if contact == nil {
+		return
+	}
+	// Echo prevention: skip if this UID came from ATAK
+	b.originMu.RLock()
+	_, fromATAK := b.atakOrigins[contact.UID]
+	b.originMu.RUnlock()
+	if fromATAK {
+		return
+	}
+
+	xmlData := contactToXml(contact.UID, contact.Callsign, contact.CotType,
+		contact.Lat, contact.Lon, contact.Hae, contact.Ce)
+	b.sendCotRaw([]byte(xmlData))
+}
+
+// BroadcastMarkerToATAK sends a CotMarker as CoT XML to all ATAK endpoints.
+func (b *CotBridge) BroadcastMarkerToATAK(marker *CotMarker) {
+	if marker == nil {
+		return
+	}
+	xmlData := markerToXml(marker)
+	b.sendCotRaw([]byte(xmlData))
+}
+
+// sendCotRaw sends raw CoT bytes to UDP multicast and all TCP clients.
+func (b *CotBridge) sendCotRaw(data []byte) {
+	// UDP multicast
+	if b.udpConn != nil && b.multicastAddr != nil {
+		_, err := b.udpConn.WriteToUDP(data, b.multicastAddr)
+		if err != nil {
+			log.Printf("ATAK bridge: UDP send error: %v", err)
+		}
+	}
+
+	// TCP clients
+	b.tcpMu.RLock()
+	clients := make([]net.Conn, 0, len(b.tcpClients))
+	for conn := range b.tcpClients {
+		clients = append(clients, conn)
+	}
+	b.tcpMu.RUnlock()
+
+	for _, conn := range clients {
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write(data); err != nil {
+			log.Printf("ATAK bridge: TCP send error to %s: %v", conn.RemoteAddr(), err)
+			conn.Close()
+			b.tcpMu.Lock()
+			delete(b.tcpClients, conn)
+			b.tcpMu.Unlock()
+		}
+	}
+}
+
+// cleanupOrigins periodically removes stale ATAK origin entries (older than 60s).
+func (b *CotBridge) cleanupOrigins() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.stopCh:
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-60 * time.Second)
+			b.originMu.Lock()
+			for uid, t := range b.atakOrigins {
+				if t.Before(cutoff) {
+					delete(b.atakOrigins, uid)
+				}
+			}
+			b.originMu.Unlock()
+		}
+	}
+}
+
+// isATAKOrigin returns true if the given UID originated from ATAK.
+func (b *CotBridge) isATAKOrigin(uid string) bool {
+	b.originMu.RLock()
+	defer b.originMu.RUnlock()
+	_, ok := b.atakOrigins[uid]
+	return ok
+}
+
+// --- CoT XML builders ---
+
+func contactToXml(uid, callsign, cotType string, lat, lon, hae, ce float64) string {
+	if cotType == "" {
+		cotType = "a-f-G-U-C"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	stale := time.Now().Add(60 * time.Second).UTC().Format(time.RFC3339)
+	return fmt.Sprintf(
+		`<event uid="%s" type="%s" how="h-e" time="%s" start="%s" stale="%s">`+
+			`<point lat="%.6f" lon="%.6f" hae="%.1f" ce="%.1f" le="999999"/>`+
+			`<detail><contact callsign="%s"/></detail></event>`,
+		uid, cotType, now, now, stale, lat, lon, hae, ce, callsign,
+	)
+}
+
+func markerToXml(marker *CotMarker) string {
+	cotType := marker.CotType
+	if cotType == "" {
+		cotType = "b-m-p-s-m"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	stale := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	remarks := ""
+	if marker.Remarks != "" {
+		remarks = fmt.Sprintf(`<remarks>%s</remarks>`, marker.Remarks)
+	}
+	return fmt.Sprintf(
+		`<event uid="%s" type="%s" how="%s" time="%s" start="%s" stale="%s">`+
+			`<point lat="%.6f" lon="%.6f" hae="%.1f" ce="%.1f" le="%.1f"/>`+
+			`<detail><contact callsign="%s"/>%s</detail></event>`,
+		marker.ID, cotType, marker.How, now, now, stale,
+		marker.Lat, marker.Lon, marker.Hae, marker.Ce, marker.Le,
+		marker.Name, remarks,
+	)
+}

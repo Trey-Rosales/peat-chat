@@ -42,19 +42,20 @@ type CotPosition struct {
 }
 
 type Room struct {
-	ID              [32]byte
-	Name            string
-	Messages        []ChatMessage
-	Members         map[*Client]bool
-	VoiceChannels   map[string]*VoiceChannel
-	Markers         map[string]*CotMarker
-	CotPositions    map[*Client]*CotPosition
-	BleCotPositions map[string]*BleCotContact // BLE peer CoT (sender_id -> contact)
-	PinnedMessages  map[string]bool           // message ID -> true
-	IsDM            bool
-	IsPublic        bool      // whether this room is visible in room discovery
-	DMParticipants  [2]string // two client identity IDs (only for DM rooms)
-	mu              sync.RWMutex
+	ID                   [32]byte
+	Name                 string
+	Messages             []ChatMessage
+	Members              map[*Client]bool
+	VoiceChannels        map[string]*VoiceChannel
+	Markers              map[string]*CotMarker
+	CotPositions         map[*Client]*CotPosition
+	BleCotPositions      map[string]*BleCotContact      // BLE peer CoT (sender_id -> contact)
+	ExternalCotPositions map[string]*ExternalCotContact  // ATAK peer CoT (uid -> contact)
+	PinnedMessages       map[string]bool                 // message ID -> true
+	IsDM                 bool
+	IsPublic             bool      // whether this room is visible in room discovery
+	DMParticipants       [2]string // two client identity IDs (only for DM rooms)
+	mu                   sync.RWMutex
 }
 
 // BleCotContact is a CoT contact for a BLE peer routed through a relay.
@@ -67,16 +68,17 @@ type BleCotContact struct {
 func NewRoom(name string) *Room {
 	defaultVC := NewVoiceChannel("General")
 	return &Room{
-		ID:              ChatIdFromName(name),
-		Name:            name,
-		Messages:        make([]ChatMessage, 0),
-		Members:         make(map[*Client]bool),
-		VoiceChannels:   map[string]*VoiceChannel{defaultVC.ID: defaultVC},
-		Markers:         make(map[string]*CotMarker),
-		CotPositions:    make(map[*Client]*CotPosition),
-		BleCotPositions: make(map[string]*BleCotContact),
-		PinnedMessages:  make(map[string]bool),
-		IsPublic:        true, // rooms are public by default
+		ID:                   ChatIdFromName(name),
+		Name:                 name,
+		Messages:             make([]ChatMessage, 0),
+		Members:              make(map[*Client]bool),
+		VoiceChannels:        map[string]*VoiceChannel{defaultVC.ID: defaultVC},
+		Markers:              make(map[string]*CotMarker),
+		CotPositions:         make(map[*Client]*CotPosition),
+		BleCotPositions:      make(map[string]*BleCotContact),
+		ExternalCotPositions: make(map[string]*ExternalCotContact),
+		PinnedMessages:       make(map[string]bool),
+		IsPublic:             true, // rooms are public by default
 	}
 }
 
@@ -631,6 +633,22 @@ func (r *Room) SetBleCotPosition(senderID, senderName string, pos *CotPosition) 
 	}
 }
 
+// SetExternalCotPosition stores a CoT position for an ATAK peer (no WebSocket client).
+func (r *Room) SetExternalCotPosition(uid, callsign, cotType string, pos *CotPosition) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ExternalCotPositions[uid] = &ExternalCotContact{
+		UID:      uid,
+		Callsign: callsign,
+		CotType:  cotType,
+		Lat:      pos.Lat,
+		Lon:      pos.Lon,
+		Hae:      pos.Hae,
+		Ce:       pos.Ce,
+		Time:     pos.Time,
+	}
+}
+
 // GetCotContacts returns CoT position data for all members except the excluded client.
 // Includes both direct WebSocket clients and BLE relay peers.
 func (r *Room) GetCotContacts(exclude *Client) []CotContact {
@@ -663,6 +681,22 @@ func (r *Room) GetCotContacts(exclude *Client) []CotContact {
 				Stale:    t + 30000,
 			})
 		}
+	}
+	// Include external ATAK peer CoT positions
+	for _, ext := range r.ExternalCotPositions {
+		t := uint64(ext.Time.UnixMilli())
+		contacts = append(contacts, CotContact{
+			UID:      ext.UID,
+			Callsign: ext.Callsign,
+			ShortID:  ext.UID[:min(12, len(ext.UID))],
+			CotType:  ext.CotType,
+			Lat:      ext.Lat,
+			Lon:      ext.Lon,
+			Hae:      ext.Hae,
+			Ce:       ext.Ce,
+			Time:     t,
+			Stale:    t + 60000,
+		})
 	}
 	return contacts
 }
