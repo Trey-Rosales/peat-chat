@@ -504,13 +504,15 @@ export class VoiceManager {
     }, BLE_POLL_MS)
   }
 
-  /** Poll native voice detection and send speaking state to server */
+  /** Poll native voice detection — unmute gain + send speaking state */
   private pollNativeSpeakingState(): void {
     if (!window.PeatLinkVoice?.isVoiceDetected) return
     try {
       const speaking = window.PeatLinkVoice.isVoiceDetected()
       if (speaking !== this._bleSpeakingState) {
         this._bleSpeakingState = speaking
+        // Unmute/mute the WebRTC gain so native mic audio reaches peers
+        this.setMuted(!speaking)
         this.send('voice_speaking', {
           room_id: this.roomId,
           channel_id: this.channelId,
