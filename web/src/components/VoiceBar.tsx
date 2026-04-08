@@ -97,11 +97,11 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
         {/* Channel info */}
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-pl-accent truncate">
-            {channel?.name || 'Voice Connected'}
+            {String(channel?.name || 'Voice Connected')}
             {muted && <span className="text-red-400 ml-1">(Muted)</span>}
           </div>
           <div className="text-[10px] text-pl-text-sec truncate">
-            {room?.name} · {channel?.members.length || 0} member{(channel?.members.length || 0) !== 1 ? 's' : ''}
+            {String(room?.name || '')} · {Number(channel?.members?.length || 0)} member{(channel?.members?.length || 0) !== 1 ? 's' : ''}
           </div>
         </div>
 
@@ -137,7 +137,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
           }`}
           title={`Voice mode: ${voiceMode} (tap to cycle)`}
         >
-          {MODE_LABELS[voiceMode] || 'PTT'}
+          {String(MODE_LABELS[voiceMode as string] || 'PTT')}
         </button>
 
         {/* PTT hint (desktop only, PTT mode only) */}
