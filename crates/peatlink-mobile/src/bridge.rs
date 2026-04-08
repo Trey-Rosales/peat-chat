@@ -794,12 +794,20 @@ async fn forward_ws_to_ble(
     match msg_type {
         "identity" | "name_assigned" | "ble_mesh_state"
         | "voice_offer_relay" | "voice_answer_relay" | "voice_ice_relay"
-        // voice_speaking is too chatty for BLE GATT bandwidth (fires every
-        // speaking state change). join_voice/leave_voice/create_voice_channel
-        // are rare user events that MUST flow bidirectionally so BLE peers
-        // can join voice and see voice state updates.
-        | "voice_speaking" => return,
+        // voice_speaking is too chatty for BLE GATT bandwidth
+        | "voice_speaking"
+        // DMs are private — don't leak to BLE peers that aren't participants
+        | "dm_opened" => return,
         _ => {}
+    }
+
+    // Filter DM room_joined/room_history (check is_dm flag in data)
+    if msg_type == "room_joined" || msg_type == "room_history" {
+        if let Some(data) = envelope.get("data") {
+            if data.get("is_dm").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return;
+            }
+        }
     }
 
     // For messages, track by ID so we drop echoes when they come back from BLE

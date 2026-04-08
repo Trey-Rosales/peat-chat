@@ -88,30 +88,57 @@ class PeatWifiDirectService(
             return
         }
 
+        running = true
+
+        // Try to initialize the channel — retry periodically if WiFi isn't ready
+        if (!tryInitChannel()) {
+            status = "standby"
+            startRetryLoop()
+            return
+        }
+
+        finishStart()
+    }
+
+    private fun tryInitChannel(): Boolean {
         channel = try {
             manager!!.initialize(context, context.mainLooper, null)
         } catch (e: Throwable) {
             Log.w(TAG, "WiFi Direct init deferred (WiFi may be off): ${e.message}")
-            status = "standby"
-            return
+            null
         }
-        if (channel == null) {
-            Log.w(TAG, "WiFi Direct channel not available yet — will retry on next app launch")
-            status = "standby"
-            return
-        }
+        return channel != null
+    }
 
-        running = true
+    private fun startRetryLoop() {
+        discoverJob = scope.launch {
+            while (isActive && running && channel == null) {
+                delay(15_000) // retry every 15 seconds
+                if (tryInitChannel()) {
+                    Log.i(TAG, "WiFi Direct channel initialized on retry")
+                    // Must register receiver and start discovery on main thread context
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        finishStart()
+                    }
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun finishStart() {
         status = "starting..."
         Log.i(TAG, "Starting WiFi Direct service (node=$nodeId, callsign=$callsign, upstream=$hasUpstream, port=$port)")
 
         // Register broadcast receiver
-        val recv = WifiDirectReceiver()
-        receiver = recv
-        try {
-            context.registerReceiver(recv, intentFilter)
-        } catch (e: Throwable) {
-            Log.e(TAG, "registerReceiver failed: ${e.message}")
+        if (receiver == null) {
+            val recv = WifiDirectReceiver()
+            receiver = recv
+            try {
+                context.registerReceiver(recv, intentFilter)
+            } catch (e: Throwable) {
+                Log.e(TAG, "registerReceiver failed: ${e.message}")
+            }
         }
 
         // Advertise our service via DNS-SD
@@ -119,6 +146,7 @@ class PeatWifiDirectService(
 
         // Set up discovery listeners and begin duty-cycle loop
         setupServiceDiscovery()
+        discoverJob?.cancel() // cancel retry loop if running
         startDiscoverLoop()
 
         status = "discovering"
