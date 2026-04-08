@@ -59,9 +59,9 @@ pub(crate) struct Room {
     // Voice channels
     voice_channels: Vec<VoiceChannel>,
     // CoT positions (client_id -> position data)
-    cot_positions: HashMap<String, serde_json::Value>,
+    pub(crate) cot_positions: HashMap<String, serde_json::Value>,
     // Map markers
-    markers: Vec<serde_json::Value>,
+    pub(crate) markers: Vec<serde_json::Value>,
     // DM metadata
     is_dm: bool,
     dm_participants: [String; 2], // sorted pair of identity IDs

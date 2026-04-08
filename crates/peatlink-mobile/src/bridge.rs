@@ -446,9 +446,9 @@ async fn handle_ble_ws_message(
         return;
     };
 
-    let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    match msg_type {
+    match msg_type.as_str() {
         // Chat messages — dedup and inject into the correct room
         "message" => {
             if let Some(data) = envelope.get("data") {
@@ -619,7 +619,7 @@ async fn handle_ble_ws_message(
             let _ = hub.passthrough_tx.send(Arc::new(json.to_string()));
         }
 
-        // CoT position from BLE peer — inject sender info from peer names
+        // CoT position from BLE peer — store locally and broadcast cot_state
         "cot_position" => {
             let mut cot: serde_json::Value = envelope;
             if let Some(data) = cot.get_mut("data") {
@@ -628,9 +628,32 @@ async fn handle_ble_ws_message(
                     data["sender_name"] = serde_json::Value::String(name);
                 }
             }
-            let _ = hub
-                .passthrough_tx
-                .send(Arc::new(serde_json::to_string(&cot).unwrap_or_default()));
+            let cot_json = serde_json::to_string(&cot).unwrap_or_default();
+
+            // Store position in local room and broadcast cot_state so relay WebView
+            // shows the BLE peer's GPS position
+            let chat_id = crate::ws_server::chat_id_from_name(room_name);
+            let rid = crate::ws_server::chat_id_hex(&chat_id);
+            let rooms = hub.rooms.read().await;
+            if let Some(room_arc) = rooms.get(&chat_id) {
+                let mut room = room_arc.write().await;
+                if let Some(data) = cot.get("data") {
+                    let sid = data.get("sender_id").and_then(|v| v.as_str()).unwrap_or(source_peer_id);
+                    room.cot_positions.insert(sid.to_string(), data.clone());
+                }
+                // Broadcast full cot_state to local clients
+                let contacts: Vec<serde_json::Value> = room.cot_positions.values().cloned().collect();
+                let markers: Vec<serde_json::Value> = room.markers.clone();
+                let state_msg = crate::ws_server::make_json("cot_state", &serde_json::json!({
+                    "room_id": rid,
+                    "contacts": contacts,
+                    "markers": markers,
+                }));
+                let _ = room.tx.send(Arc::new(state_msg));
+            }
+            drop(rooms);
+
+            let _ = hub.passthrough_tx.send(Arc::new(cot_json));
         }
 
         // BLE peer set_name — update peer directory only, do NOT forward to Go server
@@ -654,7 +677,7 @@ async fn handle_ble_ws_message(
             }
         }
 
-        // User-initiated actions from remote BLE peer — forward to passthrough
+        // User-initiated actions from remote BLE peer — forward to passthrough AND inject locally
         "send_message" | "start_dm" | "join_dm" | "edit_message"
         | "delete_message" | "add_reaction" | "remove_reaction" | "pin_message"
         | "unpin_message" | "join_voice" | "leave_voice" | "voice_offer" | "voice_answer"
@@ -666,15 +689,91 @@ async fn handle_ble_ws_message(
                     data["sender_name"] = serde_json::Value::String(name);
                 }
             }
-            let _ = hub.passthrough_tx.send(Arc::new(
-                serde_json::to_string(&outbound).unwrap_or_default(),
-            ));
+            let out_json = serde_json::to_string(&outbound).unwrap_or_default();
+
+            // Voice and CoT actions from BLE peers need to generate server-style
+            // response events locally so the relay phone's WebView sees them.
+            // Without upstream, passthrough goes nowhere — we must process locally.
+            let data = outbound.get("data");
+            let room_id_str = data.and_then(|d| d.get("room_id")).and_then(|v| v.as_str()).unwrap_or("");
+            let sender_id = data.and_then(|d| d.get("sender_id")).and_then(|v| v.as_str()).unwrap_or(source_peer_id);
+            let sender_name_val = data.and_then(|d| d.get("sender_name")).and_then(|v| v.as_str()).unwrap_or("");
+
+            match msg_type.as_str() {
+                "join_voice" => {
+                    let channel_id = data.and_then(|d| d.get("channel_id")).and_then(|v| v.as_str()).unwrap_or("");
+                    let joined_msg = crate::ws_server::make_json("voice_peer_joined", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": channel_id,
+                        "peer_id": sender_id,
+                        "name": sender_name_val,
+                    }));
+                    inject_into_room(hub, room_name, &joined_msg).await;
+                }
+                "leave_voice" => {
+                    let channel_id = data.and_then(|d| d.get("channel_id")).and_then(|v| v.as_str()).unwrap_or("");
+                    let left_msg = crate::ws_server::make_json("voice_peer_left", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": channel_id,
+                        "peer_id": sender_id,
+                    }));
+                    inject_into_room(hub, room_name, &left_msg).await;
+                }
+                "voice_speaking" => {
+                    let channel_id = data.and_then(|d| d.get("channel_id")).and_then(|v| v.as_str()).unwrap_or("");
+                    let speaking = data.and_then(|d| d.get("speaking")).and_then(|v| v.as_bool()).unwrap_or(false);
+                    let speak_msg = crate::ws_server::make_json("voice_speaking_broadcast", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": channel_id,
+                        "peer_id": sender_id,
+                        "speaking": speaking,
+                    }));
+                    inject_into_room(hub, room_name, &speak_msg).await;
+                }
+                "voice_offer" | "voice_answer" | "voice_ice" => {
+                    let relay_type = match msg_type.as_str() {
+                        "voice_offer" => "voice_offer_relay",
+                        "voice_answer" => "voice_answer_relay",
+                        _ => "voice_ice_relay",
+                    };
+                    let relay_msg = crate::ws_server::make_json(relay_type, &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": data.and_then(|d| d.get("channel_id")).and_then(|v| v.as_str()).unwrap_or(""),
+                        "from_id": sender_id,
+                        "sdp": data.and_then(|d| d.get("sdp")).unwrap_or(&serde_json::Value::Null),
+                        "candidate": data.and_then(|d| d.get("candidate")).unwrap_or(&serde_json::Value::Null),
+                    }));
+                    inject_into_room(hub, room_name, &relay_msg).await;
+                }
+                _ => {}
+            }
+
+            let _ = hub.passthrough_tx.send(Arc::new(out_json));
         }
 
         _ => {
             // Unknown type — forward via downstream as best effort
             let _ = hub.downstream_tx.send(Arc::new(json.to_string()));
         }
+    }
+}
+
+/// Helper: get the hex room ID for a room name.
+fn room_id_for_room(room_name: &str) -> String {
+    let chat_id = crate::ws_server::chat_id_from_name(room_name);
+    crate::ws_server::chat_id_hex(&chat_id)
+}
+
+/// Inject a JSON message into a local room's broadcast channel.
+/// This makes BLE peer actions visible to the relay phone's WebView
+/// even when there's no upstream server to process them.
+#[cfg(feature = "bluetooth")]
+async fn inject_into_room(hub: &Arc<Hub>, room_name: &str, json: &str) {
+    let chat_id = crate::ws_server::chat_id_from_name(room_name);
+    let rooms = hub.rooms.read().await;
+    if let Some(room_arc) = rooms.get(&chat_id) {
+        let room = room_arc.read().await;
+        let _ = room.tx.send(Arc::new(json.to_string()));
     }
 }
 

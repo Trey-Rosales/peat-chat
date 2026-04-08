@@ -283,7 +283,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   meshViewerOpen: false,
   setMeshPeers: (roomId, peers) => {
     const meshPeers = { ...get().meshPeers }
-    meshPeers[roomId] = peers
+    // Preserve BLE/wifi-direct peers from bridge — they come via ble_mesh_state,
+    // not mesh_state. Without this, mesh_state overwrites them every broadcast.
+    const existing = meshPeers[roomId] || []
+    const bridgePeers = existing.filter((p) => p.transport === 'btle' || p.transport === 'wifi-direct')
+    // Dedup: don't re-add bridge peers that are also in the new server peers
+    const serverIds = new Set(peers.map((p) => p.id))
+    const uniqueBridgePeers = bridgePeers.filter((p) => !serverIds.has(p.id))
+    meshPeers[roomId] = [...peers, ...uniqueBridgePeers]
     set({ meshPeers })
   },
   mergeMeshPeers: (roomId, blePeers) => {
