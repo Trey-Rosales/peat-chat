@@ -599,6 +599,66 @@ func TestHub_JoinVoiceFromRelay_ShowsSeparateBleMember(t *testing.T) {
 	}
 }
 
+func TestHub_RegisterBlePeer_PromotesVoiceMemberFromProvisionalID(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "Relay")
+	observer := newTestClient(hub, "Observer")
+	hub.register <- relay
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(relay, "general")
+	hub.JoinRoom(observer, "general")
+	drainClientSend(relay, 20)
+	drainClientSend(observer, 20)
+
+	room := hub.getOrCreateRoom("general")
+	roomHex := ChatIdHex(room.ID)
+	var vcID string
+	for id := range room.VoiceChannels {
+		vcID = id
+		break
+	}
+
+	hub.RegisterBlePeer(relay, "mac-aa-bb", "Temp")
+	hub.JoinVoiceFromRelay(relay, roomHex, vcID, "mac-aa-bb", "Temp")
+	drainClientSend(observer, 10)
+
+	hub.RegisterBlePeer(relay, "ble-node-1", "Charlie")
+
+	msgs := drainClientSend(observer, 20)
+	var sawFinal bool
+	var sawProvisional bool
+	for _, msg := range msgs {
+		if msg.Type != "voice_state" {
+			continue
+		}
+		var data VoiceStateData
+		if err := json.Unmarshal(msg.Data, &data); err != nil {
+			t.Fatalf("failed to unmarshal voice_state: %v", err)
+		}
+		for _, ch := range data.Channels {
+			for _, member := range ch.Members {
+				if member.ID == "ble-node-1" && member.Name == "Charlie" {
+					sawFinal = true
+				}
+				if member.ID == "mac-aa-bb" {
+					sawProvisional = true
+				}
+			}
+		}
+	}
+
+	if !sawFinal {
+		t.Fatal("voice_state should promote provisional BLE voice member to final node id")
+	}
+	if sawProvisional {
+		t.Fatal("voice_state should not keep provisional BLE voice member after promotion")
+	}
+}
+
 // drainClientSend collects up to n messages from the client's send channel
 // with a short timeout per message.
 func drainClientSend(client *Client, n int) []WSMessage {

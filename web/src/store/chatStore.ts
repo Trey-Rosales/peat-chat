@@ -10,6 +10,60 @@ function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMe
   return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp)
 }
 
+function normalizeVoiceMember(member: unknown): VoiceMember | null {
+  if (!member || typeof member !== 'object') return null
+  const raw = member as Record<string, unknown>
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (!id) return null
+
+  const shortIdRaw = typeof raw.short_id === 'string' ? raw.short_id.trim() : ''
+  const shortId = shortIdRaw || id.slice(0, 12)
+  const nameRaw = typeof raw.name === 'string' ? raw.name.trim() : ''
+
+  return {
+    id,
+    name: nameRaw || shortId || 'Unknown',
+    short_id: shortId,
+    speaking: Boolean(raw.speaking),
+    muted: typeof raw.muted === 'boolean' ? raw.muted : undefined,
+  }
+}
+
+function normalizeVoiceChannel(channel: unknown): VoiceChannel | null {
+  if (!channel || typeof channel !== 'object') return null
+  const raw = channel as Record<string, unknown>
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (!id) return null
+
+  const nameRaw = typeof raw.name === 'string' ? raw.name.trim() : ''
+  const members = Array.isArray(raw.members) ? raw.members : []
+  const membersById = new Map<string, VoiceMember>()
+  for (const member of members) {
+    const normalized = normalizeVoiceMember(member)
+    if (normalized) {
+      membersById.set(normalized.id, normalized)
+    }
+  }
+
+  return {
+    id,
+    name: nameRaw || 'Voice',
+    members: Array.from(membersById.values()),
+  }
+}
+
+function normalizeVoiceChannels(channels: unknown): VoiceChannel[] {
+  if (!Array.isArray(channels)) return []
+  const byId = new Map<string, VoiceChannel>()
+  for (const channel of channels) {
+    const normalized = normalizeVoiceChannel(channel)
+    if (normalized) {
+      byId.set(normalized.id, normalized)
+    }
+  }
+  return Array.from(byId.values())
+}
+
 interface ChatStore {
   userId: string
   shortId: string
@@ -255,7 +309,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setVoiceState: (roomId, channels) => {
     const voiceState = { ...get().voiceState }
-    voiceState[roomId] = channels
+    voiceState[roomId] = normalizeVoiceChannels(channels)
     set({ voiceState })
   },
 
@@ -282,7 +336,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   addVoiceChannel: (roomId, channel) => {
     const voiceState = { ...get().voiceState }
     const channels = voiceState[roomId] || []
-    voiceState[roomId] = [...channels, { ...channel, members: [] }]
+    const normalized = normalizeVoiceChannel({ ...channel, members: [] })
+    if (!normalized) return
+    if (channels.some((existing) => existing.id === normalized.id)) return
+    voiceState[roomId] = [...channels, normalized]
     set({ voiceState })
   },
 
@@ -290,10 +347,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const voiceState = { ...get().voiceState }
     const channels = voiceState[roomId]
     if (!channels) return
+    const normalizedPeer = normalizeVoiceMember(peer)
+    if (!normalizedPeer) return
     voiceState[roomId] = channels.map((ch) => {
       if (ch.id !== channelId) return ch
-      if (ch.members.some((m) => m.id === peer.id)) return ch
-      return { ...ch, members: [...ch.members, peer] }
+      if (ch.members.some((m) => m.id === normalizedPeer.id)) return ch
+      return { ...ch, members: [...ch.members, normalizedPeer] }
     })
     set({ voiceState })
   },

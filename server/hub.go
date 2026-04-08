@@ -299,27 +299,33 @@ func min(a, b int) int {
 
 // RegisterBlePeer makes a BLE peer visible to other clients via the relay.
 func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
+	var stalePeerIDs []string
 	h.mu.Lock()
 	// Remove any stale provisional entries for the same relay (MAC-address registrations)
 	for id, bp := range h.blePeers {
 		if bp.Relay == relay && id != peerID {
+			stalePeerIDs = append(stalePeerIDs, id)
 			delete(h.blePeers, id)
 			log.Printf("BLE peer unregistered (stale provisional): %s", id[:min(12, len(id))])
 		}
 	}
-	h.blePeers[peerID] = &BlePeer{
+	peer := &BlePeer{
 		PeerID:   peerID,
 		PeerName: peerName,
 		Relay:    relay,
 	}
+	h.blePeers[peerID] = peer
 	h.mu.Unlock()
 	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:min(12, len(peerID))], relay.name)
 
-	// Update name in any voice channels this peer is in
+	// Rewrite any provisional room state to the final BLE node ID, then refresh names.
 	relay.mu.RLock()
 	for roomID := range relay.rooms {
 		h.mu.RLock()
 		if room, ok := h.rooms[roomID]; ok {
+			for _, stalePeerID := range stalePeerIDs {
+				room.PromoteBlePeer(stalePeerID, peer)
+			}
 			room.UpdateBlePeerName(peerID, peerName)
 		}
 		h.mu.RUnlock()

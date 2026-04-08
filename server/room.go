@@ -537,6 +537,49 @@ func (r *Room) UpdateBlePeerName(peerID, newName string) {
 	}
 }
 
+// PromoteBlePeer rewrites any provisional BLE peer membership/state to the final peer ID.
+func (r *Room) PromoteBlePeer(oldPeerID string, peer *BlePeer) {
+	if oldPeerID == "" || peer == nil || oldPeerID == peer.PeerID {
+		return
+	}
+
+	r.mu.RLock()
+	channels := make([]*VoiceChannel, 0, len(r.VoiceChannels))
+	for _, vc := range r.VoiceChannels {
+		channels = append(channels, vc)
+	}
+	r.mu.RUnlock()
+
+	for _, vc := range channels {
+		vc.mu.Lock()
+		if existing, ok := vc.BleMembers[oldPeerID]; ok {
+			if peer.PeerName == "" && existing.PeerName != "" {
+				peer.PeerName = existing.PeerName
+			}
+			delete(vc.BleMembers, oldPeerID)
+			vc.BleMembers[peer.PeerID] = peer
+		}
+		if speaking := vc.BleSpeaking[oldPeerID]; speaking {
+			delete(vc.BleSpeaking, oldPeerID)
+			vc.BleSpeaking[peer.PeerID] = true
+		} else {
+			delete(vc.BleSpeaking, oldPeerID)
+		}
+		vc.mu.Unlock()
+	}
+
+	r.mu.Lock()
+	if contact, ok := r.BleCotPositions[oldPeerID]; ok {
+		delete(r.BleCotPositions, oldPeerID)
+		contact.SenderID = peer.PeerID
+		if peer.PeerName != "" {
+			contact.SenderName = peer.PeerName
+		}
+		r.BleCotPositions[peer.PeerID] = contact
+	}
+	r.mu.Unlock()
+}
+
 func (r *Room) SetBleCotPosition(senderID, senderName string, pos *CotPosition) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

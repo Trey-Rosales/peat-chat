@@ -167,6 +167,28 @@ describe('chatStore - voice', () => {
     expect(vs[0].name).toBe('General')
   })
 
+  it('normalizes malformed voice state payloads', () => {
+    useChatStore.getState().setVoiceState('r1', [
+      null as any,
+      { id: 'vc1', name: { bad: true }, members: [
+        { id: 'p1', name: 'Alice', short_id: '', speaking: 1 },
+        { id: 'p1', name: 'Alice Duplicate', short_id: 'dup', speaking: false },
+        { id: '', name: 'No ID', speaking: false },
+      ] },
+      { id: '', name: 'Missing channel id', members: [] },
+    ] as any)
+
+    const vs = useChatStore.getState().voiceState['r1']
+    expect(vs).toHaveLength(1)
+    expect(vs[0].id).toBe('vc1')
+    expect(vs[0].name).toBe('Voice')
+    expect(vs[0].members).toHaveLength(1)
+    expect(vs[0].members[0].id).toBe('p1')
+    expect(typeof vs[0].members[0].name).toBe('string')
+    expect(vs[0].members[0].name.length).toBeGreaterThan(0)
+    expect(typeof vs[0].members[0].short_id).toBe('string')
+  })
+
   it('sets and clears active voice', () => {
     useChatStore.getState().setActiveVoice('r1', 'vc1')
     const av = useChatStore.getState().activeVoice
@@ -224,6 +246,25 @@ describe('chatStore - voice', () => {
     const members = useChatStore.getState().voiceState['r1'][0].members
     expect(members).toHaveLength(1)
     expect(members[0].name).toBe('Alice')
+  })
+
+  it('normalizes voice peer fields when joining incrementally', () => {
+    useChatStore.getState().setVoiceState('r1', [
+      { id: 'vc1', name: 'General', members: [] },
+    ])
+
+    useChatStore.getState().addVoicePeer('r1', 'vc1', {
+      id: 'ble-peer-1', name: '', short_id: '', speaking: 1 as any,
+    } as any)
+
+    const members = useChatStore.getState().voiceState['r1'][0].members
+    expect(members).toEqual([{
+      id: 'ble-peer-1',
+      name: 'ble-peer-1',
+      short_id: 'ble-peer-1',
+      speaking: true,
+      muted: undefined,
+    }])
   })
 
   it('does not duplicate voice peer', () => {

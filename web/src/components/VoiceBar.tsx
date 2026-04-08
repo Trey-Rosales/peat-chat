@@ -11,7 +11,7 @@ class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasErro
     if (this.state.hasError) {
       return (
         <div className="border-t border-pl-border bg-pl-header px-3 py-2 text-xs text-red-400">
-          Voice: {this.state.errorMsg} — <button onClick={() => this.setState({ hasError: false, errorMsg: '' })} className="underline">retry</button>
+          Voice: {String(this.state.errorMsg || 'Unknown')} - <button onClick={() => this.setState({ hasError: false, errorMsg: '' })} className="underline">retry</button>
         </div>
       )
     }
@@ -54,8 +54,9 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
 
   const room = rooms[activeVoice.roomId]
   if (!room) return null // Room might not exist yet
-  const channels = voiceState[activeVoice.roomId] || []
+  const channels = Array.isArray(voiceState[activeVoice.roomId]) ? voiceState[activeVoice.roomId] : []
   const channel = channels.find((c) => c.id === activeVoice.channelId)
+  const memberCount = Array.isArray(channel?.members) ? channel.members.length : 0
 
   const keyLabel = !pttKey ? 'Space' : pttKey === ' ' ? 'Space' : pttKey.length === 1 ? pttKey.toUpperCase() : pttKey
 
@@ -101,7 +102,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
             {muted && <span className="text-red-400 ml-1">(Muted)</span>}
           </div>
           <div className="text-[10px] text-pl-text-sec truncate">
-            {String(room?.name || '')} · {Number(channel?.members?.length || 0)} member{(channel?.members?.length || 0) !== 1 ? 's' : ''}
+            {String(room?.name || '')} · {memberCount} member{memberCount !== 1 ? 's' : ''}
           </div>
         </div>
 

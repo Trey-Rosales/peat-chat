@@ -28,6 +28,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
   const meshPeers = useChatStore((s) => s.meshPeers)
 
   const [showDMPicker, setShowDMPicker] = useState(false)
+  const safeDisplayName = String(displayName || '?')
 
   const allRooms = Object.values(rooms)
   const regularRooms = allRooms.filter((r) => !r.isDM).sort((a, b) => {
@@ -68,10 +69,10 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
       <div className="px-4 py-3 bg-pl-header flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-full bg-pl-accent flex items-center justify-center text-white font-semibold text-sm shrink-0">
-            {displayName.charAt(0).toUpperCase()}
+            {safeDisplayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-pl-text truncate">{displayName}</div>
+            <div className="text-sm font-medium text-pl-text truncate">{safeDisplayName}</div>
             <div className="flex items-center gap-1.5">
               <div className={`w-2 h-2 rounded-full shrink-0 ${connected ? 'bg-pl-accent' : 'bg-pl-danger'}`} />
               <span className="text-xs text-pl-text-sec">{shortId}</span>
@@ -128,9 +129,9 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
             {room.id === activeRoomId && voiceState[room.id] && (
               <VoiceChannelList
                 roomId={room.id}
-                channels={voiceState[room.id]}
+                channels={Array.isArray(voiceState[room.id]) ? voiceState[room.id] : []}
                 onJoinChannel={(channelId) => {
-                  const channels = voiceState[room.id] || []
+                  const channels = Array.isArray(voiceState[room.id]) ? voiceState[room.id] : []
                   const channel = channels.find((c) => c.id === channelId)
                   onJoinVoice(room.id, channelId, channel?.members || [])
                 }}
@@ -205,7 +206,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
       {/* Voice error toast */}
       {voiceError && (
         <div className="mx-2 mb-2 px-3 py-2 bg-pl-danger/15 border border-pl-danger/30 rounded-lg text-xs text-pl-danger">
-          {voiceError}
+          {String(voiceError)}
         </div>
       )}
 

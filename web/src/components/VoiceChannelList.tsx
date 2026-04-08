@@ -22,6 +22,7 @@ export function VoiceChannelList({
   const activeVoice = useChatStore((s) => s.activeVoice)
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
+  const safeChannels = Array.isArray(channels) ? channels : []
 
   const isInChannel = (channelId: string) =>
     activeVoice?.roomId === roomId && activeVoice?.channelId === channelId
@@ -80,8 +81,10 @@ export function VoiceChannelList({
       )}
 
       {/* Channel list */}
-      {channels.map((channel) => {
+      {safeChannels.map((channel) => {
         const inThis = isInChannel(channel.id)
+        const memberCount = Array.isArray(channel.members) ? channel.members.length : 0
+        const members = Array.isArray(channel.members) ? channel.members : []
         return (
           <div key={channel.id} className="mb-1">
             <button
@@ -109,25 +112,25 @@ export function VoiceChannelList({
                 className="shrink-0"
               >
                 <path d="M11 5L6 9H2v6h4l5 4V5z" />
-                {channel.members.length > 0 && (
+                {memberCount > 0 && (
                   <>
                     <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
                   </>
                 )}
               </svg>
-              <span className="text-xs font-medium truncate">{channel.name}</span>
-              {channel.members.length > 0 && (
+              <span className="text-xs font-medium truncate">{String(channel.name || 'Voice')}</span>
+              {memberCount > 0 && (
                 <span className="text-[10px] text-pl-text-sec ml-auto shrink-0">
-                  {channel.members.length}
+                  {memberCount}
                 </span>
               )}
             </button>
 
             {/* Members in this channel */}
-            {channel.members.length > 0 && (
+            {memberCount > 0 && (
               <div className="ml-4 mt-0.5">
-                {channel.members.map((member) => (
+                {members.map((member) => (
                   <VoiceMemberItem
                     key={member.id}
                     member={member}

@@ -5,7 +5,7 @@ const ICE_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 }
 
-const BLE_SAMPLE_RATE = 16000
+const BLE_SAMPLE_RATE = 8000 // must match BleVoiceService.SAMPLE_RATE
 const BLE_FRAME_SAMPLES = 320
 const BLE_POLL_MS = 20
 
@@ -30,6 +30,7 @@ declare global {
       stopPtt(): void
       isTransmitting(): boolean
       hasBleVoice(): boolean
+      setBridgeLocalMic?(enabled: boolean): void
       pollIncomingFrames?(): string
       sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
       setVoiceMode?(mode: string): void
@@ -65,6 +66,8 @@ export class VoiceManager {
   private noiseGateActive = false
   private noiseGateAnalyser: AnalyserNode | null = null
   private noiseGateTimer: ReturnType<typeof setInterval> | null = null
+  private localInputVolume = useSettingsStore.getState().inputVolume
+  private localMicMuted = true
 
   constructor(send: (type: string, data: any) => void) {
     this.send = send
@@ -167,14 +170,17 @@ export class VoiceManager {
     // AudioContext/getUserMedia may be limited
     try {
       const settings = useSettingsStore.getState()
+      this.localInputVolume = settings.inputVolume
+      this.localMicMuted = true
       this.audioContext = new AudioContext()
       this.gainNode = this.audioContext.createGain()
-      this.gainNode.gain.value = settings.inputVolume
+      this.gainNode.gain.value = 0
       this.destinationNode = this.audioContext.createMediaStreamDestination()
       this.gainNode.connect(this.destinationNode)
       this.bleIncomingGain = this.audioContext.createGain()
       this.bleIncomingGain.connect(this.destinationNode)
-      this.bleIncomingGain.connect(this.audioContext.destination)
+      // NOT connected to audioContext.destination — native AudioTrack handles
+      // local playback. Connecting to speakers causes feedback (own mic echo).
       this.blePlaybackCursor = this.audioContext.currentTime
       await this.audioContext.resume().catch(() => {})
 
@@ -193,11 +199,14 @@ export class VoiceManager {
 
       const processedTrack = this.destinationNode.stream.getAudioTracks()[0]
       if (processedTrack) {
-        processedTrack.enabled = false
+        processedTrack.enabled = true
       }
+
+      this.syncNativeMicBridge()
     } catch (err) {
       console.warn('Audio setup failed (BLE voice still available):', err)
       this._listenOnly = true
+      this.syncNativeMicBridge()
     }
 
     this.startBleBridge()
@@ -267,6 +276,7 @@ export class VoiceManager {
       this.audioContext.close()
       this.audioContext = null
     }
+    this.syncNativeMicBridge(false)
     this.gainNode = null
     this.destinationNode = null
     this.bleIncomingGain = null
@@ -422,16 +432,16 @@ export class VoiceManager {
   }
 
   setMuted(muted: boolean): void {
-    if (!this.destinationNode) return
-    const track = this.destinationNode.stream.getAudioTracks()[0]
-    if (track) {
-      track.enabled = !muted
+    this.localMicMuted = muted
+    if (this.gainNode) {
+      this.gainNode.gain.value = muted ? 0 : this.localInputVolume
     }
   }
 
   setInputVolume(vol: number): void {
+    this.localInputVolume = vol
     if (this.gainNode) {
-      this.gainNode.gain.value = vol
+      this.gainNode.gain.value = this.localMicMuted ? 0 : vol
     }
   }
 
@@ -452,20 +462,8 @@ export class VoiceManager {
     }
     this.sourceNode = this.audioContext.createMediaStreamSource(newStream)
     this.sourceNode.connect(this.gainNode)
-
-    const oldTrack = this.destinationNode.stream.getAudioTracks()[0]
-    const wasMuted = oldTrack ? !oldTrack.enabled : true
-
-    const newTrack = this.destinationNode.stream.getAudioTracks()[0]
-    if (newTrack) {
-      newTrack.enabled = !wasMuted
-      for (const pc of this.peers.values()) {
-        const sender = pc.getSenders().find((s) => s.track?.kind === 'audio')
-        if (sender) {
-          await sender.replaceTrack(newTrack)
-        }
-      }
-    }
+    this.gainNode.gain.value = this.localMicMuted ? 0 : this.localInputVolume
+    this.syncNativeMicBridge()
   }
 
   setSpeakerDevice(deviceId: string): void {
@@ -518,6 +516,14 @@ export class VoiceManager {
       clearInterval(this.bleBridgeTimer)
       this.bleBridgeTimer = null
     }
+  }
+
+  private syncNativeMicBridge(force?: boolean): void {
+    if (!window.PeatLinkVoice?.setBridgeLocalMic) return
+    const enable = force ?? (!this.localStream && !!window.PeatLinkVoice?.hasBleVoice?.())
+    try {
+      window.PeatLinkVoice.setBridgeLocalMic(enable)
+    } catch {}
   }
 
   private drainIncomingBleFrames(): void {

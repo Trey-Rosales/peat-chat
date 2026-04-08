@@ -11,6 +11,7 @@ declare global {
       stopPtt(): void
       isTransmitting(): boolean
       hasBleVoice(): boolean
+      setBridgeLocalMic?(enabled: boolean): void
       pollIncomingFrames?(): string
       sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
       setVoiceMode?(mode: string): void

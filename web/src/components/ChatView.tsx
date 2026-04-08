@@ -160,7 +160,7 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
   const peers = meshPeers[room.id] || []
   const inVoice = activeVoice?.roomId === room.id
-  const voiceChannels = voiceState[room.id] || []
+  const voiceChannels = Array.isArray(voiceState[room.id]) ? voiceState[room.id] : []
   const activeChannel = inVoice
     ? voiceChannels.find((c) => c.id === activeVoice.channelId)
     : null
@@ -188,7 +188,7 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
             {room.members} member{room.members !== 1 ? 's' : ''}
             {activeChannel && (
               <span className="text-pl-accent ml-2">
-                &#x1f3a4; {activeChannel.name}
+                &#x1f3a4; {String(activeChannel.name || 'Voice')}
               </span>
             )}
           </div>
