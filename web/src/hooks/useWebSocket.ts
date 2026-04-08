@@ -57,6 +57,9 @@ export function useWebSocket(
       } else {
         ws.send(JSON.stringify({ type: 'join_room', data: { name: 'general' } }))
       }
+
+      // Request available public rooms for discovery
+      ws.send(JSON.stringify({ type: 'list_rooms', data: {} }))
     }
 
     ws.onclose = () => {
@@ -104,6 +107,11 @@ export function useWebSocket(
             state.setDisplayName((data as any).name)
             // Re-send set_name so the server session is updated
             ws.send(JSON.stringify({ type: 'set_name', data: { name: (data as any).name } }))
+          }
+          break
+        case 'room_list':
+          if (Array.isArray((data as any).rooms)) {
+            state.setAvailableRooms((data as any).rooms)
           }
           break
         case 'room_joined':

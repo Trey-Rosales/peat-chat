@@ -3,7 +3,7 @@ import { useChatStore } from '../store/chatStore'
 import { RoomItem } from './RoomItem'
 import { VoiceChannelList } from './VoiceChannelList'
 import { VoiceBar } from './VoiceBar'
-import type { VoiceMember } from '../types'
+import type { VoiceMember, RoomInfoData } from '../types'
 
 interface Props {
   onJoinRoom: () => void
@@ -28,8 +28,12 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
   const toggleSettings = useChatStore((s) => s.toggleSettings)
   const voiceError = useChatStore((s) => s.voiceError)
   const meshPeers = useChatStore((s) => s.meshPeers)
+  const availableRooms = useChatStore((s) => s.availableRooms)
 
   const [showDMPicker, setShowDMPicker] = useState(false)
+  const [showCreateRoom, setShowCreateRoom] = useState(false)
+  const [newRoomName, setNewRoomName] = useState('')
+  const [newRoomPublic, setNewRoomPublic] = useState(true)
   const safeDisplayName = String(displayName || '?')
 
   const allRooms = Object.values(rooms)
@@ -59,9 +63,30 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
     return peers.sort((a, b) => a.name.localeCompare(b.name))
   })()
 
+  // Public rooms the user hasn't joined yet
+  const joinedRoomIds = new Set(Object.keys(rooms))
+  const discoverableRooms = availableRooms.filter(
+    (r: RoomInfoData) => !joinedRoomIds.has(r.room_id)
+  )
+
   const handleStartDM = (targetId: string) => {
     send('start_dm', { target_id: targetId })
     setShowDMPicker(false)
+    onSelectRoom()
+  }
+
+  const handleCreateRoom = () => {
+    const name = newRoomName.trim()
+    if (!name) return
+    send('create_room', { name, is_public: newRoomPublic })
+    setNewRoomName('')
+    setNewRoomPublic(true)
+    setShowCreateRoom(false)
+    onSelectRoom()
+  }
+
+  const handleJoinDiscoveredRoom = (roomName: string) => {
+    send('join_room', { name: roomName })
     onSelectRoom()
   }
 
@@ -91,6 +116,17 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          {/* Create room */}
+          <button
+            onClick={() => setShowCreateRoom(!showCreateRoom)}
+            className="text-pl-text-sec hover:text-pl-text transition p-2 rounded-lg hover:bg-pl-hover active:bg-pl-active"
+            title="Create room"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M12 8v8M8 12h8" />
             </svg>
           </button>
           {/* Join room */}
@@ -145,6 +181,74 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
             )}
           </div>
         ))}
+
+        {/* Discover public rooms */}
+        {discoverableRooms.length > 0 && (
+          <>
+            <div className="px-3 pt-4 pb-1">
+              <div className="text-[10px] font-semibold text-pl-text-sec uppercase tracking-wider">Discover</div>
+            </div>
+            <div className="space-y-0.5">
+              {discoverableRooms.map((r: RoomInfoData) => (
+                <div
+                  key={r.room_id}
+                  className="mx-2 px-3 py-2 rounded-lg flex items-center justify-between hover:bg-pl-hover transition"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm text-pl-text-sec truncate"># {r.name}</div>
+                    <div className="text-[10px] text-pl-text-sec">{r.members} member{r.members !== 1 ? 's' : ''}</div>
+                  </div>
+                  <button
+                    onClick={() => handleJoinDiscoveredRoom(r.name)}
+                    className="text-[10px] font-medium text-pl-accent hover:text-pl-accent/80 px-2 py-1 rounded bg-pl-accent/10 hover:bg-pl-accent/20 transition shrink-0"
+                  >
+                    Join
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Create room dialog */}
+        {showCreateRoom && (
+          <div className="mx-2 mb-2 mt-2 bg-pl-bg rounded-lg border border-pl-border p-3">
+            <div className="text-xs font-medium text-pl-text mb-2">Create Room</div>
+            <input
+              type="text"
+              value={newRoomName}
+              onChange={(e) => setNewRoomName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateRoom() }}
+              placeholder="Room name"
+              className="w-full px-2 py-1.5 bg-pl-sidebar border border-pl-border rounded text-sm text-pl-text placeholder-pl-text-sec focus:outline-none focus:border-pl-accent mb-2"
+              autoFocus
+            />
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                onClick={() => setNewRoomPublic(!newRoomPublic)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${newRoomPublic ? 'bg-pl-accent' : 'bg-pl-border'}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${newRoomPublic ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
+              <span className="text-xs text-pl-text-sec">{newRoomPublic ? 'Public' : 'Private'}</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreateRoom}
+                disabled={!newRoomName.trim()}
+                className="flex-1 text-xs py-1.5 rounded bg-pl-accent text-white font-medium disabled:opacity-40 hover:bg-pl-accent/90 transition"
+              >
+                Create
+              </button>
+              <button
+                onClick={() => { setShowCreateRoom(false); setNewRoomName(''); setNewRoomPublic(true) }}
+                className="flex-1 text-xs py-1.5 rounded bg-pl-hover text-pl-text-sec font-medium hover:bg-pl-active transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* DMs section */}
         <div className="px-3 pt-4 pb-1 flex items-center justify-between">

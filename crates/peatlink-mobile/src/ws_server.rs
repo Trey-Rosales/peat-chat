@@ -65,6 +65,8 @@ pub(crate) struct Room {
     // DM metadata
     is_dm: bool,
     dm_participants: [String; 2], // sorted pair of identity IDs
+    // Room discovery
+    pub(crate) is_public: bool,
 }
 
 struct VoiceChannel {
@@ -98,6 +100,7 @@ impl Room {
             markers: Vec::new(),
             is_dm: false,
             dm_participants: [String::new(), String::new()],
+            is_public: true,
         }
     }
 
@@ -496,6 +499,11 @@ async fn handle_message(
                         "markers": markers,
                     })).await;
                 }
+
+                // Forward join_room to upstream so the relay joins this room
+                // on the Go server. Without this, messages from other clients
+                // in this room on the Go server never reach us.
+                let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
 
                 // Broadcast peer_update to others
                 let msg = make_json(
@@ -999,6 +1007,25 @@ async fn handle_message(
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
         }
 
+        "create_room" => {
+            let room_name = env.data.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let is_public = env.data.get("is_public").and_then(|v| v.as_bool()).unwrap_or(true);
+            if !room_name.is_empty() {
+                let room_arc = hub.get_or_create_room(room_name).await;
+                {
+                    let mut room = room_arc.write().await;
+                    room.is_public = is_public;
+                }
+                // Forward to upstream so Go server also creates/joins
+                let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+            }
+        }
+
+        "list_rooms" => {
+            let room_list = build_room_list(hub).await;
+            let _ = send_json(socket, "room_list", &serde_json::json!({ "rooms": room_list })).await;
+        }
+
         _ => {
             // Forward unrecognized message types to the passthrough channel
             // so the upstream relay can handle them (DMs, voice, CoT, etc.)
@@ -1062,6 +1089,23 @@ pub fn make_json(msg_type: &str, data: &serde_json::Value) -> String {
         "data": data,
     }))
     .unwrap_or_default()
+}
+
+async fn build_room_list(hub: &Arc<Hub>) -> Vec<serde_json::Value> {
+    let rooms = hub.rooms.read().await;
+    let mut list = Vec::new();
+    for (id, room_arc) in rooms.iter() {
+        let room = room_arc.read().await;
+        if room.is_public && !room.is_dm {
+            list.push(serde_json::json!({
+                "room_id": chat_id_hex(id),
+                "name": room.name,
+                "members": room.member_count(),
+                "is_public": true,
+            }));
+        }
+    }
+    list
 }
 
 fn build_voice_state(room: &Room, room_id: &str) -> String {

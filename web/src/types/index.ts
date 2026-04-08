@@ -84,6 +84,13 @@ export interface CotMarker {
   remarks: string
 }
 
+export interface RoomInfoData {
+  room_id: string
+  name: string
+  members: number
+  is_public: boolean
+}
+
 export interface WSMessage {
   type: string
   data: any

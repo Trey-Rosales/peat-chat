@@ -341,7 +341,7 @@ async fn handle_upstream_message(
             let local_room_exists = hub.find_room_by_hex(msg_room_id).await.is_some();
 
             if local_room_exists {
-                // Regular room (e.g., "general") — only inject messages from OTHER users
+                // Regular room — only inject messages from OTHER users
                 // (our own messages are already in the local Hub from the local send)
                 let sender = msg_val.get("sender").and_then(|v| v.as_str()).unwrap_or("");
                 let self_id = upstream_self_id.read().await;
@@ -352,7 +352,15 @@ async fn handle_upstream_message(
                 if let Ok(chat_msg) =
                     serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone())
                 {
-                    hub.inject_external_message(room_name, chat_msg).await;
+                    // Resolve the actual room name from the local Hub by hex ID,
+                    // don't hardcode to "general" — messages can be for any room
+                    let actual_room_name = if let Some((_, room_arc)) = hub.find_room_by_hex(msg_room_id).await {
+                        let room = room_arc.read().await;
+                        room.name.clone()
+                    } else {
+                        room_name.to_string()
+                    };
+                    hub.inject_external_message(&actual_room_name, chat_msg).await;
                 }
             } else {
                 // DM or other upstream-only room — forward ALL messages to WebView
@@ -400,7 +408,14 @@ async fn handle_upstream_message(
                         if let Ok(chat_msg) =
                             serde_json::from_value::<crate::ws_server::ChatMessage>(msg_val.clone())
                         {
-                            hub.inject_external_message(room_name, chat_msg).await;
+                            // Use the actual room name from the history, not the hardcoded default
+                            let actual_name = if let Some((_, r)) = hub.find_room_by_hex(history_room_id).await {
+                                let r = r.read().await;
+                                r.name.clone()
+                            } else {
+                                room_name.to_string()
+                            };
+                            hub.inject_external_message(&actual_name, chat_msg).await;
                         }
                     }
                 }
@@ -414,6 +429,7 @@ async fn handle_upstream_message(
         "peer_update"
         | "mesh_state"
         | "room_joined"
+        | "room_list"
         | "dm_opened"
         | "cot_state"
         | "marker_created"

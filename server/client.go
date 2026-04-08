@@ -158,6 +158,22 @@ func (c *Client) readPump() {
 				c.hub.JoinRoom(c, d.Name)
 			}
 
+		case "create_room":
+			var d CreateRoomData
+			if json.Unmarshal(msg.Data, &d) == nil && d.Name != "" {
+				room := c.hub.getOrCreateRoom(d.Name)
+				room.mu.Lock()
+				room.IsPublic = d.IsPublic
+				room.mu.Unlock()
+				c.hub.JoinRoom(c, d.Name)
+				if d.IsPublic {
+					c.hub.broadcastRoomList()
+				}
+			}
+
+		case "list_rooms":
+			c.hub.sendRoomListTo(c)
+
 		case "send_message":
 			var d SendMessageData
 			if json.Unmarshal(msg.Data, &d) != nil || d.Content == "" {
@@ -452,6 +468,9 @@ func serveWs(hub *Hub, w any, r any, conn *websocket.Conn, defaultName string) {
 		ID:      client.identity.ID,
 		ShortID: client.identity.ShortID,
 	})
+
+	// Send available public rooms so the client can discover them
+	hub.sendRoomListTo(client)
 
 	log.Printf("client connected: %s (%s)", client.name, client.identity.ShortID)
 

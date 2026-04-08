@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, CotContact, CotMarker, MeshPeer, Room, VoiceChannel, VoiceMember } from '../types'
+import type { ChatMessage, CotContact, CotMarker, MeshPeer, Room, RoomInfoData, VoiceChannel, VoiceMember } from '../types'
 
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const byId = new Map(existing.map((msg) => [msg.id, msg]))
@@ -93,6 +93,10 @@ interface ChatStore {
 
   // DMs
   addDMRoom: (id: string, name: string, peerId: string, peerName: string) => void
+
+  // Room discovery
+  availableRooms: RoomInfoData[]
+  setAvailableRooms: (rooms: RoomInfoData[]) => void
 
   connected: boolean
   setConnected: (c: boolean) => void
@@ -274,6 +278,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
     set({ rooms })
   },
+
+  // Room discovery
+  availableRooms: [],
+  setAvailableRooms: (rooms) => set({ availableRooms: rooms }),
 
   connected: false,
   setConnected: (c) => set({ connected: c }),

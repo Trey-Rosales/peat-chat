@@ -52,6 +52,7 @@ type Room struct {
 	BleCotPositions map[string]*BleCotContact // BLE peer CoT (sender_id -> contact)
 	PinnedMessages  map[string]bool           // message ID -> true
 	IsDM            bool
+	IsPublic        bool      // whether this room is visible in room discovery
 	DMParticipants  [2]string // two client identity IDs (only for DM rooms)
 	mu              sync.RWMutex
 }
@@ -75,6 +76,7 @@ func NewRoom(name string) *Room {
 		CotPositions:    make(map[*Client]*CotPosition),
 		BleCotPositions: make(map[string]*BleCotContact),
 		PinnedMessages:  make(map[string]bool),
+		IsPublic:        true, // rooms are public by default
 	}
 }
 

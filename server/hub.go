@@ -128,6 +128,45 @@ func (h *Hub) getRoomByHex(hexID string) *Room {
 	return nil
 }
 
+// buildRoomList returns RoomInfoData for all public, non-DM rooms.
+// Caller must NOT hold h.mu.
+func (h *Hub) buildRoomList() []RoomInfoData {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var rooms []RoomInfoData
+	for id, room := range h.rooms {
+		room.mu.RLock()
+		if room.IsPublic && !room.IsDM {
+			rooms = append(rooms, RoomInfoData{
+				RoomID:   ChatIdHex(id),
+				Name:     room.Name,
+				Members:  len(room.Members),
+				IsPublic: true,
+			})
+		}
+		room.mu.RUnlock()
+	}
+	return rooms
+}
+
+// broadcastRoomList sends the list of public rooms to ALL connected clients.
+func (h *Hub) broadcastRoomList() {
+	rooms := h.buildRoomList()
+	data := RoomListData{Rooms: rooms}
+
+	h.mu.RLock()
+	for client := range h.clients {
+		client.sendJSON("room_list", data)
+	}
+	h.mu.RUnlock()
+}
+
+// sendRoomListTo sends the list of public rooms to a single client.
+func (h *Hub) sendRoomListTo(client *Client) {
+	rooms := h.buildRoomList()
+	client.sendJSON("room_list", RoomListData{Rooms: rooms})
+}
+
 func (h *Hub) JoinRoom(client *Client, roomName string) {
 	room := h.getOrCreateRoom(roomName)
 
@@ -191,6 +230,7 @@ func (h *Hub) JoinRoom(client *Client, roomName string) {
 	room.Broadcast(data, client)
 
 	h.broadcastMeshState(room)
+	h.broadcastRoomList()
 }
 
 func (h *Hub) LeaveRoom(client *Client, room *Room) {

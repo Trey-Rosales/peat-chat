@@ -409,6 +409,26 @@ type MessageUnpinnedData struct {
 	MessageID string `json:"message_id"`
 }
 
+// --- Room discovery ---
+
+// Incoming: create_room
+type CreateRoomData struct {
+	Name     string `json:"name"`
+	IsPublic bool   `json:"is_public"`
+}
+
+// Outgoing: room_list
+type RoomListData struct {
+	Rooms []RoomInfoData `json:"rooms"`
+}
+
+type RoomInfoData struct {
+	RoomID   string `json:"room_id"`
+	Name     string `json:"name"`
+	Members  int    `json:"members"`
+	IsPublic bool   `json:"is_public"`
+}
+
 // --- BLE Peer Registration ---
 
 // Incoming: register_ble_peer — relay registers a BLE peer as reachable through it
