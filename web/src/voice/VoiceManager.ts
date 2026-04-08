@@ -511,8 +511,12 @@ export class VoiceManager {
       const speaking = window.PeatLinkVoice.isVoiceDetected()
       if (speaking !== this._bleSpeakingState) {
         this._bleSpeakingState = speaking
-        // Unmute/mute the WebRTC gain so native mic audio reaches peers
-        this.setMuted(!speaking)
+        // Only control WebRTC gain from native detection when WebView has no mic
+        // (native 8kHz bridge mode). When WebView has mic (localStream exists),
+        // the WebView's own noise gate or PTT handles gain — don't interfere.
+        if (!this.localStream) {
+          this.setMuted(!speaking)
+        }
         this.send('voice_speaking', {
           room_id: this.roomId,
           channel_id: this.channelId,

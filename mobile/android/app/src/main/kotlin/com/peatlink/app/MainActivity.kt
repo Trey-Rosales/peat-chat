@@ -372,13 +372,17 @@ class MainActivity : AppCompatActivity() {
                     bleService = svc
                     Log.i(TAG, "BLE platform service started")
 
-                    // Start BLE voice audio service (native, no WebView)
-                    val voice = BleVoiceService()
-                    voice.start()
-                    bleVoice = voice
-                    // Wire voice to BLE transport
-                    svc.voiceService = voice
-                    Log.i(TAG, "BLE voice service started (native Opus 8kbps)")
+                    // Start BLE voice audio service (separate try-catch so BLE keeps working if voice fails)
+                    try {
+                        val voice = BleVoiceService()
+                        voice.start()
+                        bleVoice = voice
+                        svc.voiceService = voice
+                        Log.i(TAG, "BLE voice service started (native Opus 8kbps)")
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "BLE voice service failed to start: ${e.message}", e)
+                        // BLE data still works, just no voice
+                    }
                 } catch (e: Throwable) {
                     Log.w(TAG, "BLE mesh/service failed: ${e.message}")
                 }
