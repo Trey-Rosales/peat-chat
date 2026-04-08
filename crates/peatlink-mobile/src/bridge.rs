@@ -411,7 +411,7 @@ async fn bridge_loop(
                 let _ = ble_send_tx.send(payload.into_bytes());
             }
 
-            // === Periodic BLE peer state → mesh_state ===
+            // === Periodic BLE peer state → mesh_state + re-register upstream ===
             _ = peer_interval.tick() => {
                 // Skip mesh broadcast if voice was active in the last 2 seconds (Serval-inspired backoff)
                 if last_voice_activity.elapsed() < Duration::from_secs(2) {
@@ -419,6 +419,19 @@ async fn bridge_loop(
                 }
                 if !ble_peers.names_by_id.is_empty() {
                     broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peers.names_by_id, &self_node_id).await;
+
+                    // Re-register BLE peers with upstream Go server periodically.
+                    // This ensures peers are visible even if the upstream relay
+                    // connected AFTER the BLE peer (initial registration was lost
+                    // because broadcast channels only deliver after subscription).
+                    for (peer_id, peer_name) in ble_peers.names_by_id.iter() {
+                        if peer_id.contains(':') { continue; } // skip provisional MAC entries
+                        let reg = crate::ws_server::make_json("register_ble_peer", &serde_json::json!({
+                            "peer_id": peer_id,
+                            "peer_name": peer_name,
+                        }));
+                        let _ = hub.passthrough_tx.send(Arc::new(reg));
+                    }
                 }
             }
 
