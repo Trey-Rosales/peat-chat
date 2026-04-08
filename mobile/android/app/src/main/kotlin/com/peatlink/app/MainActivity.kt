@@ -562,7 +562,8 @@ class MainActivity : AppCompatActivity() {
 
                 val wdStatus = wifiDirectService?.status ?: "off"
                 val wdPeers = wifiDirectService?.connectedPeerCount ?: 0
-                if (wdStatus != "off") {
+                // Only show WD status when actively connected or discovering (not standby/off)
+                if (wdStatus != "off" && wdStatus != "standby") {
                     parts.add("WD: $wdStatus" + if (wdPeers > 0) " ($wdPeers)" else "")
                 }
 

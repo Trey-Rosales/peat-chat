@@ -91,13 +91,13 @@ class PeatWifiDirectService(
         channel = try {
             manager!!.initialize(context, context.mainLooper, null)
         } catch (e: Throwable) {
-            Log.e(TAG, "Channel init failed: ${e.message}")
-            status = "channel init failed"
+            Log.w(TAG, "WiFi Direct init deferred (WiFi may be off): ${e.message}")
+            status = "standby"
             return
         }
         if (channel == null) {
-            status = "channel init returned null"
-            Log.e(TAG, status)
+            Log.w(TAG, "WiFi Direct channel not available yet — will retry on next app launch")
+            status = "standby"
             return
         }
 
@@ -355,7 +355,7 @@ class PeatWifiDirectService(
 
         override fun onFailure(reason: Int) {
             val msg = when (reason) {
-                WifiP2pManager.BUSY -> "BUSY"
+                WifiP2pManager.BUSY -> "BUSY (normal if no peers nearby)"
                 WifiP2pManager.ERROR -> "ERROR"
                 WifiP2pManager.P2P_UNSUPPORTED -> "P2P_UNSUPPORTED"
                 else -> "UNKNOWN($reason)"
