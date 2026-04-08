@@ -329,6 +329,17 @@ async fn bridge_loop(
 
             // === WS → BLE: Hub room broadcasts (chat messages in "general") ===
             Ok(broadcast) = room_rx.recv() => {
+                // Skip empty mesh_state from local room (only has self as member).
+                // The Go server's mesh_state (via downstream) has the real peer list.
+                if let Ok(env) = serde_json::from_str::<serde_json::Value>(&*broadcast) {
+                    if env.get("type").and_then(|v| v.as_str()) == Some("mesh_state") {
+                        if let Some(peers) = env.pointer("/data/peers").and_then(|v| v.as_array()) {
+                            if peers.is_empty() {
+                                continue; // skip empty local mesh_state
+                            }
+                        }
+                    }
+                }
                 forward_ws_to_ble(&broadcast, &ble_send_tx, &seen_ids).await;
             }
 
