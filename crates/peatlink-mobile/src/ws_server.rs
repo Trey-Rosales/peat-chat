@@ -62,6 +62,9 @@ pub(crate) struct Room {
     cot_positions: HashMap<String, serde_json::Value>,
     // Map markers
     markers: Vec<serde_json::Value>,
+    // DM metadata
+    is_dm: bool,
+    dm_participants: [String; 2], // sorted pair of identity IDs
 }
 
 struct VoiceChannel {
@@ -93,6 +96,8 @@ impl Room {
             }],
             cot_positions: HashMap::new(),
             markers: Vec::new(),
+            is_dm: false,
+            dm_participants: [String::new(), String::new()],
         }
     }
 
@@ -117,6 +122,12 @@ pub struct Hub {
     pub relay_tx: broadcast::Sender<Arc<String>>,
     /// Channel for messages from upstream that should be sent to all local WebView clients.
     pub downstream_tx: broadcast::Sender<Arc<String>>,
+    /// Known peers from mesh state / peer updates (identity -> name).
+    /// Used for local DM peer lookup when offline.
+    known_peers: RwLock<HashMap<String, String>>,
+    /// Active client sessions (client_id -> (identity, sender)).
+    /// Used to deliver DM notifications to local WebSocket clients.
+    active_sessions: RwLock<HashMap<u64, (String, mpsc::Sender<Arc<String>>)>>,
 }
 
 impl Hub {
@@ -134,6 +145,8 @@ impl Hub {
             passthrough_tx,
             relay_tx,
             downstream_tx,
+            known_peers: RwLock::new(HashMap::new()),
+            active_sessions: RwLock::new(HashMap::new()),
         }
     }
 
@@ -293,6 +306,17 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
     // Channel for room broadcast messages
     let (fwd_tx, mut fwd_rx) = mpsc::channel::<Arc<String>>(256);
 
+    // Register session for DM delivery
+    {
+        let mut sessions = hub.active_sessions.write().await;
+        sessions.insert(client_id, (identity.clone(), fwd_tx.clone()));
+    }
+    // Register self as known peer
+    {
+        let mut peers = hub.known_peers.write().await;
+        peers.insert(identity.clone(), session.name.clone());
+    }
+
     // Subscribe to downstream messages from the upstream relay
     let mut downstream_rx = hub.downstream_tx.subscribe();
 
@@ -323,6 +347,12 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
                 }
             }
         }
+    }
+
+    // Unregister session
+    {
+        let mut sessions = hub.active_sessions.write().await;
+        sessions.remove(&session.client_id);
     }
 
     // If this was a P2P client (wifi-direct), unregister from upstream
@@ -392,6 +422,8 @@ async fn handle_message(
                         let path = std::path::Path::new(dir).join("callsign");
                         let _ = std::fs::write(&path, name);
                     }
+                    // Update known_peers registry for DM lookup
+                    hub.known_peers.write().await.insert(session.identity.clone(), name.to_string());
                     // Forward to upstream relay so it updates our name on the Go server
                     let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
                 }
@@ -805,8 +837,165 @@ async fn handle_message(
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
         }
 
-        "start_dm" | "join_dm" => {
-            // DMs require peer lookup -- forward to upstream only for now
+        "start_dm" => {
+            let target_id = env.data.get("target_id").and_then(|v| v.as_str()).unwrap_or("");
+            if target_id.is_empty() {
+                return true;
+            }
+
+            // Look up target peer name from known_peers registry
+            let target_name = {
+                let peers = hub.known_peers.read().await;
+                peers.get(target_id).cloned().unwrap_or_else(|| format!("anon-{}", &target_id[..target_id.len().min(6)]))
+            };
+
+            // Create deterministic DM room name from sorted participant IDs
+            let (id1, id2) = if session.identity < target_id.to_string() {
+                (session.identity.clone(), target_id.to_string())
+            } else {
+                (target_id.to_string(), session.identity.clone())
+            };
+            let dm_room_name = format!("dm:{}:{}", &id1[..id1.len().min(16)], &id2[..id2.len().min(16)]);
+
+            // Check if DM room already exists, or create it
+            let room_arc = hub.get_or_create_room(&dm_room_name).await;
+            let chat_id = chat_id_from_name(&dm_room_name);
+            let room_id = chat_id_hex(&chat_id);
+
+            {
+                let mut room = room_arc.write().await;
+                room.is_dm = true;
+                room.dm_participants = [id1, id2];
+
+                // Add initiator as member if not already
+                if !room.members.contains_key(&session.client_id) {
+                    room.members.insert(session.client_id, session.info());
+                }
+            }
+
+            // Track this room in the session
+            if !session.joined_rooms.iter().any(|(id, _)| *id == chat_id) {
+                // Subscribe to room broadcasts
+                let mut rx = {
+                    let room = room_arc.read().await;
+                    room.tx.subscribe()
+                };
+                let fwd = fwd_tx.clone();
+                tokio::spawn(async move {
+                    while let Ok(msg) = rx.recv().await {
+                        if fwd.send(msg).await.is_err() { break; }
+                    }
+                });
+                session.joined_rooms.push((chat_id, room_arc.clone()));
+            }
+
+            // Send dm_opened to initiator
+            let _ = send_json(socket, "dm_opened", &serde_json::json!({
+                "room_id": room_id,
+                "name": target_name,
+                "peer_id": target_id,
+                "peer_name": target_name,
+            })).await;
+
+            // Send room_joined + history to initiator
+            {
+                let room = room_arc.read().await;
+                let _ = send_json(socket, "room_joined", &serde_json::json!({
+                    "room_id": room_id,
+                    "name": target_name,
+                    "members": room.member_count(),
+                    "is_dm": true,
+                })).await;
+                let _ = send_json(socket, "room_history", &serde_json::json!({
+                    "room_id": room_id,
+                    "messages": room.messages,
+                })).await;
+            }
+
+            // Try to notify target if they're a local session
+            {
+                let sessions = hub.active_sessions.read().await;
+                for (_cid, (sid, sender)) in sessions.iter() {
+                    if sid == target_id {
+                        let dm_opened = make_json("dm_opened", &serde_json::json!({
+                            "room_id": room_id,
+                            "name": session.name,
+                            "peer_id": session.identity,
+                            "peer_name": session.name,
+                        }));
+                        let room_joined = make_json("room_joined", &serde_json::json!({
+                            "room_id": room_id,
+                            "name": session.name,
+                            "members": 2,
+                            "is_dm": true,
+                        }));
+                        let _ = sender.send(Arc::new(dm_opened)).await;
+                        let _ = sender.send(Arc::new(room_joined)).await;
+                        break;
+                    }
+                }
+            }
+
+            // Also forward upstream so Go server creates its side
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "join_dm" => {
+            let dm_room_id = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            if dm_room_id.is_empty() {
+                return true;
+            }
+
+            if let Some((chat_id, room_arc)) = hub.find_room_by_hex(dm_room_id).await {
+                let room_id = chat_id_hex(&chat_id);
+                {
+                    let mut room = room_arc.write().await;
+                    if !room.members.contains_key(&session.client_id) {
+                        room.members.insert(session.client_id, session.info());
+                    }
+                }
+
+                // Subscribe to room broadcasts
+                if !session.joined_rooms.iter().any(|(id, _)| *id == chat_id) {
+                    let mut rx = {
+                        let room = room_arc.read().await;
+                        room.tx.subscribe()
+                    };
+                    let fwd = fwd_tx.clone();
+                    tokio::spawn(async move {
+                        while let Ok(msg) = rx.recv().await {
+                            if fwd.send(msg).await.is_err() { break; }
+                        }
+                    });
+                    session.joined_rooms.push((chat_id, room_arc.clone()));
+                }
+
+                let room = room_arc.read().await;
+                let peer_name = if room.is_dm {
+                    let other = if room.dm_participants[0] == session.identity {
+                        &room.dm_participants[1]
+                    } else {
+                        &room.dm_participants[0]
+                    };
+                    let peers = hub.known_peers.read().await;
+                    peers.get(other).cloned().unwrap_or_else(|| other[..other.len().min(8)].to_string())
+                } else {
+                    room.name.clone()
+                };
+
+                let _ = send_json(socket, "room_joined", &serde_json::json!({
+                    "room_id": room_id,
+                    "name": peer_name,
+                    "members": room.member_count(),
+                    "is_dm": room.is_dm,
+                })).await;
+                let _ = send_json(socket, "room_history", &serde_json::json!({
+                    "room_id": room_id,
+                    "messages": room.messages,
+                })).await;
+            }
+
+            // Also forward upstream
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
         }
 
