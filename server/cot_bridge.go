@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,11 +39,46 @@ type CotPointXml struct {
 type CotDetailXml struct {
 	Contact struct {
 		Callsign string `xml:"callsign,attr"`
+		Endpoint string `xml:"endpoint,attr"`
 	} `xml:"contact"`
 	Group struct {
 		Name string `xml:"name,attr"`
 		Role string `xml:"role,attr"`
 	} `xml:"__group"`
+	UID struct {
+		Droid string `xml:"Droid,attr"`
+	} `xml:"uid"`
+	Remarks  string `xml:"remarks"`
+	Color    struct {
+		ARGB string `xml:"argb,attr"`
+	} `xml:"color"`
+	UserIcon struct {
+		IconsetPath string `xml:"iconsetpath,attr"`
+	} `xml:"usericon"`
+	PrecisionLocation struct {
+		GeoPointSrc string `xml:"geopointsrc,attr"`
+		AltSrc      string `xml:"altsrc,attr"`
+	} `xml:"precisionlocation"`
+	Track struct {
+		Speed  string `xml:"speed,attr"`
+		Course string `xml:"course,attr"`
+	} `xml:"track"`
+	Status struct {
+		Battery string `xml:"battery,attr"`
+	} `xml:"status"`
+	Takv struct {
+		Platform string `xml:"platform,attr"`
+		Device   string `xml:"device,attr"`
+		OS       string `xml:"os,attr"`
+		Version  string `xml:"version,attr"`
+	} `xml:"takv"`
+	Links []struct {
+		UID      string `xml:"uid,attr"`
+		Relation string `xml:"relation,attr"`
+		Type     string `xml:"type,attr"`
+		Point    string `xml:"point,attr"`
+		Callsign string `xml:"callsign,attr"`
+	} `xml:"link"`
 }
 
 // ExternalCotContact holds CoT data for an ATAK peer that has no WebSocket client.
@@ -259,11 +295,28 @@ func (b *CotBridge) handleXmlCot(data []byte) {
 	if err := xml.Unmarshal(data, &ev); err != nil {
 		return
 	}
-	if ev.UID == "" || ev.Point.Lat == 0 && ev.Point.Lon == 0 {
+	if ev.UID == "" {
 		return
 	}
-	b.ingestCot(ev.UID, ev.Detail.Contact.Callsign, ev.Type, ev.How,
-		ev.Point.Lat, ev.Point.Lon, ev.Point.Hae, ev.Point.Ce)
+
+	// Extract callsign: prefer Droid attribute, then contact callsign, then UID
+	callsign := ev.Detail.UID.Droid
+	if callsign == "" {
+		callsign = ev.Detail.Contact.Callsign
+	}
+	if callsign == "" {
+		callsign = ev.UID
+	}
+
+	// Extract remarks
+	remarks := strings.TrimSpace(ev.Detail.Remarks)
+
+	// Extract color (ARGB signed int -> hex)
+	color := parseATAKColor(ev.Detail.Color.ARGB)
+
+	b.ingestCot(ev.UID, callsign, ev.Type, ev.How,
+		ev.Point.Lat, ev.Point.Lon, ev.Point.Hae, ev.Point.Ce,
+		remarks, color)
 }
 
 func (b *CotBridge) handleProtoCot(data []byte) {
@@ -276,11 +329,11 @@ func (b *CotBridge) handleProtoCot(data []byte) {
 		callsign = ev.UID
 	}
 	b.ingestCot(ev.UID, callsign, ev.Type, ev.How,
-		ev.Lat, ev.Lon, ev.Hae, ev.Ce)
+		ev.Lat, ev.Lon, ev.Hae, ev.Ce, "", "")
 }
 
 // ingestCot processes a decoded CoT event from ATAK into the peat-chat room system.
-func (b *CotBridge) ingestCot(uid, callsign, cotType, how string, lat, lon, hae, ce float64) {
+func (b *CotBridge) ingestCot(uid, callsign, cotType, how string, lat, lon, hae, ce float64, remarks, color string) {
 	if callsign == "" {
 		callsign = uid
 	}
@@ -307,22 +360,62 @@ func (b *CotBridge) ingestCot(uid, callsign, cotType, how string, lat, lon, hae,
 		return
 	}
 
-	pos := &CotPosition{
-		Lat:  lat,
-		Lon:  lon,
-		Hae:  hae,
-		Ce:   ce,
-		Time: time.Now(),
+	if strings.HasPrefix(cotType, "b-") {
+		// MARKER: b-m-p-s-m (spot), b-m-p-w (waypoint), b-r-f-h-c (casevac), etc.
+		icon := cotTypeToIcon(cotType)
+		if color == "" {
+			color = "#ffff00" // default yellow for markers
+		}
+
+		marker := &CotMarker{
+			ID:          uid,
+			CreatorID:   "atak",
+			CreatorName: callsign,
+			Lat:         lat,
+			Lon:         lon,
+			Hae:         hae,
+			Ce:          ce,
+			Le:          9999999,
+			Name:        callsign,
+			Icon:        icon,
+			Color:       color,
+			CotType:     cotType,
+			How:         how,
+			Remarks:     remarks,
+			CreatedAt:   uint64(time.Now().UnixMilli()),
+			Stale:       uint64(time.Now().Add(24 * time.Hour).UnixMilli()),
+		}
+
+		room.mu.Lock()
+		room.Markers[uid] = marker
+		room.mu.Unlock()
+
+		// Broadcast marker to room
+		roomID := ChatIdHex(room.ID)
+		data := mustMarshal("marker_created", MarkerCreatedData{
+			RoomID: roomID,
+			Marker: *marker,
+		})
+		room.Broadcast(data, nil)
+
+		// Forward to COP
+		cotXml := markerToXml(marker)
+		b.forwardToCOP(cotXml, "atak")
+	} else {
+		// POSITION: a-f-G-U-C (friendly), a-h-G (hostile), etc.
+		pos := &CotPosition{
+			Lat:  lat,
+			Lon:  lon,
+			Hae:  hae,
+			Ce:   ce,
+			Time: time.Now(),
+		}
+		room.SetExternalCotPosition(uid, callsign, cotType, pos)
+		b.hub.broadcastCotState(room)
+
+		cotXml := contactToXml(uid, callsign, cotType, lat, lon, hae, ce)
+		b.forwardToCOP(cotXml, "atak")
 	}
-
-	room.SetExternalCotPosition(uid, callsign, cotType, pos)
-
-	// Broadcast updated CoT state to room members
-	b.hub.broadcastCotState(room)
-
-	// Forward to COP TUI viewer
-	cotXml := contactToXml(uid, callsign, cotType, lat, lon, hae, ce)
-	b.forwardToCOP(cotXml, "atak")
 }
 
 // findGeneralRoom returns the first public non-DM room, or nil if none exist.
@@ -441,11 +534,12 @@ func contactToXml(uid, callsign, cotType string, lat, lon, hae, ce float64) stri
 		cotType = "a-f-G-U-C"
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	stale := time.Now().Add(60 * time.Second).UTC().Format(time.RFC3339)
+	stale := time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339)
 	return fmt.Sprintf(
-		`<event uid="%s" type="%s" how="h-e" time="%s" start="%s" stale="%s">`+
-			`<point lat="%.6f" lon="%.6f" hae="%.1f" ce="%.1f" le="999999"/>`+
-			`<detail><contact callsign="%s"/></detail></event>`,
+		`<event version="2.0" uid="%s" type="%s" how="h-e" time="%s" start="%s" stale="%s">`+
+			`<point lat="%.6f" lon="%.6f" hae="%.1f" ce="%.1f" le="9999999.0"/>`+
+			`<detail><contact callsign="%s"/><__group name="Cyan" role="Team Member"/>`+
+			`<precisionlocation geopointsrc="USER" altsrc="???"/></detail></event>`,
 		uid, cotType, now, now, stale, lat, lon, hae, ce, callsign,
 	)
 }
@@ -455,20 +549,85 @@ func markerToXml(marker *CotMarker) string {
 	if cotType == "" {
 		cotType = "b-m-p-s-m"
 	}
+	how := marker.How
+	if how == "" {
+		how = "h-e"
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	stale := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-	remarks := ""
+
+	remarksXml := ""
 	if marker.Remarks != "" {
-		remarks = fmt.Sprintf(`<remarks>%s</remarks>`, marker.Remarks)
+		remarksXml = fmt.Sprintf(`<remarks>%s</remarks>`, marker.Remarks)
 	}
+
+	colorXml := ""
+	if marker.Color != "" {
+		argb := colorToATAKArgb(marker.Color)
+		if argb != "" {
+			colorXml = fmt.Sprintf(`<color argb="%s"/>`, argb)
+		}
+	}
+
 	return fmt.Sprintf(
-		`<event uid="%s" type="%s" how="%s" time="%s" start="%s" stale="%s">`+
+		`<event version="2.0" uid="%s" type="%s" how="%s" time="%s" start="%s" stale="%s">`+
 			`<point lat="%.6f" lon="%.6f" hae="%.1f" ce="%.1f" le="%.1f"/>`+
-			`<detail><contact callsign="%s"/>%s</detail></event>`,
-		marker.ID, cotType, marker.How, now, now, stale,
+			`<detail><contact callsign="%s"/>%s%s`+
+			`<precisionlocation geopointsrc="USER" altsrc="???"/>`+
+			`<archive/></detail></event>`,
+		marker.ID, cotType, how, now, now, stale,
 		marker.Lat, marker.Lon, marker.Hae, marker.Ce, marker.Le,
-		marker.Name, remarks,
+		marker.Name, remarksXml, colorXml,
 	)
+}
+
+// --- CoT type / color helpers ---
+
+func cotTypeToIcon(cotType string) string {
+	switch {
+	case strings.HasPrefix(cotType, "b-m-p-w"):
+		return "waypoint"
+	case strings.HasPrefix(cotType, "b-m-p-s-p-i"):
+		return "info"
+	case strings.HasPrefix(cotType, "b-m-p-c"):
+		return "checkpoint"
+	case strings.HasPrefix(cotType, "b-r-f-h-c"):
+		return "casevac"
+	case strings.HasPrefix(cotType, "b-m-p-s-m"):
+		return "marker"
+	case strings.HasPrefix(cotType, "b-m-r"):
+		return "route"
+	default:
+		return "rally"
+	}
+}
+
+func parseATAKColor(argbStr string) string {
+	if argbStr == "" {
+		return ""
+	}
+	val, err := strconv.ParseInt(argbStr, 10, 64)
+	if err != nil {
+		return ""
+	}
+	// Convert signed int to unsigned 32-bit
+	u := uint32(val)
+	r := (u >> 16) & 0xFF
+	g := (u >> 8) & 0xFF
+	b := u & 0xFF
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}
+
+func colorToATAKArgb(hexColor string) string {
+	hexColor = strings.TrimPrefix(hexColor, "#")
+	if len(hexColor) != 6 {
+		return ""
+	}
+	r, _ := strconv.ParseUint(hexColor[0:2], 16, 8)
+	g, _ := strconv.ParseUint(hexColor[2:4], 16, 8)
+	b, _ := strconv.ParseUint(hexColor[4:6], 16, 8)
+	argb := int32(0xFF000000 | (uint32(r) << 16) | (uint32(g) << 8) | uint32(b))
+	return strconv.FormatInt(int64(argb), 10)
 }
 
 // --- COP TUI Integration ---
