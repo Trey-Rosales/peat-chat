@@ -56,6 +56,18 @@ pub(crate) struct Room {
     pub(crate) messages: Vec<ChatMessage>,
     pub(crate) members: HashMap<u64, ClientInfo>,
     pub(crate) tx: broadcast::Sender<Arc<String>>,
+    // Voice channels
+    voice_channels: Vec<VoiceChannel>,
+    // CoT positions (client_id -> position data)
+    cot_positions: HashMap<String, serde_json::Value>,
+    // Map markers
+    markers: Vec<serde_json::Value>,
+}
+
+struct VoiceChannel {
+    id: String,
+    name: String,
+    members: HashMap<String, String>, // peer_id -> peer_name
 }
 
 #[derive(Clone)]
@@ -74,6 +86,13 @@ impl Room {
             messages: Vec::new(),
             members: HashMap::new(),
             tx,
+            voice_channels: vec![VoiceChannel {
+                id: "default".to_string(),
+                name: "General".to_string(),
+                members: HashMap::new(),
+            }],
+            cot_positions: HashMap::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -431,6 +450,21 @@ async fn handle_message(
                 )
                 .await;
 
+                // Send voice state
+                let voice_state = build_voice_state(&room, &room_id);
+                let _ = socket.send(Message::Text(voice_state.into())).await;
+
+                // Send CoT state if any positions exist
+                if !room.cot_positions.is_empty() || !room.markers.is_empty() {
+                    let contacts: Vec<serde_json::Value> = room.cot_positions.values().cloned().collect();
+                    let markers: Vec<serde_json::Value> = room.markers.clone();
+                    let _ = send_json(socket, "cot_state", &serde_json::json!({
+                        "room_id": room_id,
+                        "contacts": contacts,
+                        "markers": markers,
+                    })).await;
+                }
+
                 // Broadcast peer_update to others
                 let msg = make_json(
                     "peer_update",
@@ -525,16 +559,255 @@ async fn handle_message(
             }
         }
 
-        "join_voice" | "leave_voice" | "voice_speaking" | "create_voice_channel" => {
-            // Forward to upstream if present, and also rebroadcast into the room so the
-            // BLE bridge can carry local voice control messages to connected peers.
-            let room_id_str = env
-                .data
-                .get("room_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+        "create_voice_channel" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let ch_name = env.data.get("name").and_then(|v| v.as_str()).unwrap_or("Voice");
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let ch_id = uuid::Uuid::new_v4().to_string();
+                let mut room = room_arc.write().await;
+                room.voice_channels.push(VoiceChannel {
+                    id: ch_id.clone(),
+                    name: ch_name.to_string(),
+                    members: HashMap::new(),
+                });
+                let msg = make_json("voice_channel_created", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "channel_id": ch_id,
+                    "name": ch_name,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+            }
+            // Also forward upstream
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "join_voice" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let channel_id = env.data.get("channel_id").and_then(|v| v.as_str()).unwrap_or("");
+            let sender_id = env.data.get("sender_id").and_then(|v| v.as_str())
+                .unwrap_or(&session.identity);
+            let sender_name = env.data.get("sender_name").and_then(|v| v.as_str())
+                .unwrap_or(&session.name);
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let mut room = room_arc.write().await;
+                if let Some(vc) = room.voice_channels.iter_mut().find(|c| c.id == channel_id) {
+                    vc.members.insert(sender_id.to_string(), sender_name.to_string());
+                }
+                // Broadcast voice_peer_joined to room
+                let msg = make_json("voice_peer_joined", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "channel_id": channel_id,
+                    "peer_id": sender_id,
+                    "name": sender_name,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+                // Broadcast updated voice_state
+                let state = build_voice_state(&room, room_id_str);
+                let _ = room.tx.send(Arc::new(state));
+            }
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
             rebroadcast_ble_control(hub, room_id_str, text).await;
+        }
+
+        "leave_voice" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let channel_id = env.data.get("channel_id").and_then(|v| v.as_str()).unwrap_or("");
+            let sender_id = env.data.get("sender_id").and_then(|v| v.as_str())
+                .unwrap_or(&session.identity);
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let mut room = room_arc.write().await;
+                if let Some(vc) = room.voice_channels.iter_mut().find(|c| c.id == channel_id) {
+                    vc.members.remove(sender_id);
+                }
+                let msg = make_json("voice_peer_left", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "channel_id": channel_id,
+                    "peer_id": sender_id,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+                let state = build_voice_state(&room, room_id_str);
+                let _ = room.tx.send(Arc::new(state));
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+            rebroadcast_ble_control(hub, room_id_str, text).await;
+        }
+
+        "voice_speaking" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let channel_id = env.data.get("channel_id").and_then(|v| v.as_str()).unwrap_or("");
+            let peer_id = env.data.get("sender_id").and_then(|v| v.as_str())
+                .unwrap_or(&session.identity);
+            let speaking = env.data.get("speaking").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let room = room_arc.read().await;
+                let msg = make_json("voice_speaking_broadcast", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "channel_id": channel_id,
+                    "peer_id": peer_id,
+                    "speaking": speaking,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "voice_offer" | "voice_answer" | "voice_ice" => {
+            // Voice signaling: relay to target peer locally
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let _target_id = env.data.get("target_id").and_then(|v| v.as_str()).unwrap_or("");
+            let relay_type = match env.r#type.as_str() {
+                "voice_offer" => "voice_offer_relay",
+                "voice_answer" => "voice_answer_relay",
+                "voice_ice" => "voice_ice_relay",
+                _ => unreachable!(),
+            };
+
+            // Build relay message with from_id
+            let relay_msg = make_json(relay_type, &serde_json::json!({
+                "room_id": room_id_str,
+                "channel_id": env.data.get("channel_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "from_id": session.identity,
+                "sdp": env.data.get("sdp").unwrap_or(&serde_json::Value::Null),
+                "candidate": env.data.get("candidate").unwrap_or(&serde_json::Value::Null),
+            }));
+
+            // Find target peer in local rooms and send directly
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let room = room_arc.read().await;
+                // Broadcast to room -- only the target will use it (WebView filters by peer ID)
+                let _ = room.tx.send(Arc::new(relay_msg));
+            }
+            // Also forward upstream for cross-server signaling
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "cot_position" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let sender_id = env.data.get("sender_id").and_then(|v| v.as_str())
+                .unwrap_or(&session.identity).to_string();
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let mut room = room_arc.write().await;
+                // Store position
+                let mut pos_data = env.data.clone();
+                if !pos_data.get("sender_id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+                    pos_data["sender_id"] = serde_json::Value::String(session.identity.clone());
+                    pos_data["sender_name"] = serde_json::Value::String(session.name.clone());
+                }
+                room.cot_positions.insert(sender_id, pos_data);
+
+                // Broadcast cot_state to room
+                let contacts: Vec<serde_json::Value> = room.cot_positions.values().cloned().collect();
+                let markers: Vec<serde_json::Value> = room.markers.clone();
+                let msg = make_json("cot_state", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "contacts": contacts,
+                    "markers": markers,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+            }
+            // Also forward upstream
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "create_marker" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let mut room = room_arc.write().await;
+                let mut marker = env.data.clone();
+                // Ensure marker has an ID
+                if marker.get("marker_id").is_none() || marker.get("marker_id").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+                    marker["marker_id"] = serde_json::Value::String(uuid::Uuid::new_v4().to_string());
+                }
+                if !marker.get("creator_id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+                    marker["creator_id"] = serde_json::Value::String(session.identity.clone());
+                    marker["creator_name"] = serde_json::Value::String(session.name.clone());
+                }
+                room.markers.push(marker.clone());
+                let msg = make_json("marker_created", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "marker": marker,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "delete_marker" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let marker_id = env.data.get("marker_id").and_then(|v| v.as_str()).unwrap_or("");
+
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let mut room = room_arc.write().await;
+                room.markers.retain(|m| m.get("marker_id").and_then(|v| v.as_str()).unwrap_or("") != marker_id);
+                let msg = make_json("marker_deleted", &serde_json::json!({
+                    "room_id": room_id_str,
+                    "marker_id": marker_id,
+                }));
+                let _ = room.tx.send(Arc::new(msg));
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "edit_message" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let msg_id = env.data.get("message_id").and_then(|v| v.as_str()).unwrap_or("");
+            let content = env.data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+            if !msg_id.is_empty() && !content.is_empty() {
+                if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                    let mut room = room_arc.write().await;
+                    let edited_at = now_ms();
+                    if let Some(msg) = room.messages.iter_mut().find(|m| m.id == msg_id && m.sender == session.identity) {
+                        msg.content = content.to_string();
+                    }
+                    let broadcast = make_json("message_edited", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "message_id": msg_id,
+                        "content": content,
+                        "edited_at": edited_at,
+                    }));
+                    let _ = room.tx.send(Arc::new(broadcast));
+                }
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "delete_message" => {
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            let msg_id = env.data.get("message_id").and_then(|v| v.as_str()).unwrap_or("");
+
+            if !msg_id.is_empty() {
+                if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                    let mut room = room_arc.write().await;
+                    room.messages.retain(|m| !(m.id == msg_id && m.sender == session.identity));
+                    let broadcast = make_json("message_deleted", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "message_id": msg_id,
+                    }));
+                    let _ = room.tx.send(Arc::new(broadcast));
+                }
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "add_reaction" | "remove_reaction" | "pin_message" | "unpin_message" => {
+            // Forward to room broadcast so local peers see it, plus upstream
+            let room_id_str = env.data.get("room_id").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
+                let room = room_arc.read().await;
+                let _ = room.tx.send(Arc::new(text.to_string()));
+            }
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
+        }
+
+        "start_dm" | "join_dm" => {
+            // DMs require peer lookup -- forward to upstream only for now
+            let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
         }
 
         _ => {
@@ -600,6 +873,29 @@ pub fn make_json(msg_type: &str, data: &serde_json::Value) -> String {
         "data": data,
     }))
     .unwrap_or_default()
+}
+
+fn build_voice_state(room: &Room, room_id: &str) -> String {
+    let channels: Vec<serde_json::Value> = room.voice_channels.iter().map(|vc| {
+        let members: Vec<serde_json::Value> = vc.members.iter().map(|(id, name)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "short_id": if id.len() >= 12 { &id[..12] } else { id.as_str() },
+                "speaking": false,
+            })
+        }).collect();
+        serde_json::json!({
+            "id": vc.id,
+            "name": vc.name,
+            "members": members,
+        })
+    }).collect();
+
+    make_json("voice_state", &serde_json::json!({
+        "room_id": room_id,
+        "channels": channels,
+    }))
 }
 
 // ---------- server startup ----------
