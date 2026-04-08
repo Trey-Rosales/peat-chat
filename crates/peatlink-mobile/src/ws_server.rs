@@ -629,22 +629,28 @@ async fn handle_message(
             let sender_name = env.data.get("sender_name").and_then(|v| v.as_str())
                 .unwrap_or(&session.name);
 
+            // Track locally for offline voice
             if let Some((_, room_arc)) = hub.find_room_by_hex(room_id_str).await {
                 let mut room = room_arc.write().await;
                 if let Some(vc) = room.voice_channels.iter_mut().find(|c| c.id == channel_id) {
                     vc.members.insert(sender_id.to_string(), sender_name.to_string());
                 }
-                // Broadcast voice_peer_joined to room
-                let msg = make_json("voice_peer_joined", &serde_json::json!({
-                    "room_id": room_id_str,
-                    "channel_id": channel_id,
-                    "peer_id": sender_id,
-                    "name": sender_name,
-                }));
-                let _ = room.tx.send(Arc::new(msg));
-                // Broadcast updated voice_state
-                let state = build_voice_state(&room, room_id_str);
-                let _ = room.tx.send(Arc::new(state));
+                // Only broadcast locally if no upstream is connected.
+                // When upstream exists, the Go server is authoritative for voice state —
+                // it will send voice_peer_joined back via downstream, avoiding duplicate
+                // voice members (local channel IDs differ from Go server channel IDs).
+                let has_upstream = hub.passthrough_tx.receiver_count() > 0;
+                if !has_upstream {
+                    let msg = make_json("voice_peer_joined", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": channel_id,
+                        "peer_id": sender_id,
+                        "name": sender_name,
+                    }));
+                    let _ = room.tx.send(Arc::new(msg));
+                    let state = build_voice_state(&room, room_id_str);
+                    let _ = room.tx.send(Arc::new(state));
+                }
             }
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
             rebroadcast_ble_control(hub, room_id_str, text).await;
@@ -661,14 +667,17 @@ async fn handle_message(
                 if let Some(vc) = room.voice_channels.iter_mut().find(|c| c.id == channel_id) {
                     vc.members.remove(sender_id);
                 }
-                let msg = make_json("voice_peer_left", &serde_json::json!({
-                    "room_id": room_id_str,
-                    "channel_id": channel_id,
-                    "peer_id": sender_id,
-                }));
-                let _ = room.tx.send(Arc::new(msg));
-                let state = build_voice_state(&room, room_id_str);
-                let _ = room.tx.send(Arc::new(state));
+                let has_upstream = hub.passthrough_tx.receiver_count() > 0;
+                if !has_upstream {
+                    let msg = make_json("voice_peer_left", &serde_json::json!({
+                        "room_id": room_id_str,
+                        "channel_id": channel_id,
+                        "peer_id": sender_id,
+                    }));
+                    let _ = room.tx.send(Arc::new(msg));
+                    let state = build_voice_state(&room, room_id_str);
+                    let _ = room.tx.send(Arc::new(state));
+                }
             }
             let _ = hub.passthrough_tx.send(Arc::new(text.to_string()));
             rebroadcast_ble_control(hub, room_id_str, text).await;
