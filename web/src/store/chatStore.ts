@@ -298,7 +298,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Dedup: don't re-add bridge peers that are also in the new server peers
     const serverIds = new Set(peers.map((p) => p.id))
     const uniqueBridgePeers = bridgePeers.filter((p) => !serverIds.has(p.id))
-    meshPeers[roomId] = [...peers, ...uniqueBridgePeers]
+    // Filter phantom peers (brief connections, scanners, unnamed) that shouldn't appear in mesh
+    const allPeers = [...peers, ...uniqueBridgePeers].filter((p) =>
+      p.name && p.id && !p.name.toLowerCase().includes('scanner')
+    )
+    meshPeers[roomId] = allPeers
     set({ meshPeers })
   },
   mergeMeshPeers: (roomId, blePeers) => {
@@ -395,7 +399,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setCotContacts: (roomId, contacts) => {
     const cotContacts = { ...get().cotContacts }
-    cotContacts[roomId] = contacts
+    // Merge incoming contacts with existing by sender_id to prevent
+    // upstream cot_state from wiping locally-injected BLE peer positions.
+    // Each source re-sends its known contacts; we keep the latest by ID.
+    const byId = new Map<string, any>()
+    for (const c of (cotContacts[roomId] || [])) {
+      const id = (c as any).sender_id || (c as any).uid || ''
+      if (id) byId.set(id, c)
+    }
+    for (const c of contacts) {
+      const id = (c as any).sender_id || (c as any).uid || ''
+      if (id) byId.set(id, c)
+    }
+    cotContacts[roomId] = Array.from(byId.values())
     set({ cotContacts })
   },
 
