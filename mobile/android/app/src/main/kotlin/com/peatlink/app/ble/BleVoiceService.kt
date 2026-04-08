@@ -70,6 +70,9 @@ class BleVoiceService {
     private val decodedPcmForBridge = ConcurrentLinkedQueue<ByteArray>()
     private val MAX_BRIDGE_FRAMES = 50
 
+    // Also queue local mic PCM for WebRTC (WiFi phone's own voice → Mac)
+    var bridgeLocalMic = false // set true when WiFi phone needs local mic in WebRTC
+
     // PCM frames from WebRTC (Mac audio → encode → send via BLE)
     private var bridgeEncoder: MediaCodec? = null
 
@@ -239,6 +242,19 @@ class BleVoiceService {
                 voiceDetected = true
                 silenceSince = 0L
 
+                // Queue raw PCM for WebRTC bridge (WiFi phone's own mic → Mac)
+                if (bridgeLocalMic) {
+                    val pcmBytes = ByteArray(read * 2)
+                    for (i in 0 until read) {
+                        pcmBytes[i * 2] = (pcmBuf[i].toInt() and 0xFF).toByte()
+                        pcmBytes[i * 2 + 1] = (pcmBuf[i].toInt() shr 8).toByte()
+                    }
+                    decodedPcmForBridge.add(pcmBytes)
+                    while (decodedPcmForBridge.size > MAX_BRIDGE_FRAMES) {
+                        decodedPcmForBridge.poll()
+                    }
+                }
+
                 val enc = encoder
                 if (enc != null) {
                     val encoded = encodeOpusFrame(enc, pcmBuf, read)
@@ -347,7 +363,20 @@ class BleVoiceService {
         while (transmitting) {
             val read = audioRecord?.read(pcmBuf, 0, FRAME_SAMPLES) ?: -1
             if (read <= 0) { delay(5); continue }
-            if (muted) continue // skip encoding when muted
+            if (muted) continue
+
+            // Queue raw PCM for WebRTC bridge
+            if (bridgeLocalMic) {
+                val pcmBytes = ByteArray(read * 2)
+                for (i in 0 until read) {
+                    pcmBytes[i * 2] = (pcmBuf[i].toInt() and 0xFF).toByte()
+                    pcmBytes[i * 2 + 1] = (pcmBuf[i].toInt() shr 8).toByte()
+                }
+                decodedPcmForBridge.add(pcmBytes)
+                while (decodedPcmForBridge.size > MAX_BRIDGE_FRAMES) {
+                    decodedPcmForBridge.poll()
+                }
+            }
 
             val enc = encoder
             if (enc != null) {

@@ -165,6 +165,7 @@ class MainActivity : AppCompatActivity() {
             addJavascriptInterface(object {
                 @JavascriptInterface
                 fun startPtt(senderId: String, senderName: String) {
+                    bleVoice?.bridgeLocalMic = true
                     bleVoice?.startTransmitting()
                 }
 
@@ -191,6 +192,9 @@ class MainActivity : AppCompatActivity() {
                         "auto" -> BleVoiceService.VoiceMode.AUTO
                         else -> BleVoiceService.VoiceMode.PTT
                     }
+                    // Bridge local mic to WebRTC (WiFi phone needs this since
+                    // WebView can't access mic over HTTP)
+                    bleVoice?.bridgeLocalMic = true
                     // Start/stop continuous capture based on mode
                     if (mode == "noise_gate" || mode == "auto") {
                         bleVoice?.startContinuous()

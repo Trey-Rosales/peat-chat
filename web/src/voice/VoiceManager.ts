@@ -482,20 +482,35 @@ export class VoiceManager {
     }
   }
 
+  private _bleSpeakingState = false
+
   private startBleBridge(): void {
-    if (
-      !this.audioContext ||
-      !window.PeatLinkVoice?.hasBleVoice?.() ||
-      !window.PeatLinkVoice.pollIncomingFrames
-    ) {
-      return
-    }
+    if (!window.PeatLinkVoice?.hasBleVoice?.()) return
 
     this.stopBleBridge()
-    this.blePlaybackCursor = this.audioContext.currentTime
+    if (this.audioContext) {
+      this.blePlaybackCursor = this.audioContext.currentTime
+    }
     this.bleBridgeTimer = setInterval(() => {
       this.drainIncomingBleFrames()
+      this.pollNativeSpeakingState()
     }, BLE_POLL_MS)
+  }
+
+  /** Poll native voice detection and send speaking state to server */
+  private pollNativeSpeakingState(): void {
+    if (!window.PeatLinkVoice?.isVoiceDetected) return
+    try {
+      const speaking = window.PeatLinkVoice.isVoiceDetected()
+      if (speaking !== this._bleSpeakingState) {
+        this._bleSpeakingState = speaking
+        this.send('voice_speaking', {
+          room_id: this.roomId,
+          channel_id: this.channelId,
+          speaking,
+        })
+      }
+    } catch {}
   }
 
   private stopBleBridge(): void {
@@ -506,9 +521,8 @@ export class VoiceManager {
   }
 
   private drainIncomingBleFrames(): void {
-    if (!this.audioContext || !this.bleIncomingGain || !window.PeatLinkVoice?.pollIncomingFrames) {
-      return
-    }
+    if (!window.PeatLinkVoice?.pollIncomingFrames) return
+    if (!this.audioContext || !this.bleIncomingGain) return
 
     let frames: IncomingBleFrame[] = []
     try {
