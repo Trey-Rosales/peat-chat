@@ -13,7 +13,6 @@ const MODE_LABELS: Record<string, string> = {
   ptt: 'PTT',
   noise_gate: 'GATE',
   auto: 'AUTO',
-  open: 'OPEN',
 }
 
 export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
@@ -50,6 +49,8 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
     if (window.PeatLinkVoice?.setMicMuted) {
       window.PeatLinkVoice.setMicMuted(newMuted)
     }
+    // Web client: mute/unmute the local audio track
+    // (VoiceManager handles this through setMuted which controls track.enabled)
   }, [muted])
 
   return (

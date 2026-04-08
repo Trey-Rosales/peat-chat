@@ -5,7 +5,7 @@ interface SettingsStore {
   micDeviceId: string
   speakerDeviceId: string
   pttKey: string
-  voiceMode: 'ptt' | 'open' | 'noise_gate' | 'auto'
+  voiceMode: 'ptt' | 'noise_gate' | 'auto'
   noiseGateThreshold: number // dB, typically -60 to -20
   inputVolume: number
   preferredTransport: string
@@ -16,7 +16,7 @@ interface SettingsStore {
   setMicDevice: (id: string) => void
   setSpeakerDevice: (id: string) => void
   setPttKey: (key: string) => void
-  setVoiceMode: (mode: 'ptt' | 'open' | 'noise_gate' | 'auto') => void
+  setVoiceMode: (mode: 'ptt' | 'noise_gate' | 'auto') => void
   setNoiseGateThreshold: (db: number) => void
   setInputVolume: (vol: number) => void
   setPreferredTransport: (t: string) => void
@@ -31,7 +31,7 @@ export const useSettingsStore = create<SettingsStore>()(
       micDeviceId: '',
       speakerDeviceId: '',
       pttKey: ' ',
-      voiceMode: 'ptt',
+      voiceMode: 'ptt' as const,
       noiseGateThreshold: -35,
       inputVolume: 1.0,
       preferredTransport: 'tcp',
@@ -50,6 +50,14 @@ export const useSettingsStore = create<SettingsStore>()(
       setMapStyle: (style) => set({ mapStyle: style }),
       setLocationEnabled: (enabled) => set({ locationEnabled: enabled }),
     }),
-    { name: 'peatlink-settings' }
+    {
+      name: 'peatlink-settings',
+      onRehydrateStorage: () => (state) => {
+        // Migrate stale 'open' voiceMode to 'ptt'
+        if (state && (state.voiceMode as string) === 'open') {
+          state.voiceMode = 'ptt'
+        }
+      },
+    }
   )
 )

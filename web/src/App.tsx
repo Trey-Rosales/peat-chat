@@ -27,11 +27,15 @@ export default function App() {
   const { send } = useWebSocket(voiceManagerRef)
   sendRef.current = send
 
-  // Initialize VoiceManager with the real send function
-  // Note: VoiceManager is always created but voice_offer/answer handlers are
-  // guarded against crashes. BLE-only devices skip joinChannel entirely.
+  // Initialize VoiceManager — wrapped in try-catch for environments where
+  // AudioContext or WebRTC APIs may not be available
   useEffect(() => {
-    voiceManagerRef.current = new VoiceManager((...args) => sendRef.current(...args))
+    try {
+      voiceManagerRef.current = new VoiceManager((...args) => sendRef.current(...args))
+    } catch (err) {
+      console.warn('VoiceManager init failed:', err)
+      voiceManagerRef.current = null
+    }
     return () => {
       voiceManagerRef.current?.destroy()
       voiceManagerRef.current = null
@@ -47,13 +51,11 @@ export default function App() {
   const joinVoice = useCallback(
     async (roomId: string, channelId: string, existingMembers: VoiceMember[]) => {
       const hasBleVoice = !!window.PeatLinkVoice?.hasBleVoice?.()
+      const vm = voiceManagerRef.current
 
-      // Check if we should use WebRTC (has VoiceManager that's not active yet)
-      const useWebRTC = !!voiceManagerRef.current
+      if (!vm && !hasBleVoice) return
 
-      if (!useWebRTC && !hasBleVoice) return
-
-      if (!useWebRTC) {
+      if (!vm) {
         // BLE-only: just send join_voice — no WebRTC, audio via native BleVoiceService
         send('join_voice', { room_id: roomId, channel_id: channelId })
         useChatStore.getState().setActiveVoice(roomId, channelId)
@@ -61,21 +63,16 @@ export default function App() {
       }
 
       try {
-        await voiceManagerRef.current!.joinChannel(roomId, channelId, existingMembers)
+        await vm.joinChannel(roomId, channelId, existingMembers)
         useChatStore.getState().setActiveVoice(roomId, channelId)
-        if (voiceManagerRef.current?.listenOnly) {
+        if (vm.listenOnly) {
           useChatStore.getState().setVoiceError('No mic — listen-only (HTTPS required for mic on LAN)')
           setTimeout(() => useChatStore.getState().setVoiceError(null), 5000)
-        } else if (useSettingsStore.getState().voiceMode === 'open') {
-          // Open mic mode — unmute immediately
-          voiceManagerRef.current?.setMuted(false)
-          useChatStore.getState().setLocalSpeaking(true)
-          send('voice_speaking', { room_id: roomId, channel_id: channelId, speaking: true })
-        } else if (useSettingsStore.getState().voiceMode === 'noise_gate' ||
-                   useSettingsStore.getState().voiceMode === 'auto') {
-          // Noise gate / auto mode — start continuous voice detection
+        }
+        const mode = useSettingsStore.getState().voiceMode
+        if (mode === 'noise_gate' || mode === 'auto') {
           const threshold = useSettingsStore.getState().noiseGateThreshold
-          voiceManagerRef.current?.startNoiseGate(threshold)
+          vm.startNoiseGate(threshold)
         }
       } catch (err) {
         console.error('Failed to join voice channel:', err)
@@ -92,44 +89,50 @@ export default function App() {
   }, [])
 
   const handlePTTStart = () => {
-    const activeVoice = useChatStore.getState().activeVoice
-    if (!activeVoice) return
-    const { userId, displayName } = useChatStore.getState()
+    try {
+      const activeVoice = useChatStore.getState().activeVoice
+      if (!activeVoice) return
+      const { userId, displayName } = useChatStore.getState()
 
-    // WebRTC voice (if available — WiFi phone and Mac)
-    if (voiceManagerRef.current?.isActive) {
-      voiceManagerRef.current.setMuted(false)
-    }
-    // BLE voice capture (Android devices)
-    if (window.PeatLinkVoice?.hasBleVoice?.()) {
-      window.PeatLinkVoice.startPtt(userId, displayName || 'Android')
-    }
+      if (voiceManagerRef.current?.isActive) {
+        voiceManagerRef.current.setMuted(false)
+      }
+      if (window.PeatLinkVoice?.hasBleVoice?.()) {
+        window.PeatLinkVoice.startPtt(userId, displayName || 'Android')
+      }
 
-    useChatStore.getState().setLocalSpeaking(true)
-    send('voice_speaking', {
-      room_id: activeVoice.roomId,
-      channel_id: activeVoice.channelId,
-      speaking: true,
-    })
+      useChatStore.getState().setLocalSpeaking(true)
+      send('voice_speaking', {
+        room_id: activeVoice.roomId,
+        channel_id: activeVoice.channelId,
+        speaking: true,
+      })
+    } catch (err) {
+      console.warn('PTT start error:', err)
+    }
   }
 
   const handlePTTEnd = () => {
-    const activeVoice = useChatStore.getState().activeVoice
-    if (!activeVoice) return
+    try {
+      const activeVoice = useChatStore.getState().activeVoice
+      if (!activeVoice) return
 
-    if (voiceManagerRef.current?.isActive) {
-      voiceManagerRef.current.setMuted(true)
-    }
-    if (window.PeatLinkVoice?.hasBleVoice?.()) {
-      window.PeatLinkVoice.stopPtt()
-    }
+      if (voiceManagerRef.current?.isActive) {
+        voiceManagerRef.current.setMuted(true)
+      }
+      if (window.PeatLinkVoice?.hasBleVoice?.()) {
+        window.PeatLinkVoice.stopPtt()
+      }
 
-    useChatStore.getState().setLocalSpeaking(false)
-    send('voice_speaking', {
-      room_id: activeVoice.roomId,
-      channel_id: activeVoice.channelId,
-      speaking: false,
-    })
+      useChatStore.getState().setLocalSpeaking(false)
+      send('voice_speaking', {
+        room_id: activeVoice.roomId,
+        channel_id: activeVoice.channelId,
+        speaking: false,
+      })
+    } catch (err) {
+      console.warn('PTT end error:', err)
+    }
   }
 
   // Name entry screen
