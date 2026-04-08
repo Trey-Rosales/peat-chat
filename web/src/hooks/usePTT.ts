@@ -13,6 +13,11 @@ declare global {
       hasBleVoice(): boolean
       pollIncomingFrames?(): string
       sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
+      setVoiceMode?(mode: string): void
+      setNoiseGateThreshold?(db: number): void
+      getMicLevelDb?(): number
+      isVoiceDetected?(): boolean
+      getVoiceMode?(): string
     }
   }
 }

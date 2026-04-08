@@ -71,6 +71,11 @@ export default function App() {
           voiceManagerRef.current?.setMuted(false)
           useChatStore.getState().setLocalSpeaking(true)
           send('voice_speaking', { room_id: roomId, channel_id: channelId, speaking: true })
+        } else if (useSettingsStore.getState().voiceMode === 'noise_gate' ||
+                   useSettingsStore.getState().voiceMode === 'auto') {
+          // Noise gate / auto mode — start continuous voice detection
+          const threshold = useSettingsStore.getState().noiseGateThreshold
+          voiceManagerRef.current?.startNoiseGate(threshold)
         }
       } catch (err) {
         console.error('Failed to join voice channel:', err)

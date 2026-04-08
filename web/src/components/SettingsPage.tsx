@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSettingsStore } from '../store/settingsStore'
 import { useChatStore } from '../store/chatStore'
 import { KeyBindingCapture } from './KeyBindingCapture'
+import { VoiceSettings } from './VoiceSettings'
 
 interface Props {
   onClose: () => void
@@ -186,19 +187,17 @@ export function SettingsPage({ onClose, send }: Props) {
           {/* Push-to-Talk */}
           <section>
             <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
-              Push-to-Talk
+              Voice
             </h2>
-            <div className="space-y-2">
-              <label className="text-sm text-pl-text">PTT Key</label>
+            <VoiceSettings />
+            <div className="space-y-2 mt-4">
+              <label className="text-sm text-pl-text">PTT Key (keyboard)</label>
               <div className="flex items-center gap-3">
                 <KeyBindingCapture currentKey={pttKey} onCapture={setPttKey} />
                 <span className="text-xs text-pl-text-sec">
-                  Hold this key to transmit voice
+                  Hold this key to transmit voice (PTT mode)
                 </span>
               </div>
-              <p className="text-xs text-pl-text-sec/60 mt-1">
-                PTT is disabled when typing in a text field
-              </p>
             </div>
           </section>
 

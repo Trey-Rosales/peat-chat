@@ -3,6 +3,11 @@ package com.peatlink.app.ble
 import android.annotation.SuppressLint
 import android.media.*
 import android.util.Log
+import com.konovalov.vad.Vad
+import com.konovalov.vad.config.FrameSize
+import com.konovalov.vad.config.Mode
+import com.konovalov.vad.config.SampleRate
+import com.konovalov.vad.models.VadModel
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -66,6 +71,9 @@ class BleVoiceService {
     // PCM frames from WebRTC (Mac audio → encode → send via BLE)
     private var bridgeEncoder: MediaCodec? = null
 
+    // WebRTC VAD for auto mode
+    private var vad: VadModel? = null
+
     private var running = false
 
     fun start() {
@@ -73,6 +81,7 @@ class BleVoiceService {
         running = true
         initPlayback()
         initBridgeEncoder()
+        initVad()
         startPlaybackLoop()
         Log.i(TAG, "BLE voice service started (${SAMPLE_RATE}Hz, ${BITRATE}bps Opus)")
     }
@@ -80,10 +89,31 @@ class BleVoiceService {
     fun stop() {
         running = false
         stopTransmitting()
+        stopContinuous()
         playbackJob?.cancel()
         releasePlayback()
         releaseBridgeEncoder()
+        releaseVad()
         Log.i(TAG, "BLE voice service stopped")
+    }
+
+    private fun initVad() {
+        vad = try {
+            Vad.builder()
+                .setModel(com.konovalov.vad.config.Model.WEB_RTC_GMM)
+                .setSampleRate(SampleRate.SAMPLE_RATE_8K)
+                .setFrameSize(FrameSize.FRAME_SIZE_160)
+                .setMode(Mode.NORMAL)
+                .build()
+        } catch (e: Throwable) {
+            Log.w(TAG, "WebRTC VAD unavailable: ${e.message}")
+            null
+        }
+    }
+
+    private fun releaseVad() {
+        try { vad?.close() } catch (_: Throwable) {}
+        vad = null
     }
 
     // --- JS Bridge methods (WiFi phone only — feeds WebRTC) ---
@@ -193,7 +223,11 @@ class BleVoiceService {
             // Determine if voice is active
             val isVoice = when (voiceMode) {
                 VoiceMode.NOISE_GATE -> db > noiseGateThresholdDb
-                VoiceMode.AUTO -> db > noiseGateThresholdDb // TODO: replace with WebRTC VAD
+                VoiceMode.AUTO -> {
+                    // Use WebRTC VAD if available, fall back to energy-based
+                    val vadResult = try { vad?.isSpeech(pcmBuf) } catch (_: Throwable) { null }
+                    vadResult ?: (db > noiseGateThresholdDb)
+                }
                 VoiceMode.PTT -> transmitting
             }
 

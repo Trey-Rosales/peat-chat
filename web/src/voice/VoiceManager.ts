@@ -32,6 +32,11 @@ declare global {
       hasBleVoice(): boolean
       pollIncomingFrames?(): string
       sendPcmFrame?(base64Pcm: string, senderId: string, senderName: string): void
+      setVoiceMode?(mode: string): void
+      setNoiseGateThreshold?(db: number): void
+      getMicLevelDb?(): number
+      isVoiceDetected?(): boolean
+      getVoiceMode?(): string
     }
   }
 }
@@ -55,6 +60,9 @@ export class VoiceManager {
   private channelId = ''
   private active = false
   private _listenOnly = false
+  private noiseGateActive = false
+  private noiseGateAnalyser: AnalyserNode | null = null
+  private noiseGateTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(send: (type: string, data: any) => void) {
     this.send = send
@@ -62,6 +70,65 @@ export class VoiceManager {
 
   get isActive(): boolean {
     return this.active
+  }
+
+  /** Start noise gate monitoring — continuously mute/unmute based on mic level */
+  startNoiseGate(thresholdDb: number): void {
+    if (!this.active || !this.audioContext || !this.sourceNode) return
+    this.stopNoiseGate()
+
+    this.noiseGateAnalyser = this.audioContext.createAnalyser()
+    this.noiseGateAnalyser.fftSize = 256
+    this.sourceNode.connect(this.noiseGateAnalyser)
+
+    const dataArray = new Float32Array(this.noiseGateAnalyser.fftSize)
+    let wasSpeaking = false
+
+    this.noiseGateTimer = setInterval(() => {
+      if (!this.noiseGateAnalyser || !this.active) return
+      this.noiseGateAnalyser.getFloatTimeDomainData(dataArray)
+      let sumSq = 0
+      for (let i = 0; i < dataArray.length; i++) sumSq += dataArray[i] * dataArray[i]
+      const rms = Math.sqrt(sumSq / dataArray.length)
+      const db = rms > 0 ? 20 * Math.log10(rms) : -96
+
+      const isSpeaking = db > thresholdDb
+      if (isSpeaking !== wasSpeaking) {
+        this.setMuted(!isSpeaking)
+        if (isSpeaking) {
+          this.send('voice_speaking', {
+            room_id: this.roomId, channel_id: this.channelId, speaking: true
+          })
+        } else {
+          // Small delay before stopping (catches word endings)
+          setTimeout(() => {
+            if (!this.noiseGateAnalyser) return
+            this.noiseGateAnalyser.getFloatTimeDomainData(dataArray)
+            let sq = 0
+            for (let i = 0; i < dataArray.length; i++) sq += dataArray[i] * dataArray[i]
+            const r = Math.sqrt(sq / dataArray.length)
+            const d = r > 0 ? 20 * Math.log10(r) : -96
+            if (d <= thresholdDb) {
+              this.send('voice_speaking', {
+                room_id: this.roomId, channel_id: this.channelId, speaking: false
+              })
+            }
+          }, 300)
+        }
+        wasSpeaking = isSpeaking
+      }
+    }, 20) // 50Hz polling
+  }
+
+  stopNoiseGate(): void {
+    if (this.noiseGateTimer) {
+      clearInterval(this.noiseGateTimer)
+      this.noiseGateTimer = null
+    }
+    if (this.noiseGateAnalyser) {
+      this.noiseGateAnalyser.disconnect()
+      this.noiseGateAnalyser = null
+    }
   }
 
   get currentRoomId(): string {

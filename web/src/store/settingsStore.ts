@@ -5,7 +5,8 @@ interface SettingsStore {
   micDeviceId: string
   speakerDeviceId: string
   pttKey: string
-  voiceMode: 'ptt' | 'open'
+  voiceMode: 'ptt' | 'open' | 'noise_gate' | 'auto'
+  noiseGateThreshold: number // dB, typically -60 to -20
   inputVolume: number
   preferredTransport: string
   protomapsApiKey: string
@@ -15,7 +16,8 @@ interface SettingsStore {
   setMicDevice: (id: string) => void
   setSpeakerDevice: (id: string) => void
   setPttKey: (key: string) => void
-  setVoiceMode: (mode: 'ptt' | 'open') => void
+  setVoiceMode: (mode: 'ptt' | 'open' | 'noise_gate' | 'auto') => void
+  setNoiseGateThreshold: (db: number) => void
   setInputVolume: (vol: number) => void
   setPreferredTransport: (t: string) => void
   setProtomapsApiKey: (key: string) => void
@@ -30,6 +32,7 @@ export const useSettingsStore = create<SettingsStore>()(
       speakerDeviceId: '',
       pttKey: ' ',
       voiceMode: 'ptt',
+      noiseGateThreshold: -35,
       inputVolume: 1.0,
       preferredTransport: 'tcp',
       protomapsApiKey: '',
@@ -40,6 +43,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setSpeakerDevice: (id) => set({ speakerDeviceId: id }),
       setPttKey: (key) => set({ pttKey: key }),
       setVoiceMode: (mode) => set({ voiceMode: mode }),
+      setNoiseGateThreshold: (db) => set({ noiseGateThreshold: db }),
       setInputVolume: (vol) => set({ inputVolume: vol }),
       setPreferredTransport: (t) => set({ preferredTransport: t }),
       setProtomapsApiKey: (key) => set({ protomapsApiKey: key }),

@@ -47,4 +47,5 @@ dependencies {
     implementation("androidx.webkit:webkit:1.8.0")
     implementation("net.java.dev.jna:jna:5.14.0@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.github.gkonovalov:android-vad:2.0.1")
 }
