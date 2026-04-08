@@ -628,6 +628,11 @@ class PeatBleService(
                         Log.w(TAG, "Cleared stale pending connections")
                     }
 
+                    // Clean stale chunk buffers (incomplete reassembly older than 10 seconds)
+                    if (tickCount % 3 == 0) {
+                        chunkBuffers.clear()
+                    }
+
                     // Also run peat-btle tick for mesh state management
                     val now = System.currentTimeMillis().toULong()
                     val meshData = node.bleTick(now)
@@ -636,17 +641,11 @@ class PeatBleService(
                         broadcastToAllPeers(bytes)
                     }
 
-                    // Send any queued bridge data via GATT (direct transport)
-                    var sent = 0
-                    while (true) {
-                        val bridgeData = node.popBleSend() ?: break
-                        val bytes = ByteArray(bridgeData.size) { bridgeData[it].toByte() }
-                        broadcastToAllPeers(bytes)
-                        sent++
-                    }
+                    // Bridge data (ble_hello, voice control, etc.) is now drained by
+                    // startAudioDrainLoop() at 20ms cadence — no longer waiting for 3s tick.
 
-                    if (tickCount % 10 == 0 && (sent > 0 || knownPeatDevices.isNotEmpty())) {
-                        Log.i(TAG, "Tick #$tickCount: data=$sent peers=${knownPeatDevices.size}")
+                    if (tickCount % 10 == 0 && knownPeatDevices.isNotEmpty()) {
+                        Log.i(TAG, "Tick #$tickCount: peers=${knownPeatDevices.size}")
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Tick error: ${e.message}")
@@ -661,6 +660,7 @@ class PeatBleService(
         audioJob = scope.launch {
             while (isActive && running) {
                 try {
+                    // Drain audio frames (20ms cadence for real-time voice)
                     voiceService?.let { vs ->
                         while (true) {
                             val audioFrame = vs.outgoingAudioFrames.poll() ?: break
@@ -669,6 +669,13 @@ class PeatBleService(
                             audioFrame.copyInto(packet, 1)
                             broadcastToAllPeers(packet)
                         }
+                    }
+                    // Also drain bridge data on the fast path (ble_hello, voice control,
+                    // room history sync, etc. — these shouldn't wait for the 3s tick)
+                    while (true) {
+                        val bridgeData = node.popBleSend() ?: break
+                        val bytes = ByteArray(bridgeData.size) { bridgeData[it].toByte() }
+                        broadcastToAllPeers(bytes)
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Audio drain error: ${e.message}")
@@ -692,6 +699,12 @@ class PeatBleService(
         val maxWrite = negotiatedMtu - 3
         if (data.size <= maxWrite) {
             // Fits in single write
+            enqueueForSend(data)
+            return
+        }
+        // If MTU is too small for chunking (pre-negotiation), send raw and hope for the best
+        if (data.size > maxWrite && maxWrite < 100) {
+            Log.w(TAG, "Data ${data.size}b > maxWrite ${maxWrite}b but MTU too small to chunk, sending raw")
             enqueueForSend(data)
             return
         }
@@ -790,31 +803,36 @@ class PeatBleService(
      * Returns the complete message when all chunks are received, or null if waiting.
      */
     private fun reassembleOrPassthrough(address: String, value: ByteArray): ByteArray? {
-        if (value.size < 4 || value[0] != 0x01.toByte()) {
-            return value  // not chunked, pass through as-is
-        }
-        val chunkId = value[1]
-        val seqNum = value[2].toInt() and 0xFF
-        val totalChunks = value[3].toInt() and 0xFF
-        if (totalChunks == 0 || seqNum >= totalChunks) return null
-
-        val chunks = chunkBuffers.getOrPut(chunkId) { arrayOfNulls(totalChunks) }
-        if (seqNum < chunks.size) {
-            chunks[seqNum] = value.copyOfRange(4, value.size)
-        }
-        // Check if all chunks received
-        if (chunks.all { it != null }) {
-            chunkBuffers.remove(chunkId)
-            val total = chunks.sumOf { it!!.size }
-            val assembled = ByteArray(total)
-            var offset = 0
-            for (chunk in chunks) {
-                chunk!!.copyInto(assembled, offset)
-                offset += chunk.size
+        try {
+            if (value.size < 4 || value[0] != 0x01.toByte()) {
+                return value  // not chunked, pass through as-is
             }
-            return assembled
+            val chunkId = value[1]
+            val seqNum = value[2].toInt() and 0xFF
+            val totalChunks = value[3].toInt() and 0xFF
+            if (totalChunks == 0 || totalChunks > 64 || seqNum >= totalChunks) return null
+
+            val chunks = chunkBuffers.getOrPut(chunkId) { arrayOfNulls(totalChunks) }
+            if (seqNum >= chunks.size) return null  // safety bounds check
+            chunks[seqNum] = if (value.size > 4) value.copyOfRange(4, value.size) else ByteArray(0)
+
+            // Check if all chunks received
+            if (chunks.all { it != null }) {
+                chunkBuffers.remove(chunkId)
+                val total = chunks.sumOf { it!!.size }
+                val assembled = ByteArray(total)
+                var offset = 0
+                for (chunk in chunks) {
+                    chunk!!.copyInto(assembled, offset)
+                    offset += chunk.size
+                }
+                return assembled
+            }
+            return null  // waiting for more chunks
+        } catch (e: Throwable) {
+            Log.w(TAG, "Chunk reassembly error: ${e.message}")
+            return value  // fall back to raw data
         }
-        return null  // waiting for more chunks
     }
 
 }

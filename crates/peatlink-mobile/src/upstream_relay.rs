@@ -42,6 +42,17 @@ pub async fn start_upstream_relay(
     room_name: String,
     seen_ids: SeenIds,
 ) -> Result<UpstreamRelayHandle, String> {
+    start_upstream_relay_with_transport(url, hub, display_name, room_name, seen_ids, None).await
+}
+
+pub async fn start_upstream_relay_with_transport(
+    url: String,
+    hub: Arc<Hub>,
+    display_name: String,
+    room_name: String,
+    seen_ids: SeenIds,
+    transport_label: Option<String>,
+) -> Result<UpstreamRelayHandle, String> {
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
     let connected = Arc::new(RwLock::new(false));
 
@@ -58,6 +69,7 @@ pub async fn start_upstream_relay(
         seen_ids,
         connected,
         shutdown_rx,
+        transport_label,
     ));
 
     Ok(handle)
@@ -71,6 +83,7 @@ async fn relay_loop(
     seen_ids: SeenIds,
     connected: Arc<RwLock<bool>>,
     mut shutdown_rx: mpsc::Receiver<()>,
+    transport_label: Option<String>,
 ) {
     let mut backoff = Duration::from_secs(2);
     let max_backoff = Duration::from_secs(30);
@@ -91,6 +104,7 @@ async fn relay_loop(
                     &room_name,
                     &seen_ids,
                     &mut shutdown_rx,
+                    transport_label.as_deref(),
                 )
                 .await;
 
@@ -143,6 +157,7 @@ async fn run_relay(
     room_name: &str,
     seen_ids: &SeenIds,
     shutdown_rx: &mut mpsc::Receiver<()>,
+    transport_label: Option<&str>,
 ) -> RelayResult {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
@@ -163,6 +178,18 @@ async fn run_relay(
         .is_err()
     {
         return RelayResult::Disconnected;
+    }
+
+    // If this relay has a transport label (e.g., "wifi-direct"), announce it
+    // so the upstream server registers us as a P2P peer in its mesh state
+    if let Some(label) = transport_label {
+        let set_transport = serde_json::json!({
+            "type": "set_transport",
+            "data": { "transport": label }
+        });
+        if ws_tx.send(Message::Text(set_transport.to_string())).await.is_err() {
+            return RelayResult::Disconnected;
+        }
     }
 
     // Send join_room

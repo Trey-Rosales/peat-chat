@@ -212,19 +212,16 @@ export function SettingsPage({ onClose, send }: Props) {
                 value={preferredTransport}
                 onChange={(e) => {
                   setPreferredTransport(e.target.value)
-                  send('set_transport', { transport: e.target.value })
+                  send('set_preferred_transport', { transport: e.target.value })
                 }}
                 className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm"
               >
-                <option value="tcp">TCP</option>
-                <option value="quic">QUIC</option>
-                <option value="btle">Bluetooth LE</option>
-                <option value="wifi">Wi-Fi Direct</option>
-                <option value="lan">LAN</option>
-                <option value="p2p">P2P</option>
+                <option value="tcp">TCP &mdash; stable internet connection</option>
+                <option value="wifi-direct">WiFi Direct &mdash; peer-to-peer, no internet needed</option>
+                <option value="btle">BLE &mdash; lowest power, shortest range</option>
               </select>
               <p className="text-xs text-pl-text-sec/60">
-                Preferred network path for mesh connections
+                Preferred network path for mesh connections. Default priority: TCP &gt; WiFi Direct &gt; BLE.
               </p>
             </div>
           </section>

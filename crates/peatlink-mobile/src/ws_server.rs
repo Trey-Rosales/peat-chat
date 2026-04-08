@@ -306,6 +306,14 @@ async fn handle_ws(mut socket: WebSocket, hub: Arc<Hub>) {
         }
     }
 
+    // If this was a P2P client (wifi-direct), unregister from upstream
+    if session.transport == "wifi-direct" {
+        let unreg = make_json("unregister_ble_peer", &serde_json::json!({
+            "peer_id": session.identity,
+        }));
+        let _ = hub.passthrough_tx.send(Arc::new(unreg));
+    }
+
     // Cleanup: leave all rooms
     for (chat_id, room_arc) in &session.joined_rooms {
         let mut room = room_arc.write().await;
@@ -502,6 +510,16 @@ async fn handle_message(
                         if let Some(info) = room.members.get_mut(&session.client_id) {
                             info.transport = transport.to_string();
                         }
+                    }
+                    // If this is a P2P transport (wifi-direct, etc.), register this client
+                    // as a peer with the upstream Go server so it appears in mesh state
+                    if transport == "wifi-direct" {
+                        let reg = make_json("register_ble_peer", &serde_json::json!({
+                            "peer_id": session.identity,
+                            "peer_name": session.name,
+                            "transport": transport,
+                        }));
+                        let _ = hub.passthrough_tx.send(Arc::new(reg));
                     }
                 }
             }

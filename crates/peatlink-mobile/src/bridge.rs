@@ -320,6 +320,7 @@ async fn bridge_loop(
                             &seen_ids,
                             &voice_incoming_tx,
                             &mut ble_peers,
+                            &self_node_id,
                         )
                         .await;
                     }
@@ -439,6 +440,7 @@ async fn handle_ble_ws_message(
     seen_ids: &SeenIds,
     voice_incoming_tx: &mpsc::UnboundedSender<crate::VoiceFrame>,
     ble_peers: &mut BlePeerDirectory,
+    self_node_id: &str,
 ) {
     let Ok(envelope) = serde_json::from_str::<serde_json::Value>(json) else {
         return;
@@ -550,6 +552,9 @@ async fn handle_ble_ws_message(
                         }),
                     );
                     let _ = hub.passthrough_tx.send(Arc::new(reg));
+
+                    // Immediately broadcast updated mesh state with the promoted node_id
+                    broadcast_ble_mesh_state_from_map(&hub, &room_name, &ble_peers.names_by_id, &self_node_id).await;
                 }
             }
         }
@@ -690,10 +695,11 @@ async fn forward_ws_to_ble(
     match msg_type {
         "identity" | "name_assigned" | "ble_mesh_state"
         | "voice_offer_relay" | "voice_answer_relay" | "voice_ice_relay"
-        // Voice control actions rebroadcast by rebroadcast_ble_control() —
-        // these are user-initiated actions, not server events, and
-        // voice_speaking is too chatty for BLE GATT bandwidth
-        | "join_voice" | "leave_voice" | "voice_speaking" | "create_voice_channel" => return,
+        // voice_speaking is too chatty for BLE GATT bandwidth (fires every
+        // speaking state change). join_voice/leave_voice/create_voice_channel
+        // are rare user events that MUST flow bidirectionally so BLE peers
+        // can join voice and see voice state updates.
+        | "voice_speaking" => return,
         _ => {}
     }
 
@@ -812,6 +818,7 @@ async fn broadcast_ble_mesh_state_from_map(
 
     let ble_peers_local: Vec<serde_json::Value> = peers
         .iter()
+        .filter(|(id, _)| !id.contains(':')) // skip provisional MAC entries
         .map(|(id, name)| {
             serde_json::json!({
                 "id": id,
@@ -827,6 +834,7 @@ async fn broadcast_ble_mesh_state_from_map(
 
     let ble_peers_upstream: Vec<serde_json::Value> = peers
         .iter()
+        .filter(|(id, _)| !id.contains(':')) // skip provisional MAC entries
         .map(|(id, name)| {
             serde_json::json!({
                 "id": id,

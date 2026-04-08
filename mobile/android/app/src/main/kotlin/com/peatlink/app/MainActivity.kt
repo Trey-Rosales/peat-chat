@@ -35,6 +35,7 @@ import org.json.JSONObject
 import com.peatlink.app.ble.BleVoiceService
 import com.peatlink.app.ble.PeatBleService
 import com.peatlink.app.net.ServerDiscovery
+import com.peatlink.app.p2p.PeatWifiDirectService
 
 /**
  * PeatLink native Android shell.
@@ -71,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private var discovery: ServerDiscovery? = null
     private var bleService: PeatBleService? = null
     private var bleVoice: BleVoiceService? = null
+    private var wifiDirectService: PeatWifiDirectService? = null
     private var serverStarted = false
     private var connStatusJob: Job? = null
 
@@ -284,6 +286,7 @@ class MainActivity : AppCompatActivity() {
         val allPerms = BLE_PERMISSIONS.toMutableList()
         allPerms.add(Manifest.permission.RECORD_AUDIO)
         allPerms.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        allPerms.add(Manifest.permission.CHANGE_WIFI_STATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             allPerms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
@@ -387,7 +390,46 @@ class MainActivity : AppCompatActivity() {
                     Log.w(TAG, "BLE mesh/service failed: ${e.message}")
                 }
 
-                // Step 5: Connect upstream relay BEFORE WebView loads
+                // Step 5: Start WiFi Direct P2P transport
+                try {
+                    val actualPort = serverPort
+                    val identity = mobileNode.nodeId()
+                    val upstreamConnected = try {
+                        mobileNode.isUpstreamConnected()
+                    } catch (_: Throwable) { false }
+
+                    val wdService = PeatWifiDirectService(
+                        context = this@MainActivity,
+                        port = actualPort,
+                        nodeId = identity.take(24),
+                        callsign = prefs.callsign.ifEmpty { "Android User" },
+                        hasUpstream = upstreamConnected,
+                    )
+                    wdService.onGroupFormed = { isOwner, ownerAddress ->
+                        if (!isOwner && ownerAddress != null) {
+                            // We're a WiFi Direct client — connect upstream relay to GO's WS server
+                            val goWsUrl = "ws://${ownerAddress.hostAddress}:$actualPort/ws"
+                            Log.i(TAG, "WiFi Direct: connecting relay to GO at $goWsUrl")
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val mn = node as? com.peatlink.ffi.MobileNode ?: return@launch
+                                    mn.startWifiDirectRelay(goWsUrl, prefs.callsign.ifEmpty { "Android User" }, "general")
+                                } catch (e: Throwable) {
+                                    Log.e(TAG, "WiFi Direct relay failed: ${e.message}")
+                                }
+                            }
+                        } else if (isOwner) {
+                            Log.i(TAG, "WiFi Direct: we are Group Owner, peers connect to our WS server")
+                        }
+                    }
+                    wdService.start()
+                    wifiDirectService = wdService
+                    Log.i(TAG, "WiFi Direct service started")
+                } catch (e: Throwable) {
+                    Log.w(TAG, "WiFi Direct failed: ${e.message}")
+                }
+
+                // Step 6: Connect upstream relay BEFORE WebView loads
                 // so the passthrough channel has a subscriber when the
                 // WebView sends set_name
                 val savedUrl = prefs.upstreamUrl
@@ -516,6 +558,12 @@ class MainActivity : AppCompatActivity() {
                     parts.add(blePart)
                 } else if (bleStatus != "off" && bleStatus != "not started") {
                     parts.add("BLE: $bleStatus")
+                }
+
+                val wdStatus = wifiDirectService?.status ?: "off"
+                val wdPeers = wifiDirectService?.connectedPeerCount ?: 0
+                if (wdStatus != "off") {
+                    parts.add("WD: $wdStatus" + if (wdPeers > 0) " ($wdPeers)" else "")
                 }
 
                 if (parts.isNotEmpty()) {
@@ -653,6 +701,8 @@ class MainActivity : AppCompatActivity() {
         bleVoice = null
         try { bleService?.stop() } catch (_: Throwable) {}
         bleService = null
+        try { wifiDirectService?.stop() } catch (_: Throwable) {}
+        wifiDirectService = null
 
         val n = node as? com.peatlink.ffi.MobileNode
         node = null

@@ -92,6 +92,21 @@ export default function App() {
     voiceManagerRef.current?.setMuted(muted)
   }, [])
 
+  const handleModeChange = useCallback((newMode: string) => {
+    const vm = voiceManagerRef.current
+    if (!vm?.isActive) return
+    // Stop any running noise gate/auto detection
+    vm.stopNoiseGate()
+    // For noise_gate and auto modes, start the noise gate
+    if (newMode === 'noise_gate' || newMode === 'auto') {
+      const threshold = useSettingsStore.getState().noiseGateThreshold
+      vm.startNoiseGate(threshold)
+    } else {
+      // PTT mode: mute by default (user holds key to talk)
+      vm.setMuted(true)
+    }
+  }, [])
+
   const handlePTTStart = () => {
     try {
       const activeVoice = useChatStore.getState().activeVoice
@@ -200,6 +215,7 @@ export default function App() {
             onPTTStart={handlePTTStart}
             onPTTEnd={handlePTTEnd}
             onMuteToggle={handleMuteToggle}
+            onModeChange={handleModeChange}
             send={send}
           />
         </div>

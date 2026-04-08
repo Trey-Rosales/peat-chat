@@ -413,8 +413,9 @@ type MessageUnpinnedData struct {
 
 // Incoming: register_ble_peer — relay registers a BLE peer as reachable through it
 type RegisterBlePeerData struct {
-	PeerID   string `json:"peer_id"`
-	PeerName string `json:"peer_name"`
+	PeerID    string `json:"peer_id"`
+	PeerName  string `json:"peer_name"`
+	Transport string `json:"transport,omitempty"` // "btle" (default) or "wifi-direct"
 }
 
 // Incoming: unregister_ble_peer

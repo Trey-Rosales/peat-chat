@@ -43,6 +43,14 @@ interface MobileNode {
 
     boolean is_upstream_connected();
 
+    // WiFi Direct relay
+    [Throws=PeatLinkError]
+    void start_wifi_direct_relay(string ws_url, string display_name, string room_name);
+
+    void stop_wifi_direct_relay();
+
+    boolean is_wifi_direct_connected();
+
     // BLE mesh controls
     [Throws=PeatLinkError]
     void start_ble(string mesh_id, string callsign, sequence<u8>? shared_secret);

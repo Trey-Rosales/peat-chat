@@ -2,13 +2,14 @@ import { useState, useRef, useEffect } from 'react'
 import type { MeshPeer } from '../types'
 
 const TRANSPORT_COLORS: Record<string, string> = {
-  tcp:   '#3b82f6',
-  btle:  '#8b5cf6',
-  quic:  '#06b6d4',
-  wifi:  '#f59e0b',
-  lan:   '#22c55e',
-  p2p:   '#ec4899',
-  relay: '#6b7280',
+  tcp:            '#3b82f6',
+  btle:           '#8b5cf6',
+  quic:           '#06b6d4',
+  wifi:           '#f59e0b',
+  'wifi-direct':  '#f59e0b',
+  lan:            '#22c55e',
+  p2p:            '#ec4899',
+  relay:          '#6b7280',
 }
 
 interface Props {

@@ -25,7 +25,7 @@ Three ways to run it:
 |:-----|:-------|:----------|:--------|
 | **CLI** | None (direct P2P) | peat-mesh (QUIC + mDNS) | AutomergeStore (redb) |
 | **Web** | Go WebSocket relay | TCP / WebSocket | In-memory |
-| **Mobile** | Embedded Rust (axum) | WS + BLE mesh (peat-btle) | In-memory + BLE mesh |
+| **Mobile** | Embedded Rust (axum) | WS + WiFi Direct P2P + BLE mesh | In-memory + BLE mesh |
 
 ---
 
@@ -176,10 +176,11 @@ Each room has voice channels (a default "General" channel is created automatical
 
 1. **WebRTC mesh** -- Peers connect directly via WebRTC. The server only relays signaling (SDP offers/answers, ICE candidates), never audio.
 2. **Push-to-talk** -- Audio track is created muted on join. Holding the PTT key (default: Space) unmutes the track. No renegotiation per press.
-3. **Open mic mode** -- Toggle between PTT and continuous transmission via the VoiceBar.
+3. **Three voice modes** -- PTT (push-to-talk), Noise Gate (energy-based dB threshold), and Auto (WebRTC VAD). Cycle modes live via VoiceBar button. Mode switching properly tears down the old audio pipeline before starting the new one.
 4. **Listen-only** -- If no microphone is available (or HTTPS is required), users join in listen-only mode and can still hear others.
 5. **Speaking indicators** -- `voice_speaking` messages broadcast who's talking. The UI shows animated rings around active speakers.
 6. **Newcomer offers** -- When joining a channel with existing members, the newcomer creates WebRTC offers to each existing peer.
+7. **BLE voice relay** -- Native Opus 8kbps at 8kHz over BLE GATT for phones without WiFi. 20ms audio drain loop with dual priority queues (audio first, Serval VoMP-inspired). 60ms jitter buffer on playback.
 
 ### Voice UI
 
@@ -198,21 +199,67 @@ PeatLink supports Bluetooth Low Energy as a full mesh transport for scenarios wh
 
 The BLE mesh uses a three-layer design:
 
-1. **BLE Platform Layer** (`PeatBleService.kt`) -- Dual-role Android BLE driver that acts as both scanner and advertiser simultaneously. Runs a GATT server with a sync characteristic (read/write/notify) and a GATT client with auto-connect and MTU 512 negotiation. A tick loop every 3 seconds drives the `peat-btle` state machine and broadcasts sync data to connected BLE peers.
+1. **BLE Platform Layer** (`PeatBleService.kt`) -- Dual-role Android BLE driver that acts as both scanner and advertiser simultaneously. Runs a GATT server with a sync characteristic (read/write/notify) and a GATT client with auto-connect and MTU 512 negotiation. A 3-second tick loop drives the `peat-btle` state machine. A separate 20ms audio+bridge drain loop handles real-time voice and message forwarding with dual priority queues (audio first, data second). MTU-aware fragmentation for large messages with 4-byte chunk headers.
 
-2. **BLE-WS Bridge** (`bridge.rs`) -- Bridges the BLE mesh and the embedded WebSocket server. Full WS JSON envelopes are sent over the BLE chat channel prefixed with `__ws:`, enabling every message type to traverse BLE without a dedicated handler per type. Subscribes to room broadcasts, downstream, and passthrough channels. Shared dedup with the upstream relay prevents message loops.
+2. **BLE-WS Bridge** (`bridge.rs`) -- Bridges the BLE mesh and the embedded WebSocket server. Full WS JSON envelopes are sent over the BLE chat channel prefixed with `__ws:`, enabling every message type to traverse BLE without a dedicated handler per type. Subscribes to room broadcasts, downstream, and passthrough channels. Shared dedup with the upstream relay prevents message loops. Voice-aware mesh backoff (Serval Rhizome pattern): mesh sync pauses during active voice to free BLE bandwidth.
 
-3. **Hierarchical Mesh View** -- BLE peers appear in the mesh topology viewer alongside direct WS/QUIC peers. The `connected_via` field on `MeshPeerData` distinguishes transport type. The `MeshViewer` renders a tree topology: direct peers in an inner ring, BLE relay peers in an outer ring near their parent node. BLE transport is colored purple (#8b5cf6).
+3. **Hierarchical Mesh View** -- BLE peers appear in the mesh topology viewer alongside direct WS/QUIC peers. The `connected_via` field on `MeshPeerData` distinguishes transport type. The `MeshViewer` renders a tree topology: direct peers in an inner ring, relay peers in an outer ring near their parent node. BLE transport is colored purple (#8b5cf6), WiFi Direct is amber (#f59e0b).
+
+---
+
+## WiFi Direct P2P Transport
+
+PeatLink supports WiFi Direct as a peer-to-peer transport for medium-range offline communication (~200m). WiFi Direct provides orders of magnitude more bandwidth than BLE (~250 Mbps vs ~2 Mbps) with lower latency (~10ms vs ~50ms), making it ideal for voice and high-throughput data sync.
+
+### Architecture
+
+WiFi Direct creates a standard IP network (192.168.49.x subnet). The device with internet connectivity becomes the Group Owner (GO), and other devices connect as clients. The GO's embedded WebSocket server handles WiFi Direct clients identically to local WebView connections -- no new protocol needed.
+
+```
+Mac Browser ←WebRTC→ Go Server (:8090/:8091)
+                        ↕ WebSocket (normal WiFi)
+              WiFi Relay Phone (Group Owner)
+                        ↕ WebSocket (WiFi Direct, ws://192.168.49.1:PORT)
+              WiFi Direct Phone (client, runs BLE bridge)
+                        ↕ BLE GATT
+              BLE-only Phone
+```
+
+### Multi-Hop Relay Chain
+
+Each hop reuses the existing `upstream_relay.rs` WebSocket relay code:
+
+- **Hop 1**: WiFi relay → Go server (normal WiFi upstream relay)
+- **Hop 2**: WiFi Direct phone → GO's WS server (WiFi Direct upstream relay with `transport_label: "wifi-direct"`)
+- **Hop 3**: BLE phone → WiFi Direct phone (BLE bridge, existing `bridge.rs`)
+
+All message types (chat, CoT, voice, markers, DMs, reactions, pins) propagate through the full chain.
+
+### Service Discovery
+
+Uses Android DNS-SD (`_peatlink._tcp`) with TXT record advertising node_id, port, callsign, and `has_upstream` flag. Devices with `has_upstream=true` (connected to Go server) get `groupOwnerIntent=15` to become GO. Discovery runs in 30s on / 60s off duty cycles.
+
+### Transport Priority Matrix
+
+When a peer is reachable via multiple transports, the server deduplicates using a priority matrix (user settings can override):
+
+| Priority | Transport | Bandwidth | Latency | Range |
+|:---------|:----------|:----------|:--------|:------|
+| 1 (best) | TCP | Unlimited | ~1ms | Unlimited |
+| 2 | WiFi Direct | ~250 Mbps | ~10ms | ~200m |
+| 3 | BLE | ~2 Mbps | ~50ms | ~30m |
+
+The `deduplicatePeers()` function in `hub.go` ensures each peer appears only once in mesh state, using the best available transport. Users can override via Settings → Preferred Transport.
 
 ### BLE Voice Relay
 
 Voice works over BLE without WebRTC via a native Opus codec path:
 
-- **Capture**: `BleVoiceService.kt` uses Android `AudioRecord` (16kHz mono) to capture PCM audio, encodes it to Opus via `MediaCodec` (24kbps, 20ms frames), and sends base64-encoded frames over the BLE mesh as `voice_audio` messages inside `__ws:` envelopes.
-- **Playback**: Incoming Opus frames are decoded via `MediaCodec` and played through `AudioTrack`.
-- **Bandwidth**: ~3KB/s per active speaker, well within BLE throughput limits.
-- **Fallback**: Raw PCM when `MediaCodec` Opus is unavailable on the device.
-- **PTT**: `PeatLinkVoice` JavaScript bridge (`WebView.addJavascriptInterface`) exposes PTT controls to the React UI. Touch PTT supported for mobile.
+- **Capture**: `BleVoiceService.kt` uses Android `AudioRecord` (8kHz mono) to capture PCM audio, encodes to Opus via `MediaCodec` (8kbps, 20ms frames, single-frame batching), and queues for BLE transmission.
+- **Transport**: 20ms audio drain loop with dual priority queues (audio first). `WRITE_TYPE_NO_RESPONSE` for audio frames (no ACK round-trip). ~1 KB/s per active speaker, using only 3-8% of available BLE bandwidth.
+- **Playback**: 60ms jitter buffer with silence-reset. Incoming Opus frames decoded via `MediaCodec` and played through `AudioTrack`. Skips local playback when decoder is unavailable (bridges raw frames for remote WebRTC decode instead of producing garbage audio).
+- **PTT**: `PeatLinkVoice` JavaScript bridge (`WebView.addJavascriptInterface`) exposes PTT controls, voice mode cycling (PTT/Noise Gate/Auto), and mute to the React UI.
+- **Mesh backoff**: Mesh sync pauses during active voice (Serval Rhizome pattern) to free BLE bandwidth for audio frames.
 
 ### Message Flow
 
@@ -242,8 +289,8 @@ Accessible via the gear icon in the sidebar header. Settings persist to `localSt
 | **Audio Input** | Microphone device, input volume slider |
 | **Audio Output** | Speaker device |
 | **Push-to-Talk** | PTT key binding (click to rebind) |
-| **Voice Mode** | Push-to-talk or open mic |
-| **Network** | Preferred transport (TCP, QUIC, BLE, Wi-Fi, LAN, P2P) |
+| **Voice Mode** | Push-to-talk, Noise Gate, or Auto (WebRTC VAD) |
+| **Network** | Preferred transport (TCP, WiFi Direct, BLE) |
 | **Map** | Protomaps API key, map style, share location toggle |
 
 ---
@@ -272,7 +319,7 @@ peat-chat/
 │   ├── room.go                   #   room state + voice channels + markers
 │   ├── message.go                #   all message types (chat, voice, CoT)
 │   ├── identity.go               #   blake3 room IDs, Ed25519 identity
-│   └── *_test.go                 #   server unit tests (48 tests)
+│   └── *_test.go                 #   server unit tests (55+ tests)
 ├── web/                          # React + TypeScript frontend
 │   └── src/
 │       ├── components/           #   ChatView, Sidebar, MapViewer,
@@ -290,6 +337,8 @@ peat-chat/
 │   │       ├── ble/
 │   │       │   ├── PeatBleService.kt   # dual-role BLE driver (scan + advertise + GATT)
 │   │       │   └── BleVoiceService.kt  # Opus voice capture/playback over BLE
+│   │       ├── p2p/
+│   │       │   └── PeatWifiDirectService.kt  # WiFi Direct discovery + group formation
 │   │       └── net/
 │   │           └── ServerDiscovery.kt  # mDNS/NSD Go server discovery
 │   ├── sideload/                 # APK download page for sideloading
@@ -315,8 +364,11 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
   send_message {room_id,           room_history {room_id, messages[]}
     content, reply_to?}            message {room_id, message}
   set_transport {transport}        peer_update {room_id, peer_id, event}
-                                   mesh_state {room_id, self_id, peers[]}
-                                   error {message}
+  set_preferred_transport          mesh_state {room_id, self_id, peers[]}
+    {transport}                    error {message}
+  register_ble_peer                ble_mesh_state {room_id, peers[]}
+    {peer_id, peer_name,             (merges BLE/WiFi Direct peers)
+     transport?}
 ```
 
 ### Voice Messages
@@ -389,9 +441,13 @@ All messages are JSON envelopes: `{ "type": "...", "data": { ... } }`
 
 **CoT positions** are broadcast every 5 seconds to all room members. Markers carry full CoT metadata (type, how, ce, le, hae, stale, remarks) for ATAK plugin interoperability.
 
-**BLE mesh** -- On Android, `PeatBleService.kt` provides dual-role BLE (scan + advertise + GATT). `bridge.rs` tunnels full WS JSON envelopes over the `peat-btle` chat channel using a `__ws:` prefix protocol, so every message type works over BLE without per-type handling. `BleVoiceService.kt` adds Opus voice relay over BLE (~3KB/s per speaker). BLE peers are merged into the mesh view via `ble_mesh_state` messages.
+**BLE mesh** -- On Android, `PeatBleService.kt` provides dual-role BLE (scan + advertise + GATT) with dual priority queues and 20ms audio drain. `bridge.rs` tunnels full WS JSON envelopes over the `peat-btle` chat channel using a `__ws:` prefix protocol. `BleVoiceService.kt` adds Opus 8kbps voice relay over BLE (~1KB/s per speaker) with 60ms jitter buffer. BLE peers are merged into the mesh view via `ble_mesh_state` messages with MAC→callsign promotion via `ble_hello` handshake.
 
-**PEAT ecosystem** -- peatlink-core uses `peat-mesh` 0.8 for identity, transport, CRDT storage, and mDNS discovery. `peat-btle` 0.2 provides BLE mesh transport for mobile with full WS bridge. Future integration planned with `peat-tak-bridge` for native ATAK CoT interop and `peat-gateway` for enterprise enrollment.
+**WiFi Direct** -- `PeatWifiDirectService.kt` handles Android WiFi Direct P2P discovery (DNS-SD `_peatlink._tcp`), group formation, and connection management. WiFi Direct clients connect to the Group Owner's embedded WS server and start an upstream relay, reusing the same relay code used for Go server connections. Multi-hop chains (Go Server → WiFi Relay → WiFi Direct Phone → BLE Phone) work transparently with all data types syncing through the relay chain.
+
+**Transport priority** -- The server deduplicates peers reachable via multiple transports, preferring TCP > WiFi Direct > BLE by default. Users can override via `set_preferred_transport`. Implemented in `hub.go` via `transportPriority()` and `deduplicatePeers()`.
+
+**PEAT ecosystem** -- peatlink-core uses `peat-mesh` 0.8 for identity, transport, CRDT storage, and mDNS discovery. `peat-btle` 0.2 provides BLE mesh transport for mobile with full WS bridge. The upstream Hive/peat-mesh defines `TransportType::WifiDirect` with pre-configured capabilities (250Mbps, 10ms, 200m) and PACE failover policy. Future integration planned with `peat-tak-bridge` for native ATAK CoT interop and `peat-gateway` for enterprise enrollment.
 
 ---
 
@@ -491,10 +547,10 @@ A self-contained sideload page is available at `mobile/sideload/index.html`. Hos
 |:----------|:----------|
 | **peatlink-core** | peat-mesh 0.8 (automerge-backend), automerge 0.7, tokio, blake3 |
 | **peatlink-cli** | clap 4, tracing |
-| **peatlink-mobile** | axum 0.7, uniffi 0.28, tokio-tungstenite, futures-util, peat-mesh 0.7, peat-btle 0.2 (optional) |
+| **peatlink-mobile** | axum 0.7, uniffi 0.28, tokio-tungstenite, futures-util, peat-mesh 0.8, peat-btle 0.2 (optional) |
 | **Go server** | gorilla/websocket, blake3, google/uuid, grandcat/zeroconf (mDNS) |
 | **Web** | React 18, Zustand 4.5, MapLibre GL 5, Tailwind CSS 3.4, Vite 5.4, TypeScript 5.5 |
-| **Testing** | Go `testing` (48 tests), Vitest (55 tests), React Testing Library |
+| **Testing** | Go `testing` (55+ tests), Vitest, React Testing Library |
 
 ---
 

@@ -11,9 +11,10 @@ import (
 
 // BlePeer represents a BLE-connected device reachable through a relay client.
 type BlePeer struct {
-	PeerID   string
-	PeerName string
-	Relay    *Client // the relay client that registered this peer
+	PeerID    string
+	PeerName  string
+	Relay     *Client // the relay client that registered this peer
+	Transport string  // "btle" (default) or "wifi-direct"
 }
 
 type Hub struct {
@@ -255,6 +256,46 @@ func (h *Hub) BroadcastMessageFromRelay(relay *Client, room *Room, peerID, peerN
 	return true
 }
 
+// transportPriority returns a numeric priority for transport selection.
+// Lower number = higher priority. User preference can override.
+func transportPriority(transport string, preferred string) int {
+	if transport == preferred {
+		return 0 // user preference always wins
+	}
+	switch transport {
+	case "tcp":
+		return 1
+	case "wifi-direct":
+		return 2
+	case "btle":
+		return 3
+	default:
+		return 4
+	}
+}
+
+// deduplicatePeers removes duplicate peer entries, keeping the one with the
+// best transport priority. If preferred is non-empty, that transport is ranked highest.
+func deduplicatePeers(peers []MeshPeerData, preferred string) []MeshPeerData {
+	best := make(map[string]MeshPeerData)
+	bestPrio := make(map[string]int)
+
+	for _, p := range peers {
+		prio := transportPriority(p.Transport, preferred)
+		existing, exists := bestPrio[p.ID]
+		if !exists || prio < existing {
+			best[p.ID] = p
+			bestPrio[p.ID] = prio
+		}
+	}
+
+	result := make([]MeshPeerData, 0, len(best))
+	for _, p := range best {
+		result = append(result, p)
+	}
+	return result
+}
+
 func (h *Hub) broadcastMeshState(room *Room) {
 	h.mu.RLock()
 	blePeers := h.getBlePeerMeshData()
@@ -265,6 +306,13 @@ func (h *Hub) broadcastMeshState(room *Room) {
 	for _, c := range members {
 		peers := room.GetMeshPeers(c)
 		peers = append(peers, blePeers...)
+
+		// Dedup: if same peer ID appears via multiple transports, keep best
+		c.mu.RLock()
+		preferred := c.preferredTransport
+		c.mu.RUnlock()
+		peers = deduplicatePeers(peers, preferred)
+
 		c.sendJSON("mesh_state", MeshStateData{
 			RoomID: roomID,
 			SelfID: c.identity.ID,
@@ -282,6 +330,13 @@ func (h *Hub) broadcastMeshStateLocked(room *Room) {
 	for _, c := range members {
 		peers := room.GetMeshPeers(c)
 		peers = append(peers, blePeers...)
+
+		// Dedup: if same peer ID appears via multiple transports, keep best
+		c.mu.RLock()
+		preferred := c.preferredTransport
+		c.mu.RUnlock()
+		peers = deduplicatePeers(peers, preferred)
+
 		c.sendJSON("mesh_state", MeshStateData{
 			RoomID: roomID,
 			SelfID: c.identity.ID,
@@ -296,11 +351,15 @@ func (h *Hub) getBlePeerMeshData() []MeshPeerData {
 		if bp.Relay == nil {
 			continue // stale entry — skip
 		}
+		transport := bp.Transport
+		if transport == "" {
+			transport = "btle"
+		}
 		peers = append(peers, MeshPeerData{
 			ID:           bp.PeerID,
 			Name:         bp.PeerName,
 			ShortID:      bp.PeerID[:min(12, len(bp.PeerID))],
-			Transport:    "btle",
+			Transport:    transport,
 			State:        "connected",
 			ConnectedVia: bp.Relay.identity.ID,
 		})
@@ -326,8 +385,11 @@ func min(a, b int) int {
 	return b
 }
 
-// RegisterBlePeer makes a BLE peer visible to other clients via the relay.
-func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
+// RegisterBlePeer makes a BLE or WiFi Direct peer visible to other clients via the relay.
+func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName, transport string) {
+	if transport == "" {
+		transport = "btle"
+	}
 	var stalePeerIDs []string
 	h.mu.Lock()
 	// Remove any stale provisional entries for the same relay (MAC-address registrations)
@@ -339,13 +401,14 @@ func (h *Hub) RegisterBlePeer(relay *Client, peerID, peerName string) {
 		}
 	}
 	peer := &BlePeer{
-		PeerID:   peerID,
-		PeerName: peerName,
-		Relay:    relay,
+		PeerID:    peerID,
+		PeerName:  peerName,
+		Relay:     relay,
+		Transport: transport,
 	}
 	h.blePeers[peerID] = peer
 	h.mu.Unlock()
-	log.Printf("BLE peer registered: %s (%s) via %s", peerName, peerID[:min(12, len(peerID))], relay.name)
+	log.Printf("%s peer registered: %s (%s) via %s", transport, peerName, peerID[:min(12, len(peerID))], relay.name)
 
 	// Rewrite any provisional room state to the final BLE node ID, then refresh names.
 	relay.mu.RLock()

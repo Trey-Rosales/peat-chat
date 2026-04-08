@@ -26,10 +26,11 @@ type Client struct {
 	mu       sync.RWMutex
 
 	// Mesh transport metadata
-	transport    string
-	connectedAt  time.Time
-	lastPingSent time.Time
-	latencyMs    int64
+	transport          string
+	preferredTransport string // user preference: "tcp", "wifi-direct", "btle", or ""
+	connectedAt        time.Time
+	lastPingSent       time.Time
+	latencyMs          int64
 
 	// CoT default type
 	cotType string
@@ -206,6 +207,16 @@ func (c *Client) readPump() {
 				c.broadcastMeshToMyRooms()
 			}
 
+		case "set_preferred_transport":
+			var d struct {
+				Transport string `json:"transport"`
+			}
+			if json.Unmarshal(msg.Data, &d) == nil && d.Transport != "" {
+				c.mu.Lock()
+				c.preferredTransport = d.Transport
+				c.mu.Unlock()
+			}
+
 		// --- CoT / map messages ---
 
 		case "cot_position":
@@ -356,7 +367,7 @@ func (c *Client) readPump() {
 		case "register_ble_peer":
 			var d RegisterBlePeerData
 			if json.Unmarshal(msg.Data, &d) == nil && d.PeerID != "" {
-				c.hub.RegisterBlePeer(c, d.PeerID, d.PeerName)
+				c.hub.RegisterBlePeer(c, d.PeerID, d.PeerName, d.Transport)
 			}
 
 		case "unregister_ble_peer":

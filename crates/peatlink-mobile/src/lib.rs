@@ -55,6 +55,7 @@ pub struct MobileNode {
     identity: RwLock<String>,
     hub: RwLock<Option<Arc<ws_server::Hub>>>,
     upstream_handle: RwLock<Option<upstream_relay::UpstreamRelayHandle>>,
+    wifi_direct_relay_handle: RwLock<Option<upstream_relay::UpstreamRelayHandle>>,
     seen_ids: upstream_relay::SeenIds,
 
     /// Outgoing voice frames (Kotlin → bridge → BLE)
@@ -130,6 +131,7 @@ impl MobileNode {
             identity: RwLock::new(identity),
             hub: RwLock::new(None),
             upstream_handle: RwLock::new(None),
+            wifi_direct_relay_handle: RwLock::new(None),
             seen_ids: upstream_relay::new_seen_ids(),
             voice_outgoing_tx: RwLock::new(voice_outgoing_tx),
             voice_outgoing_rx: RwLock::new(Some(voice_outgoing_rx)),
@@ -201,6 +203,10 @@ impl MobileNode {
             return Err(PeatLinkError::NotRunning);
         }
         rt.block_on(async {
+            // Stop WiFi Direct relay if running
+            if let Some(handle) = self.wifi_direct_relay_handle.write().await.take() {
+                handle.shutdown().await;
+            }
             // Stop upstream relay if running
             if let Some(handle) = self.upstream_handle.write().await.take() {
                 handle.shutdown().await;
@@ -306,6 +312,61 @@ impl MobileNode {
         let rt = self.runtime.clone();
         rt.block_on(async {
             if let Some(handle) = self.upstream_handle.read().await.as_ref() {
+                handle.is_connected().await
+            } else {
+                false
+            }
+        })
+    }
+
+    // --- WiFi Direct relay ---
+
+    /// Start a WiFi Direct relay to a Group Owner's embedded WS server.
+    /// This creates a second relay handle independent of the upstream relay.
+    pub fn start_wifi_direct_relay(
+        &self,
+        ws_url: String,
+        display_name: String,
+        room_name: String,
+    ) -> Result<(), PeatLinkError> {
+        let hub = self.runtime.block_on(async {
+            self.hub.read().await.clone()
+        });
+        let Some(hub) = hub else {
+            return Err(PeatLinkError::NotRunning);
+        };
+
+        let handle = self.runtime.block_on(
+            upstream_relay::start_upstream_relay_with_transport(
+                ws_url,
+                hub,
+                display_name,
+                room_name,
+                self.seen_ids.clone(),
+                Some("wifi-direct".to_string()),
+            )
+        ).map_err(|e| PeatLinkError::startup(e))?;
+
+        self.runtime.block_on(async {
+            *self.wifi_direct_relay_handle.write().await = Some(handle);
+        });
+
+        Ok(())
+    }
+
+    /// Stop the WiFi Direct relay.
+    pub fn stop_wifi_direct_relay(&self) {
+        self.runtime.block_on(async {
+            if let Some(handle) = self.wifi_direct_relay_handle.write().await.take() {
+                handle.shutdown().await;
+            }
+        });
+    }
+
+    /// Whether the WiFi Direct relay is currently connected.
+    pub fn is_wifi_direct_connected(&self) -> bool {
+        self.runtime.block_on(async {
+            if let Some(handle) = self.wifi_direct_relay_handle.read().await.as_ref() {
                 handle.is_connected().await
             } else {
                 false

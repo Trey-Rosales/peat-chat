@@ -134,6 +134,9 @@ export class VoiceManager {
       this.noiseGateAnalyser.disconnect()
       this.noiseGateAnalyser = null
     }
+    // Reset mute state so the next mode starts clean
+    // (PTT will immediately re-mute; noise gate will control dynamically)
+    this.setMuted(false)
   }
 
   get currentRoomId(): string {

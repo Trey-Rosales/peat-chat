@@ -24,6 +24,7 @@ interface Props {
   onPTTStart: () => void
   onPTTEnd: () => void
   onMuteToggle?: (muted: boolean) => void
+  onModeChange?: (mode: string) => void
 }
 
 const VOICE_MODES = ['ptt', 'noise_gate', 'auto'] as const
@@ -41,7 +42,7 @@ export function VoiceBar(props: Props) {
   )
 }
 
-function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle }: Props) {
+function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle, onModeChange }: Props) {
   const activeVoice = useChatStore((s) => s.activeVoice)
   const rooms = useChatStore((s) => s.rooms)
   const voiceState = useChatStore((s) => s.voiceState)
@@ -68,6 +69,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle }: Pro
     if (window.PeatLinkVoice?.setVoiceMode) {
       window.PeatLinkVoice.setVoiceMode(next)
     }
+    onModeChange?.(next)
   }
 
   const toggleMute = () => {

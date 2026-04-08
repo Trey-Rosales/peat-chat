@@ -448,7 +448,7 @@ func TestHub_BroadcastMessageFromRelay_PreservesIdentity(t *testing.T) {
 	drainClientSend(relay, 20)
 	drainClientSend(observer, 20)
 
-	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie", "")
 
 	room := hub.getOrCreateRoom("general")
 	replyTo := "parent-1"
@@ -497,7 +497,7 @@ func TestHub_CreateMapMarkerFromRelay_PreservesCreator(t *testing.T) {
 	drainClientSend(relay, 20)
 	drainClientSend(observer, 20)
 
-	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie", "")
 	room := hub.getOrCreateRoom("general")
 	roomHex := ChatIdHex(room.ID)
 
@@ -550,7 +550,7 @@ func TestHub_JoinVoiceFromRelay_ShowsSeparateBleMember(t *testing.T) {
 	drainClientSend(relay, 20)
 	drainClientSend(observer, 20)
 
-	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie")
+	hub.RegisterBlePeer(relay, "ble-peer-1", "Charlie", "")
 	room := hub.getOrCreateRoom("general")
 	roomHex := ChatIdHex(room.ID)
 	var vcID string
@@ -622,11 +622,11 @@ func TestHub_RegisterBlePeer_PromotesVoiceMemberFromProvisionalID(t *testing.T) 
 		break
 	}
 
-	hub.RegisterBlePeer(relay, "mac-aa-bb", "Temp")
+	hub.RegisterBlePeer(relay, "mac-aa-bb", "Temp", "")
 	hub.JoinVoiceFromRelay(relay, roomHex, vcID, "mac-aa-bb", "Temp")
 	drainClientSend(observer, 10)
 
-	hub.RegisterBlePeer(relay, "ble-node-1", "Charlie")
+	hub.RegisterBlePeer(relay, "ble-node-1", "Charlie", "")
 
 	msgs := drainClientSend(observer, 20)
 	var sawFinal bool
@@ -1521,5 +1521,188 @@ func TestHub_JoinDM_Unauthorized(t *testing.T) {
 	}
 	if !gotError {
 		t.Fatal("non-participant should be rejected from JoinDM")
+	}
+}
+
+// --- Transport priority / dedup / WiFi Direct tests ---
+
+func TestTransportPriority_DefaultOrder(t *testing.T) {
+	// TCP < wifi-direct < btle (lower number = higher priority)
+	if transportPriority("tcp", "") >= transportPriority("wifi-direct", "") {
+		t.Error("tcp should have higher priority than wifi-direct")
+	}
+	if transportPriority("wifi-direct", "") >= transportPriority("btle", "") {
+		t.Error("wifi-direct should have higher priority than btle")
+	}
+}
+
+func TestTransportPriority_UserOverride(t *testing.T) {
+	// User prefers btle -- should rank highest
+	if transportPriority("btle", "btle") >= transportPriority("tcp", "btle") {
+		t.Error("user-preferred btle should outrank tcp")
+	}
+}
+
+func TestDeduplicatePeers(t *testing.T) {
+	peers := []MeshPeerData{
+		{ID: "peer1", Name: "Alice", Transport: "btle"},
+		{ID: "peer1", Name: "Alice", Transport: "tcp"},
+		{ID: "peer2", Name: "Bob", Transport: "wifi-direct"},
+	}
+	result := deduplicatePeers(peers, "")
+	if len(result) != 2 {
+		t.Fatalf("expected 2 unique peers, got %d", len(result))
+	}
+	// peer1 should be TCP (higher priority)
+	for _, p := range result {
+		if p.ID == "peer1" && p.Transport != "tcp" {
+			t.Errorf("peer1 should prefer tcp, got %s", p.Transport)
+		}
+	}
+}
+
+func TestHub_RegisterWifiDirectPeer(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "RelayPhone")
+	hub.register <- relay
+	time.Sleep(50 * time.Millisecond)
+
+	hub.JoinRoom(relay, "general")
+	drainClientSend(relay, 10)
+
+	observer := newTestClient(hub, "MacBrowser")
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+	hub.JoinRoom(observer, "general")
+	drainClientSend(observer, 10)
+
+	// Register a WiFi Direct peer through the relay
+	hub.RegisterBlePeer(relay, "wd-peer-1", "WDPhone", "wifi-direct")
+	time.Sleep(50 * time.Millisecond)
+
+	// Observer should receive mesh_state with the wifi-direct peer
+	msgs := drainClientSend(observer, 10)
+	found := false
+	for _, raw := range msgs {
+		if raw.Type == "mesh_state" {
+			var data MeshStateData
+			json.Unmarshal(raw.Data, &data)
+			for _, peer := range data.Peers {
+				if peer.ID == "wd-peer-1" && peer.Transport == "wifi-direct" {
+					found = true
+					if peer.ConnectedVia != relay.identity.ID {
+						t.Errorf("expected connected_via=%s, got %s", relay.identity.ID, peer.ConnectedVia)
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("wifi-direct peer not found in mesh_state")
+	}
+}
+
+func TestHub_CallsignPropagation(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	// TCP client with callsign
+	client := newTestClient(hub, "Alpha")
+	hub.register <- client
+	time.Sleep(50 * time.Millisecond)
+	hub.JoinRoom(client, "general")
+	drainClientSend(client, 10)
+
+	// Relay with BLE peer
+	relay := newTestClient(hub, "Bravo")
+	hub.register <- relay
+	time.Sleep(50 * time.Millisecond)
+	hub.JoinRoom(relay, "general")
+	drainClientSend(relay, 10)
+
+	// Register BLE peer with callsign
+	hub.RegisterBlePeer(relay, "ble-1", "Charlie", "btle")
+	time.Sleep(50 * time.Millisecond)
+
+	// Register WiFi Direct peer with callsign
+	hub.RegisterBlePeer(relay, "wd-1", "Delta", "wifi-direct")
+	time.Sleep(50 * time.Millisecond)
+
+	// Check mesh_state received by client includes all callsigns
+	msgs := drainClientSend(client, 20)
+	names := make(map[string]string) // id -> name
+	for _, raw := range msgs {
+		if raw.Type == "mesh_state" {
+			var data MeshStateData
+			json.Unmarshal(raw.Data, &data)
+			for _, peer := range data.Peers {
+				names[peer.ID] = peer.Name
+			}
+		}
+	}
+
+	// Verify all callsigns present
+	if names["ble-1"] != "Charlie" {
+		t.Errorf("BLE peer callsign: expected Charlie, got %s", names["ble-1"])
+	}
+	if names["wd-1"] != "Delta" {
+		t.Errorf("WiFi Direct peer callsign: expected Delta, got %s", names["wd-1"])
+	}
+	// Relay should appear with callsign Bravo
+	if name, ok := names[relay.identity.ID]; ok && name != "Bravo" {
+		t.Errorf("Relay callsign: expected Bravo, got %s", name)
+	}
+}
+
+func TestHub_BlePeerCleanupOnRelayDisconnect(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	relay := newTestClient(hub, "Relay")
+	hub.register <- relay
+	time.Sleep(50 * time.Millisecond)
+	hub.JoinRoom(relay, "general")
+	drainClientSend(relay, 10)
+
+	observer := newTestClient(hub, "Observer")
+	hub.register <- observer
+	time.Sleep(50 * time.Millisecond)
+	hub.JoinRoom(observer, "general")
+	drainClientSend(observer, 10)
+
+	// Register BLE and WiFi Direct peers
+	hub.RegisterBlePeer(relay, "ble-1", "BLEPhone", "btle")
+	hub.RegisterBlePeer(relay, "wd-1", "WDPhone", "wifi-direct")
+	time.Sleep(50 * time.Millisecond)
+	drainClientSend(observer, 20)
+
+	// Disconnect relay
+	hub.unregister <- relay
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify BLE peers cleaned up
+	hub.mu.RLock()
+	blePeerCount := len(hub.blePeers)
+	hub.mu.RUnlock()
+
+	if blePeerCount != 0 {
+		t.Errorf("expected 0 BLE peers after relay disconnect, got %d", blePeerCount)
+	}
+}
+
+func TestDeduplicatePeers_WithPreference(t *testing.T) {
+	peers := []MeshPeerData{
+		{ID: "peer1", Name: "Alice", Transport: "tcp"},
+		{ID: "peer1", Name: "Alice", Transport: "btle"},
+	}
+	// User prefers btle
+	result := deduplicatePeers(peers, "btle")
+	if len(result) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(result))
+	}
+	if result[0].Transport != "btle" {
+		t.Errorf("user prefers btle, got %s", result[0].Transport)
 	}
 }

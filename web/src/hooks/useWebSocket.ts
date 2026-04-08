@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useChatStore } from '../store/chatStore'
+import { useSettingsStore } from '../store/settingsStore'
 import type { VoiceManager } from '../voice/VoiceManager'
 import type { WSMessage } from '../types'
 
@@ -32,6 +33,15 @@ export function useWebSocket(
       // Send callsign if we have one (server also auto-assigns via name_assigned)
       if (displayName) {
         ws.send(JSON.stringify({ type: 'set_name', data: { name: displayName } }))
+      }
+
+      // Send transport preference so server can prioritize mesh routing
+      const preferredTransport = useSettingsStore.getState().preferredTransport
+      if (preferredTransport && preferredTransport !== 'tcp') {
+        ws.send(JSON.stringify({
+          type: 'set_preferred_transport',
+          data: { transport: preferredTransport }
+        }))
       }
 
       // Rejoin rooms (always, regardless of whether displayName is set)
