@@ -1,6 +1,23 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, Component, type ReactNode } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
+
+// Error boundary to prevent voice UI crashes from blanking the entire app
+class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(err: Error) { console.warn('VoiceBar crashed:', err) }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="border-t border-pl-border bg-pl-header px-3 py-2 text-xs text-red-400">
+          Voice UI error — <button onClick={() => this.setState({ hasError: false })} className="underline">retry</button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 interface Props {
   onDisconnect: () => void
@@ -15,7 +32,15 @@ const MODE_LABELS: Record<string, string> = {
   auto: 'AUTO',
 }
 
-export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
+export function VoiceBar(props: Props) {
+  return (
+    <VoiceBarErrorBoundary>
+      <VoiceBarInner {...props} />
+    </VoiceBarErrorBoundary>
+  )
+}
+
+function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   const activeVoice = useChatStore((s) => s.activeVoice)
   const rooms = useChatStore((s) => s.rooms)
   const voiceState = useChatStore((s) => s.voiceState)
@@ -28,6 +53,7 @@ export function VoiceBar({ onDisconnect, onPTTStart, onPTTEnd }: Props) {
   if (!activeVoice) return null
 
   const room = rooms[activeVoice.roomId]
+  if (!room) return null // Room might not exist yet
   const channels = voiceState[activeVoice.roomId] || []
   const channel = channels.find((c) => c.id === activeVoice.channelId)
 
