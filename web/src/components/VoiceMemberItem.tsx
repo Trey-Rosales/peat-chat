@@ -9,6 +9,8 @@ interface Props {
 export function VoiceMemberItem({ member, isSelf, isSelfMuted }: Props) {
   const muted = isSelf ? isSelfMuted : member.muted
 
+  const name = String(member.name || '?')
+
   return (
     <div className="flex items-center gap-2 px-2 py-1">
       <div className="relative">
@@ -21,14 +23,14 @@ export function VoiceMemberItem({ member, isSelf, isSelfMuted }: Props) {
                 : 'bg-pl-header text-pl-text-sec'
           }`}
         >
-          {member.name.charAt(0).toUpperCase()}
+          {name.charAt(0).toUpperCase()}
         </div>
         {member.speaking && !muted && (
           <div className="absolute inset-0 rounded-full border-2 border-pl-accent animate-pulse" />
         )}
       </div>
       <span className="text-xs text-pl-text-sec truncate flex-1">
-        {member.name}
+        {name}
         {isSelf && <span className="text-pl-text-sec/60 ml-1">(you)</span>}
       </span>
       {muted ? (
