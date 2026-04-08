@@ -128,7 +128,11 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     const map = mapRef.current
     if (!map) return
 
-    const positionedContacts = contacts.filter(contactHasPosition)
+    // Filter out self — own position is rendered separately as the "YOU" marker.
+    // Match by callsign since uid may differ between local/upstream identity.
+    const positionedContacts = contacts
+      .filter(contactHasPosition)
+      .filter((c) => c.callsign !== selfName)
     const currentIds = new Set(positionedContacts.map((c) => c.uid))
 
     // Remove stale markers
