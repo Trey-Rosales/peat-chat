@@ -5,6 +5,7 @@ import { MessageInput } from './MessageInput'
 import { MeshViewer } from './MeshViewer'
 import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
+import IconButton from './dtak/IconButton'
 import type { GeoPosition } from '../hooks/useGeolocation'
 import type { ChatMessage } from '../types'
 
@@ -94,13 +95,13 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
   if (!room) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-pl-bg">
+      <div className="flex-1 flex items-center justify-center bg-surface-canvas">
         <div className="text-center px-4">
           <div className="text-4xl mb-3 opacity-20">&#x1f4ac;</div>
-          <p className="text-pl-text-sec">Select a room to start chatting</p>
+          <p className="text-fg-secondary">Select a room to start chatting</p>
           <button
             onClick={onOpenSidebar}
-            className="mt-4 md:hidden text-pl-accent text-sm"
+            className="mt-4 md:hidden text-brand text-sm"
           >
             Open rooms
           </button>
@@ -166,28 +167,30 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
     : null
 
   return (
-    <div className="flex-1 flex flex-col bg-pl-bg h-full min-w-0">
+    <div className="flex-1 flex flex-col bg-surface-canvas h-full min-w-0">
       {/* Header */}
-      <div className="px-3 md:px-4 py-3 bg-pl-header flex items-center gap-2 md:gap-3 border-b border-pl-border shrink-0">
+      <div className="px-3 md:px-4 py-3 bg-surface-2 flex items-center gap-2 md:gap-3 border-b border-border-subtle shrink-0">
         {/* Hamburger - mobile only */}
-        <button
+        <IconButton
           onClick={onOpenSidebar}
-          className="md:hidden text-pl-text-sec p-1.5 rounded-lg hover:bg-pl-hover active:bg-pl-active shrink-0"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          </svg>
-        </button>
+          icon={
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+          }
+          label="Open sidebar"
+          className="md:hidden shrink-0"
+        />
 
-        <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-pl-active flex items-center justify-center text-pl-text-sec font-semibold text-sm shrink-0">
+        <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-surface-3 flex items-center justify-center text-fg-secondary font-semibold text-sm shrink-0">
           {room.name.charAt(0).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-pl-text truncate">{room.name}</div>
-          <div className="text-xs text-pl-text-sec">
+          <div className="text-sm font-medium text-fg-primary truncate">{room.name}</div>
+          <div className="text-xs text-fg-secondary">
             {room.members} member{room.members !== 1 ? 's' : ''}
             {activeChannel && (
-              <span className="text-pl-accent ml-2">
+              <span className="text-brand ml-2">
                 &#x1f3a4; {String(activeChannel.name || 'Voice')}
               </span>
             )}
@@ -195,20 +198,18 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
         </div>
 
         {/* Search toggle */}
-        <button
+        <IconButton
           onClick={() => { setSearchOpen(!searchOpen); setSearchQuery(''); setPinnedPanelOpen(false) }}
-          className={`p-2 rounded-lg transition shrink-0 ${
-            searchOpen
-              ? 'bg-pl-accent/20 text-pl-accent'
-              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
-          }`}
-          title="Search messages"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </button>
+          toggled={searchOpen}
+          icon={
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          }
+          label="Search messages"
+          className="shrink-0"
+        />
 
         {/* Pinned messages toggle */}
         {pinnedMessages.length > 0 && (
@@ -216,71 +217,67 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
             onClick={() => { setPinnedPanelOpen(!pinnedPanelOpen); setSearchOpen(false) }}
             className={`p-2 rounded-lg transition shrink-0 relative ${
               pinnedPanelOpen
-                ? 'bg-pl-accent/20 text-pl-accent'
-                : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
+                ? 'bg-brand/20 text-brand'
+                : 'text-fg-secondary hover:text-fg-primary hover:bg-surface-2 active:bg-surface-3'
             }`}
             title="Pinned messages"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M16 2H8l-1 7H4l3 7v6h2v-6h6v6h2v-6l3-7h-3z" />
             </svg>
-            <span className="absolute -top-0.5 -right-0.5 bg-pl-accent text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
+            <span className="absolute -top-0.5 -right-0.5 bg-brand text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
               {pinnedMessages.length}
             </span>
           </button>
         )}
 
         {/* Map viewer toggle */}
-        <button
+        <IconButton
           onClick={toggleMapViewer}
-          className={`p-2 rounded-lg transition shrink-0 ${
-            mapViewerOpen
-              ? 'bg-pl-accent/20 text-pl-accent'
-              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
-          }`}
-          title="Tactical map"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
-            <line x1="8" y1="2" x2="8" y2="18" />
-            <line x1="16" y1="6" x2="16" y2="22" />
-          </svg>
-        </button>
+          toggled={mapViewerOpen}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
+              <line x1="8" y1="2" x2="8" y2="18" />
+              <line x1="16" y1="6" x2="16" y2="22" />
+            </svg>
+          }
+          label="Tactical map"
+          className="shrink-0"
+        />
 
         {/* Mesh viewer toggle */}
-        <button
+        <IconButton
           onClick={toggleMeshViewer}
-          className={`p-2 rounded-lg transition shrink-0 ${
-            meshViewerOpen
-              ? 'bg-pl-accent/20 text-pl-accent'
-              : 'text-pl-text-sec hover:text-pl-text hover:bg-pl-hover active:bg-pl-active'
-          }`}
-          title="Mesh topology"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="12" cy="5" r="2.5" />
-            <circle cx="5" cy="18" r="2.5" />
-            <circle cx="19" cy="18" r="2.5" />
-            <line x1="12" y1="7.5" x2="5" y2="15.5" />
-            <line x1="12" y1="7.5" x2="19" y2="15.5" />
-            <line x1="5" y1="18" x2="19" y2="18" />
-          </svg>
-        </button>
+          toggled={meshViewerOpen}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="5" r="2.5" />
+              <circle cx="5" cy="18" r="2.5" />
+              <circle cx="19" cy="18" r="2.5" />
+              <line x1="12" y1="7.5" x2="5" y2="15.5" />
+              <line x1="12" y1="7.5" x2="19" y2="15.5" />
+              <line x1="5" y1="18" x2="19" y2="18" />
+            </svg>
+          }
+          label="Mesh topology"
+          className="shrink-0"
+        />
       </div>
 
       {/* Search bar */}
       {searchOpen && (
-        <div className="px-3 md:px-4 py-2 bg-pl-header border-b border-pl-border shrink-0">
+        <div className="px-3 md:px-4 py-2 bg-surface-2 border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2">
             <input
               type="text"
               placeholder="Search messages..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-pl-input text-pl-text rounded-lg px-3 py-1.5 text-sm placeholder-pl-text-sec"
+              className="flex-1 bg-surface-2 text-fg-primary rounded-lg px-3 py-1.5 text-sm placeholder:text-fg-tertiary"
               autoFocus
             />
-            <span className="text-xs text-pl-text-sec whitespace-nowrap">
+            <span className="text-xs text-fg-secondary whitespace-nowrap">
               {searchQuery.trim() ? `${filteredMessages.length} results` : ''}
             </span>
           </div>
@@ -289,14 +286,14 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
       {/* Pinned messages panel */}
       {pinnedPanelOpen && (
-        <div className="px-3 md:px-4 py-2 bg-pl-sidebar border-b border-pl-border shrink-0 max-h-48 overflow-y-auto">
-          <div className="text-xs font-medium text-pl-text-sec mb-1.5">
+        <div className="px-3 md:px-4 py-2 bg-surface-1 border-b border-border-subtle shrink-0 max-h-48 overflow-y-auto">
+          <div className="text-xs font-medium text-fg-secondary mb-1.5">
             Pinned Messages ({pinnedMessages.length})
           </div>
           {pinnedMessages.map((msg) => (
             <div
               key={msg.id}
-              className="px-2 py-1.5 rounded-lg bg-pl-bg/50 mb-1 border border-pl-border/50 cursor-pointer hover:bg-pl-hover transition"
+              className="px-2 py-1.5 rounded-lg bg-surface-canvas/50 mb-1 border border-border-subtle/50 cursor-pointer hover:bg-surface-2 transition"
               onClick={() => {
                 // Scroll to pinned message
                 const el = document.getElementById(`msg-${msg.id}`)
@@ -304,8 +301,8 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
                 setPinnedPanelOpen(false)
               }}
             >
-              <div className="text-xs font-medium text-pl-accent">{msg.sender_name}</div>
-              <div className="text-xs text-pl-text truncate">{msg.content}</div>
+              <div className="text-xs font-medium text-brand">{msg.sender_name}</div>
+              <div className="text-xs text-fg-primary truncate">{msg.content}</div>
             </div>
           ))}
         </div>
@@ -357,18 +354,18 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
           {/* Reply-to bar */}
           {replyParentMsg && (
-            <div className="px-3 md:px-4 py-1.5 bg-pl-sidebar border-t border-pl-border shrink-0 flex items-center gap-2">
-              <div className="flex-1 min-w-0 border-l-2 border-pl-accent pl-2">
-                <div className="text-xs font-medium text-pl-accent truncate">
+            <div className="px-3 md:px-4 py-1.5 bg-surface-1 border-t border-border-subtle shrink-0 flex items-center gap-2">
+              <div className="flex-1 min-w-0 border-l-2 border-brand pl-2">
+                <div className="text-xs font-medium text-brand truncate">
                   Replying to {replyParentMsg.sender_name}
                 </div>
-                <div className="text-xs text-pl-text-sec truncate">
+                <div className="text-xs text-fg-secondary truncate">
                   {replyParentMsg.deleted ? 'Message deleted' : replyParentMsg.content}
                 </div>
               </div>
               <button
                 onClick={() => setReplyToId(null)}
-                className="text-pl-text-sec hover:text-pl-text p-1"
+                className="text-fg-secondary hover:text-fg-primary p-1"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -380,13 +377,13 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
           {/* Edit bar */}
           {editingId && (
-            <div className="px-3 md:px-4 py-1.5 bg-pl-sidebar border-t border-pl-border shrink-0 flex items-center gap-2">
+            <div className="px-3 md:px-4 py-1.5 bg-surface-1 border-t border-border-subtle shrink-0 flex items-center gap-2">
               <div className="flex-1 min-w-0 border-l-2 border-yellow-500 pl-2">
                 <div className="text-xs font-medium text-yellow-500">Editing message</div>
               </div>
               <button
                 onClick={() => { setEditingId(null); setEditContent('') }}
-                className="text-pl-text-sec hover:text-pl-text p-1"
+                className="text-fg-secondary hover:text-fg-primary p-1"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -396,7 +393,7 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
             </div>
           )}
 
-          <div className="px-3 md:px-4 py-2 md:py-3 bg-pl-header border-t border-pl-border shrink-0">
+          <div className="px-3 md:px-4 py-2 md:py-3 bg-surface-2 border-t border-border-subtle shrink-0">
             <div className="flex items-center gap-2">
               {/* PTT button (visible when in voice) */}
               {inVoice && (

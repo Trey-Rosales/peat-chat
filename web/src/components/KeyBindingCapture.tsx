@@ -47,8 +47,8 @@ export function KeyBindingCapture({ currentKey, onCapture }: Props) {
       onClick={() => setCapturing(true)}
       className={`px-4 py-2 rounded-lg text-sm font-mono transition ${
         capturing
-          ? 'bg-pl-accent/20 text-pl-accent border border-pl-accent'
-          : 'bg-pl-input text-pl-text border border-pl-border hover:border-pl-text-sec'
+          ? 'bg-brand/20 text-brand border border-brand'
+          : 'bg-surface-2 text-fg-primary border border-border-subtle hover:border-fg-secondary'
       }`}
     >
       {capturing ? 'Press any key...' : keyLabel(currentKey)}

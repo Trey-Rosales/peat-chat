@@ -44,7 +44,7 @@ export function MessageInput({ onSend, editContent }: Props) {
           }
         }}
         disabled={!connected}
-        className={`flex-1 bg-pl-input text-pl-text rounded-lg px-4 py-2.5 text-sm placeholder-pl-text-sec disabled:opacity-50 ${
+        className={`flex-1 bg-surface-2 text-fg-primary rounded-lg px-4 py-2.5 text-sm placeholder:text-fg-tertiary disabled:opacity-50 ${
           isEditing ? 'ring-1 ring-yellow-500/50' : ''
         }`}
       />
@@ -52,7 +52,7 @@ export function MessageInput({ onSend, editContent }: Props) {
         onClick={handleSend}
         disabled={!text.trim() || !connected}
         className={`rounded-full w-10 h-10 flex items-center justify-center hover:brightness-110 transition disabled:opacity-30 shrink-0 ${
-          isEditing ? 'bg-yellow-500 text-white' : 'bg-pl-accent text-white'
+          isEditing ? 'bg-yellow-500 text-white' : 'bg-brand text-white'
         }`}
       >
         {isEditing ? (

@@ -159,10 +159,10 @@ export default function App() {
   // Name entry screen
   if (!displayName) {
     return (
-      <div className="h-full flex items-center justify-center bg-pl-bg px-4">
-        <div className="bg-pl-sidebar rounded-2xl p-8 w-full max-w-xs shadow-2xl">
-          <h1 className="text-2xl font-semibold text-pl-text mb-1">PeatLink</h1>
-          <p className="text-pl-text-sec text-sm mb-6">Tactical mesh chat</p>
+      <div className="h-full flex items-center justify-center bg-surface-canvas px-4">
+        <div className="bg-surface-1 rounded-2xl p-8 w-full max-w-xs shadow-2xl">
+          <h1 className="text-2xl font-semibold text-fg-primary mb-1">PeatLink</h1>
+          <p className="text-fg-secondary text-sm mb-6">Tactical mesh chat</p>
           <input
             type="text"
             placeholder="Your display name"
@@ -175,7 +175,7 @@ export default function App() {
                 send('join_room', { name: 'general' })
               }
             }}
-            className="w-full bg-pl-input text-pl-text rounded-lg px-4 py-3 text-base placeholder-pl-text-sec"
+            className="w-full bg-surface-2 text-fg-primary rounded-lg px-4 py-3 text-base placeholder:text-fg-secondary"
             autoFocus
           />
           <button
@@ -186,7 +186,7 @@ export default function App() {
                 send('join_room', { name: 'general' })
               }
             }}
-            className="w-full mt-3 bg-pl-accent text-white rounded-lg py-3 text-base font-medium hover:brightness-110 active:brightness-90 transition"
+            className="w-full mt-3 bg-brand text-white rounded-lg py-3 text-base font-medium hover:brightness-110 active:brightness-90 transition"
           >
             Join
           </button>

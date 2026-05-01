@@ -110,7 +110,7 @@ export function VoiceSettings() {
 
   return (
     <div className="space-y-3">
-      <div className="text-xs font-medium text-pl-text-sec uppercase tracking-wider">
+      <div className="text-xs font-medium text-fg-secondary uppercase tracking-wider">
         Voice Mode
       </div>
 
@@ -122,8 +122,8 @@ export function VoiceSettings() {
             onClick={() => setVoiceMode(mode)}
             className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition ${
               voiceMode === mode
-                ? 'bg-pl-accent text-white'
-                : 'bg-pl-input text-pl-text-sec hover:text-pl-text'
+                ? 'bg-brand text-white'
+                : 'bg-surface-2 text-fg-secondary hover:text-fg-primary'
             }`}
           >
             {mode === 'ptt' ? 'Push to Talk' : mode === 'noise_gate' ? 'Noise Gate' : 'Auto'}
@@ -134,16 +134,16 @@ export function VoiceSettings() {
       {/* Threshold slider + mic meter (shown for noise_gate and auto modes) */}
       {(voiceMode === 'noise_gate' || voiceMode === 'auto') && (
         <div className="space-y-2">
-          <div className="text-xs text-pl-text-sec">
+          <div className="text-xs text-fg-secondary">
             Sensitivity: {threshold} dB
           </div>
 
           {/* Mic level meter with threshold indicator */}
-          <div className="relative h-6 bg-pl-deep rounded overflow-hidden">
+          <div className="relative h-6 bg-surface-1 rounded overflow-hidden">
             {/* Mic level bar */}
             <div
               className={`absolute left-0 top-0 h-full transition-all duration-75 ${
-                isActive ? 'bg-pl-accent' : 'bg-pl-text-sec/30'
+                isActive ? 'bg-brand' : 'bg-fg-secondary/30'
               }`}
               style={{ width: `${meterPercent}%` }}
             />
@@ -166,10 +166,10 @@ export function VoiceSettings() {
             step={1}
             value={threshold}
             onChange={(e) => setThreshold(Number(e.target.value))}
-            className="w-full accent-pl-accent"
+            className="w-full accent-brand"
           />
 
-          <div className="flex justify-between text-xs text-pl-text-sec">
+          <div className="flex justify-between text-xs text-fg-secondary">
             <span>Sensitive</span>
             <span>Aggressive</span>
           </div>
@@ -177,13 +177,13 @@ export function VoiceSettings() {
       )}
 
       {voiceMode === 'ptt' && (
-        <div className="text-xs text-pl-text-sec">
+        <div className="text-xs text-fg-secondary">
           Hold the mic button or press Space to talk
         </div>
       )}
 
       {/* Mic Mute Toggle */}
-      <div className="pt-2 border-t border-pl-border mt-2">
+      <div className="pt-2 border-t border-border-subtle mt-2">
         <button
           onClick={() => {
             const newMuted = !isMuted
@@ -195,7 +195,7 @@ export function VoiceSettings() {
           className={`w-full py-2 rounded text-sm font-medium transition ${
             isMuted
               ? 'bg-red-600 text-white'
-              : 'bg-pl-input text-pl-text-sec hover:text-pl-text'
+              : 'bg-surface-2 text-fg-secondary hover:text-fg-primary'
           }`}
         >
           {isMuted ? '🔇 Mic Muted' : '🎙️ Mic Active'}
