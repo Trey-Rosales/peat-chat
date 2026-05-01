@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useWebSocket } from './hooks/useWebSocket'
 import { usePTT } from './hooks/usePTT'
 import { useGeolocation } from './hooks/useGeolocation'
+import { useTheme } from './hooks/useTheme'
 import { useChatStore } from './store/chatStore'
 import { useSettingsStore } from './store/settingsStore'
 import { VoiceManager } from './voice/VoiceManager'
@@ -12,6 +13,7 @@ import { SettingsPage } from './components/SettingsPage'
 import type { VoiceMember } from './types'
 
 export default function App() {
+  useTheme()
   const [showJoinModal, setShowJoinModal] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const displayName = useChatStore((s) => s.displayName)

@@ -3,6 +3,7 @@ import { useSettingsStore } from '../store/settingsStore'
 import { useChatStore } from '../store/chatStore'
 import { KeyBindingCapture } from './KeyBindingCapture'
 import { VoiceSettings } from './VoiceSettings'
+import { useTheme } from '../hooks/useTheme'
 
 interface Props {
   onClose: () => void
@@ -34,6 +35,8 @@ export function SettingsPage({ onClose, send }: Props) {
   const setLocationEnabled = useSettingsStore((s) => s.setLocationEnabled)
   const backgroundMode = useSettingsStore((s) => s.backgroundMode)
   const setBackgroundMode = useSettingsStore((s) => s.setBackgroundMode)
+
+  const { theme, setTheme } = useTheme()
 
   const [nameInput, setNameInput] = useState(displayName)
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([])
@@ -80,13 +83,13 @@ export function SettingsPage({ onClose, send }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-pl-bg flex flex-col">
+    <div className="fixed inset-0 z-50 bg-surface-canvas flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 bg-pl-header flex items-center justify-between border-b border-pl-border shrink-0">
-        <h1 className="text-lg font-semibold text-pl-text">Settings</h1>
+      <div className="px-4 py-3 bg-surface-2 flex items-center justify-between border-b border-border-subtle shrink-0">
+        <h1 className="text-lg font-semibold text-fg-primary">Settings</h1>
         <button
           onClick={onClose}
-          className="text-pl-text-sec hover:text-pl-text transition p-2 rounded-lg hover:bg-pl-hover"
+          className="text-fg-secondary hover:text-fg-primary transition p-2 rounded-lg hover:bg-surface-2"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M18 6L6 18M6 6l12 12" />
@@ -97,13 +100,42 @@ export function SettingsPage({ onClose, send }: Props) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-lg mx-auto px-4 py-6 space-y-8">
+          {/* Theme — DTAK Interface Guide */}
+          <section>
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
+              Theme
+            </h2>
+            <div className="flex gap-2">
+              {(['dark', 'light', 'ld'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTheme(t)}
+                  aria-pressed={theme === t}
+                  className={
+                    'px-4 py-2 rounded-lg text-sm font-medium transition-colors ' +
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus ' +
+                    (theme === t
+                      ? 'bg-brand text-fg-on-brand'
+                      : 'bg-surface-2 text-fg-primary hover:bg-surface-3 border border-border-default')
+                  }
+                >
+                  {t === 'ld' ? 'Low-detection' : t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            <p className="text-fg-tertiary text-xs mt-2">
+              Persists across sessions. Low-detection follows DIG stealth-mode rules (red on black, no blue).
+            </p>
+          </section>
+
           {/* Profile */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Profile
             </h2>
             <div className="space-y-2">
-              <label className="text-sm text-pl-text">Display Name</label>
+              <label className="text-sm text-fg-primary">Display Name</label>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -112,12 +144,12 @@ export function SettingsPage({ onClose, send }: Props) {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleNameSave()
                   }}
-                  className="flex-1 bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm placeholder-pl-text-sec"
+                  className="flex-1 bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm placeholder:text-fg-tertiary"
                 />
                 <button
                   onClick={handleNameSave}
                   disabled={!nameInput.trim() || nameInput.trim() === displayName}
-                  className="px-4 py-2 bg-pl-accent text-white rounded-lg text-sm font-medium hover:brightness-110 transition disabled:opacity-30"
+                  className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:brightness-110 transition disabled:opacity-30"
                 >
                   Save
                 </button>
@@ -127,16 +159,16 @@ export function SettingsPage({ onClose, send }: Props) {
 
           {/* Audio Input */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Audio Input
             </h2>
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm text-pl-text">Microphone</label>
+                <label className="text-sm text-fg-primary">Microphone</label>
                 <select
                   value={micDeviceId}
                   onChange={(e) => setMicDevice(e.target.value)}
-                  className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm"
+                  className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
                 >
                   <option value="">System Default</option>
                   {audioInputs.map((d) => (
@@ -148,7 +180,7 @@ export function SettingsPage({ onClose, send }: Props) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm text-pl-text">
+                <label className="text-sm text-fg-primary">
                   Input Volume ({Math.round(inputVolume * 100)}%)
                 </label>
                 <input
@@ -158,7 +190,7 @@ export function SettingsPage({ onClose, send }: Props) {
                   step="0.05"
                   value={inputVolume}
                   onChange={(e) => setInputVolume(parseFloat(e.target.value))}
-                  className="w-full accent-pl-accent"
+                  className="w-full accent-brand"
                 />
               </div>
             </div>
@@ -166,15 +198,15 @@ export function SettingsPage({ onClose, send }: Props) {
 
           {/* Audio Output */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Audio Output
             </h2>
             <div className="space-y-2">
-              <label className="text-sm text-pl-text">Speaker</label>
+              <label className="text-sm text-fg-primary">Speaker</label>
               <select
                 value={speakerDeviceId}
                 onChange={(e) => setSpeakerDevice(e.target.value)}
-                className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm"
+                className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
               >
                 <option value="">System Default</option>
                 {audioOutputs.map((d) => (
@@ -188,15 +220,15 @@ export function SettingsPage({ onClose, send }: Props) {
 
           {/* Push-to-Talk */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Voice
             </h2>
             <VoiceSettings />
             <div className="space-y-2 mt-4">
-              <label className="text-sm text-pl-text">PTT Key (keyboard)</label>
+              <label className="text-sm text-fg-primary">PTT Key (keyboard)</label>
               <div className="flex items-center gap-3">
                 <KeyBindingCapture currentKey={pttKey} onCapture={setPttKey} />
-                <span className="text-xs text-pl-text-sec">
+                <span className="text-xs text-fg-secondary">
                   Hold this key to transmit voice (PTT mode)
                 </span>
               </div>
@@ -205,35 +237,35 @@ export function SettingsPage({ onClose, send }: Props) {
 
           {/* Network */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Network
             </h2>
             <div className="space-y-2">
-              <label className="text-sm text-pl-text">Preferred Transport</label>
+              <label className="text-sm text-fg-primary">Preferred Transport</label>
               <select
                 value={preferredTransport}
                 onChange={(e) => {
                   setPreferredTransport(e.target.value)
                   send('set_preferred_transport', { transport: e.target.value })
                 }}
-                className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm"
+                className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
               >
                 <option value="tcp">TCP &mdash; stable internet connection</option>
                 <option value="wifi-direct">WiFi Direct &mdash; peer-to-peer, no internet needed</option>
                 <option value="btle">BLE &mdash; lowest power, shortest range</option>
               </select>
-              <p className="text-xs text-pl-text-sec/60">
+              <p className="text-xs text-fg-secondary/60">
                 Preferred network path for mesh connections. Default priority: TCP &gt; WiFi Direct &gt; BLE.
               </p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm text-pl-text">Keep Mesh Alive in Background</label>
+              <label className="text-sm text-fg-primary">Keep Mesh Alive in Background</label>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setBackgroundMode(!backgroundMode)}
                   className={`w-12 h-6 rounded-full transition-colors relative ${
-                    backgroundMode ? 'bg-pl-accent' : 'bg-pl-input'
+                    backgroundMode ? 'bg-brand' : 'bg-surface-3'
                   }`}
                 >
                   <div
@@ -242,13 +274,13 @@ export function SettingsPage({ onClose, send }: Props) {
                     }`}
                   />
                 </button>
-                <span className="text-xs text-pl-text-sec">
+                <span className="text-xs text-fg-secondary">
                   {backgroundMode
                     ? 'Mesh stays active when app is backgrounded'
                     : 'Mesh stops when app is backgrounded'}
                 </span>
               </div>
-              <p className="text-xs text-pl-text-sec/60">
+              <p className="text-xs text-fg-secondary/60">
                 Runs a foreground service to keep BLE, WiFi Direct, and the Rust server alive (Android only)
               </p>
             </div>
@@ -256,26 +288,26 @@ export function SettingsPage({ onClose, send }: Props) {
 
           {/* Map */}
           <section>
-            <h2 className="text-sm font-semibold text-pl-text-sec uppercase tracking-wider mb-4">
+            <h2 className="text-sm font-semibold text-fg-secondary uppercase tracking-wider mb-4">
               Map
             </h2>
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm text-pl-text">Protomaps API Key</label>
+                <label className="text-sm text-fg-primary">Protomaps API Key</label>
                 <input
                   type="text"
                   value={protomapsApiKey}
                   onChange={(e) => setProtomapsApiKey(e.target.value)}
                   placeholder="Get a free key at protomaps.com"
-                  className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm placeholder-pl-text-sec font-mono"
+                  className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm placeholder:text-fg-tertiary font-mono"
                 />
-                <p className="text-xs text-pl-text-sec/60">
+                <p className="text-xs text-fg-secondary/60">
                   Required for tactical map tiles
                 </p>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm text-pl-text">Share Location</label>
+                <label className="text-sm text-fg-primary">Share Location</label>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => {
@@ -294,7 +326,7 @@ export function SettingsPage({ onClose, send }: Props) {
                       }
                     }}
                     className={`w-12 h-6 rounded-full transition-colors relative ${
-                      locationEnabled ? 'bg-pl-accent' : 'bg-pl-input'
+                      locationEnabled ? 'bg-brand' : 'bg-surface-3'
                     }`}
                   >
                     <div
@@ -303,13 +335,13 @@ export function SettingsPage({ onClose, send }: Props) {
                       }`}
                     />
                   </button>
-                  <span className="text-xs text-pl-text-sec">
+                  <span className="text-xs text-fg-secondary">
                     {locationEnabled
                       ? 'Broadcasting position to room'
                       : 'Location sharing off'}
                   </span>
                 </div>
-                <p className="text-xs text-pl-text-sec/60">
+                <p className="text-xs text-fg-secondary/60">
                   When enabled, your GPS position is shared with room members on the tactical map
                 </p>
               </div>
