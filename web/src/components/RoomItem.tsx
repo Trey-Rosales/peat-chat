@@ -1,4 +1,5 @@
 import type { Room } from '../types'
+import StatusPill from './dtak/StatusPill'
 
 interface Props {
   room: Room
@@ -17,23 +18,23 @@ export function RoomItem({ room, active, onClick }: Props) {
     <div
       onClick={onClick}
       className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition ${
-        active ? 'bg-pl-active' : 'hover:bg-pl-hover'
+        active ? 'bg-surface-3' : 'hover:bg-surface-2'
       }`}
     >
-      <div className="w-12 h-12 rounded-full bg-pl-header flex items-center justify-center text-pl-text-sec font-semibold text-sm shrink-0">
+      <div className="w-12 h-12 rounded-full bg-surface-2 flex items-center justify-center text-fg-secondary font-semibold text-sm shrink-0">
         {room.name.charAt(0).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-baseline">
-          <span className="text-sm font-medium text-pl-text truncate">{room.name}</span>
-          <span className="text-xs text-pl-text-sec ml-2 shrink-0">{time}</span>
+          <span className="text-sm font-medium text-fg-primary truncate">{room.name}</span>
+          <span className="text-xs text-fg-tertiary ml-2 shrink-0">{time}</span>
         </div>
         <div className="flex justify-between items-center mt-0.5">
-          <span className="text-xs text-pl-text-sec truncate">{preview}</span>
+          <span className="text-xs text-fg-tertiary truncate">{preview}</span>
           {room.unread > 0 && (
-            <span className="ml-2 bg-pl-accent text-white text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center shrink-0">
+            <StatusPill variant="count" className="ml-2 shrink-0">
               {room.unread}
-            </span>
+            </StatusPill>
           )}
         </div>
       </div>

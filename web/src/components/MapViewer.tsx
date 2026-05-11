@@ -254,13 +254,13 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     : ['satellite']
 
   return (
-    <div className="flex-1 relative bg-pl-bg overflow-hidden">
+    <div className="flex-1 relative bg-surface-canvas overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" />
 
       {/* Top-left: contact/marker count + style switcher */}
       <div className="absolute top-3 left-3 flex items-center gap-2 z-10">
-        <div className="bg-pl-sidebar/80 backdrop-blur-sm rounded-lg px-3 py-1.5">
-          <span className="text-xs text-pl-text-sec">
+        <div className="bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-1.5">
+          <span className="text-xs text-fg-secondary">
             {contacts.length} contact{contacts.length !== 1 ? 's' : ''}
             {contacts.length > 0 && ` (${contacts.filter(contactHasPosition).length} GPS)`}
             {markers.length > 0 && ` · ${markers.length} marker${markers.length !== 1 ? 's' : ''}`}
@@ -269,7 +269,7 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         {availableStyles.length > 1 && (
           <button
             onClick={cycleStyle}
-            className="bg-pl-sidebar/80 backdrop-blur-sm rounded-lg px-2.5 py-1.5 text-xs text-pl-text-sec hover:text-pl-text transition"
+            className="bg-surface-1/80 backdrop-blur-sm rounded-lg px-2.5 py-1.5 text-xs text-fg-secondary hover:text-fg-primary transition"
             title={`Map style: ${effectiveStyle}`}
           >
             {styleLabel[effectiveStyle]}
@@ -278,13 +278,13 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
       </div>
 
       {/* Bottom-right: callsign HUD (TAK-style), above attribution */}
-      <div className="absolute bottom-8 right-3 bg-pl-sidebar/85 backdrop-blur-sm rounded-lg px-3 py-2 z-10 text-right">
-        <div className="text-sm font-bold text-pl-accent">{selfName}</div>
-        <div className="text-[10px] font-mono text-pl-text-sec">
-          {shortId && <span className="text-pl-text-sec/60">{shortId}</span>}
+      <div className="absolute bottom-8 right-3 bg-surface-1/85 backdrop-blur-sm rounded-lg px-3 py-2 z-10 text-right">
+        <div className="text-sm font-bold text-brand">{selfName}</div>
+        <div className="text-[10px] font-mono text-fg-secondary">
+          {shortId && <span className="text-fg-secondary/60">{shortId}</span>}
         </div>
         {reactivePosition ? (
-          <div className="text-[10px] font-mono text-pl-text-sec mt-0.5">
+          <div className="text-[10px] font-mono text-fg-secondary mt-0.5">
             <div>{reactivePosition.lat.toFixed(6)}, {reactivePosition.lon.toFixed(6)}</div>
             {reactivePosition.hae !== 0 && (
               <div>ALT {reactivePosition.hae.toFixed(0)}m HAE</div>
@@ -292,32 +292,32 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
             <div>CE {reactivePosition.ce.toFixed(0)}m</div>
           </div>
         ) : (
-          <div className="text-[10px] text-pl-text-sec/50 mt-0.5">No GPS</div>
+          <div className="text-[10px] text-fg-secondary/50 mt-0.5">No GPS</div>
         )}
       </div>
 
       {/* Selected contact detail */}
       {selectedContact && (
-        <div className="absolute top-3 right-14 bg-pl-sidebar/90 backdrop-blur-sm rounded-xl shadow-2xl border border-pl-border p-3 z-10 w-56">
+        <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-pl-text">{selectedContact.callsign}</span>
+            <span className="text-sm font-medium text-fg-primary">{selectedContact.callsign}</span>
             <button
               onClick={() => setSelectedContact(null)}
-              className="text-pl-text-sec hover:text-pl-text p-0.5"
+              className="text-fg-secondary hover:text-fg-primary p-0.5"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <div className="space-y-1 text-xs text-pl-text-sec">
-            <div>Type: <span className="text-pl-text font-mono">{selectedContact.cot_type}</span></div>
+          <div className="space-y-1 text-xs text-fg-secondary">
+            <div>Type: <span className="text-fg-primary font-mono">{selectedContact.cot_type}</span></div>
             <div>Position: {selectedContact.lat.toFixed(5)}, {selectedContact.lon.toFixed(5)}</div>
             <div>Altitude: {selectedContact.hae.toFixed(1)}m</div>
             <div>Accuracy: {selectedContact.ce.toFixed(0)}m CE</div>
             <div>
               Status:{' '}
-              <span className={Date.now() > selectedContact.stale ? 'text-pl-danger' : 'text-pl-accent'}>
+              <span className={Date.now() > selectedContact.stale ? 'text-status-critical' : 'text-brand'}>
                 {Date.now() > selectedContact.stale ? 'Stale' : 'Active'}
               </span>
             </div>
@@ -327,31 +327,31 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
 
       {/* Selected marker detail */}
       {selectedMarker && (
-        <div className="absolute top-3 right-14 bg-pl-sidebar/90 backdrop-blur-sm rounded-xl shadow-2xl border border-pl-border p-3 z-10 w-56">
+        <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-pl-text">{selectedMarker.name}</span>
+            <span className="text-sm font-medium text-fg-primary">{selectedMarker.name}</span>
             <button
               onClick={() => setSelectedMarker(null)}
-              className="text-pl-text-sec hover:text-pl-text p-0.5"
+              className="text-fg-secondary hover:text-fg-primary p-0.5"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <div className="space-y-1 text-xs text-pl-text-sec">
-            <div>Placed by: <span className="text-pl-text">{selectedMarker.creator_name}</span></div>
-            <div>CoT: <span className="text-pl-text font-mono">{selectedMarker.cot_type}</span></div>
-            <div>How: <span className="text-pl-text font-mono">{selectedMarker.how}</span></div>
+          <div className="space-y-1 text-xs text-fg-secondary">
+            <div>Placed by: <span className="text-fg-primary">{selectedMarker.creator_name}</span></div>
+            <div>CoT: <span className="text-fg-primary font-mono">{selectedMarker.cot_type}</span></div>
+            <div>How: <span className="text-fg-primary font-mono">{selectedMarker.how}</span></div>
             <div>Position: {selectedMarker.lat.toFixed(5)}, {selectedMarker.lon.toFixed(5)}</div>
             {selectedMarker.remarks && (
-              <div>Remarks: <span className="text-pl-text">{selectedMarker.remarks}</span></div>
+              <div>Remarks: <span className="text-fg-primary">{selectedMarker.remarks}</span></div>
             )}
           </div>
           {selectedMarker.creator_id === userId && (
             <button
               onClick={() => handleDeleteMarker(selectedMarker.id)}
-              className="mt-2 w-full py-1.5 bg-pl-danger/20 text-pl-danger rounded-lg text-xs font-medium hover:bg-pl-danger/30 transition"
+              className="mt-2 w-full py-1.5 bg-status-critical/20 text-status-critical rounded-lg text-xs font-medium hover:bg-status-critical/30 transition"
             >
               Delete Marker
             </button>
@@ -372,8 +372,8 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
       )}
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-3 bg-pl-sidebar/80 backdrop-blur-sm rounded-lg px-3 py-2 z-10">
-        <div className="text-[10px] text-pl-text-sec space-y-1">
+      <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 z-10">
+        <div className="text-[10px] text-fg-secondary space-y-1">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-[#00a884]" />
             <span>Self</span>
@@ -390,7 +390,7 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
             <div className="w-3 h-3 rounded-full bg-[#6b7280]" />
             <span>Stale (&gt;30s)</span>
           </div>
-          <div className="text-pl-text-sec/50 mt-1">Right-click to place marker</div>
+          <div className="text-fg-secondary/50 mt-1">Right-click to place marker</div>
         </div>
       </div>
     </div>

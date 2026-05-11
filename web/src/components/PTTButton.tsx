@@ -22,8 +22,8 @@ export function PTTButton({ onPTTStart, onPTTEnd, active }: Props) {
       }}
       className={`w-10 h-10 rounded-full flex items-center justify-center transition shrink-0 ${
         active
-          ? 'bg-pl-accent text-white scale-110'
-          : 'bg-pl-input text-pl-text-sec hover:text-pl-text hover:bg-pl-hover'
+          ? 'bg-brand text-white scale-110'
+          : 'bg-surface-2 text-fg-secondary hover:text-fg-primary hover:bg-surface-2'
       }`}
       title="Hold to talk"
     >

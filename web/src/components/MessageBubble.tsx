@@ -58,8 +58,8 @@ export function MessageBubble({
   if (message.deleted) {
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} ${showSender ? 'mt-2' : 'mt-0.5'}`}>
-        <div className="max-w-[85%] md:max-w-[65%] rounded-lg px-3 py-1.5 bg-pl-bg/50 border border-pl-border/50">
-          <div className="text-xs text-pl-text-sec italic">Message deleted</div>
+        <div className="max-w-[85%] md:max-w-[65%] rounded-lg px-3 py-1.5 bg-surface-canvas/50 border border-border-subtle/50">
+          <div className="text-xs text-fg-secondary italic">Message deleted</div>
         </div>
       </div>
     )
@@ -79,7 +79,7 @@ export function MessageBubble({
         >
           <button
             onClick={() => onReply(message.id)}
-            className="p-1 rounded text-pl-text-sec hover:text-pl-text hover:bg-pl-hover"
+            className="p-1 rounded text-fg-secondary hover:text-fg-primary hover:bg-surface-2"
             title="Reply"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -89,7 +89,7 @@ export function MessageBubble({
           </button>
           <button
             onClick={() => setShowReactions(!showReactions)}
-            className="p-1 rounded text-pl-text-sec hover:text-pl-text hover:bg-pl-hover"
+            className="p-1 rounded text-fg-secondary hover:text-fg-primary hover:bg-surface-2"
             title="React"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -101,7 +101,7 @@ export function MessageBubble({
           </button>
           <button
             onClick={() => setShowMenu(!showMenu)}
-            className="p-1 rounded text-pl-text-sec hover:text-pl-text hover:bg-pl-hover"
+            className="p-1 rounded text-fg-secondary hover:text-fg-primary hover:bg-surface-2"
             title="More"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -115,7 +115,7 @@ export function MessageBubble({
         {/* Quick reaction picker */}
         {showReactions && (
           <div
-            className={`absolute -top-10 ${isSelf ? 'right-0' : 'left-0'} bg-pl-sidebar border border-pl-border rounded-lg shadow-lg px-1.5 py-1 flex items-center gap-0.5 z-20`}
+            className={`absolute -top-10 ${isSelf ? 'right-0' : 'left-0'} bg-surface-1 border border-border-subtle rounded-lg shadow-lg px-1.5 py-1 flex items-center gap-0.5 z-20`}
           >
             {QUICK_EMOJIS.map((emoji) => (
               <button
@@ -129,8 +129,8 @@ export function MessageBubble({
                   }
                   setShowReactions(false)
                 }}
-                className={`text-base px-1.5 py-0.5 rounded hover:bg-pl-hover transition ${
-                  reactions[emoji]?.includes(userId) ? 'bg-pl-accent/20' : ''
+                className={`text-base px-1.5 py-0.5 rounded hover:bg-surface-2 transition ${
+                  reactions[emoji]?.includes(userId) ? 'bg-brand/20' : ''
                 }`}
               >
                 {emoji}
@@ -142,25 +142,25 @@ export function MessageBubble({
         {/* Context menu dropdown */}
         {showMenu && (
           <div
-            className={`absolute top-full mt-1 ${isSelf ? 'right-0' : 'left-0'} bg-pl-sidebar border border-pl-border rounded-lg shadow-lg py-1 min-w-[140px] z-20`}
+            className={`absolute top-full mt-1 ${isSelf ? 'right-0' : 'left-0'} bg-surface-1 border border-border-subtle rounded-lg shadow-lg py-1 min-w-[140px] z-20`}
           >
             <button
               onClick={() => { onReply(message.id); setShowMenu(false) }}
-              className="w-full px-3 py-1.5 text-left text-xs text-pl-text hover:bg-pl-hover flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left text-xs text-fg-primary hover:bg-surface-2 flex items-center gap-2"
             >
               Reply
             </button>
             {message.pinned ? (
               <button
                 onClick={() => { onUnpin(message.id); setShowMenu(false) }}
-                className="w-full px-3 py-1.5 text-left text-xs text-pl-text hover:bg-pl-hover flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-left text-xs text-fg-primary hover:bg-surface-2 flex items-center gap-2"
               >
                 Unpin
               </button>
             ) : (
               <button
                 onClick={() => { onPin(message.id); setShowMenu(false) }}
-                className="w-full px-3 py-1.5 text-left text-xs text-pl-text hover:bg-pl-hover flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-left text-xs text-fg-primary hover:bg-surface-2 flex items-center gap-2"
               >
                 Pin
               </button>
@@ -169,13 +169,13 @@ export function MessageBubble({
               <>
                 <button
                   onClick={() => { onEdit(message.id, message.content); setShowMenu(false) }}
-                  className="w-full px-3 py-1.5 text-left text-xs text-pl-text hover:bg-pl-hover flex items-center gap-2"
+                  className="w-full px-3 py-1.5 text-left text-xs text-fg-primary hover:bg-surface-2 flex items-center gap-2"
                 >
                   Edit
                 </button>
                 <button
                   onClick={() => { onDelete(message.id); setShowMenu(false) }}
-                  className="w-full px-3 py-1.5 text-left text-xs text-pl-danger hover:bg-pl-hover flex items-center gap-2"
+                  className="w-full px-3 py-1.5 text-left text-xs text-status-critical hover:bg-surface-2 flex items-center gap-2"
                 >
                   Delete
                 </button>
@@ -187,11 +187,11 @@ export function MessageBubble({
         {/* Reply preview */}
         {replyParent && (
           <div
-            className={`text-xs px-2 py-1 mb-0.5 rounded-t-lg border-l-2 border-pl-accent/60 bg-pl-bg/50 text-pl-text-sec truncate ${
+            className={`text-xs px-2 py-1 mb-0.5 rounded-t-lg border-l-2 border-brand/60 bg-surface-canvas/50 text-fg-secondary truncate ${
               isSelf ? 'text-right' : 'text-left'
             }`}
           >
-            <span className="font-medium text-pl-accent/80">{replyParent.sender_name}</span>
+            <span className="font-medium text-brand/80">{replyParent.sender_name}</span>
             {': '}
             {replyParent.deleted ? (
               <span className="italic">Message deleted</span>
@@ -205,27 +205,27 @@ export function MessageBubble({
         <div
           className={`rounded-lg px-3 py-1.5 ${
             isSelf
-              ? 'bg-pl-sent rounded-tr-sm'
-              : 'bg-pl-received rounded-tl-sm'
+              ? 'bg-brand rounded-tr-sm'
+              : 'bg-surface-2 rounded-tl-sm'
           } ${replyParent ? 'rounded-t-none' : ''}`}
         >
           {showSender && !isSelf && (
-            <div className="text-xs font-medium text-pl-accent mb-0.5">
+            <div className="text-xs font-medium text-brand mb-0.5">
               {message.sender_name}
             </div>
           )}
           {message.pinned && (
-            <div className="text-[10px] text-pl-accent/70 mb-0.5 flex items-center gap-1">
+            <div className="text-[10px] text-brand/70 mb-0.5 flex items-center gap-1">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="opacity-60">
                 <path d="M16 2H8l-1 7H4l3 7v6h2v-6h6v6h2v-6l3-7h-3z" />
               </svg>
               Pinned
             </div>
           )}
-          <div className="text-sm text-pl-text whitespace-pre-wrap break-words">
+          <div className="text-sm text-fg-primary whitespace-pre-wrap break-words">
             {message.content}
           </div>
-          <div className="text-[10px] text-pl-text-sec text-right mt-0.5 -mb-0.5 flex items-center justify-end gap-1">
+          <div className="text-[10px] text-fg-tertiary text-right mt-0.5 -mb-0.5 flex items-center justify-end gap-1">
             {message.edited_at && <span className="italic">edited</span>}
             {time}
           </div>
@@ -248,8 +248,8 @@ export function MessageBubble({
                   }}
                   className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs border transition ${
                     selfReacted
-                      ? 'bg-pl-accent/15 border-pl-accent/40 text-pl-text'
-                      : 'bg-pl-bg/50 border-pl-border text-pl-text-sec hover:border-pl-accent/30'
+                      ? 'bg-brand/15 border-brand/40 text-fg-primary'
+                      : 'bg-surface-canvas/50 border-border-subtle text-fg-secondary hover:border-brand/30'
                   }`}
                 >
                   <span>{emoji}</span>

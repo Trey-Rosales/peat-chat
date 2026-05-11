@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import Button from './dtak/Button'
+import Input from './dtak/Input'
 
 const COT_TYPES = [
   { value: 'b-m-p-w', label: 'Waypoint', icon: 'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z' },
@@ -9,11 +11,19 @@ const COT_TYPES = [
 ] as const
 
 const AFFILIATIONS = [
-  { value: 'f', label: 'Friendly', color: '#00a884' },
-  { value: 'h', label: 'Hostile', color: '#ea4335' },
-  { value: 'n', label: 'Neutral', color: '#3b82f6' },
-  { value: 'u', label: 'Unknown', color: '#f59e0b' },
+  { value: 'f', label: 'Friendly', bgClass: 'bg-cot-friendly', textClass: 'text-fg-primary' },
+  { value: 'h', label: 'Hostile',  bgClass: 'bg-cot-hostile',  textClass: 'text-fg-on-brand' },
+  { value: 'n', label: 'Neutral',  bgClass: 'bg-cot-neutral',  textClass: 'text-fg-on-brand' },
+  { value: 'u', label: 'Unknown',  bgClass: 'bg-cot-unknown',  textClass: 'text-fg-primary' },
 ] as const
+
+// Place button background per affiliation (cot-* tokens)
+const affiliationPlaceClass: Record<string, string> = {
+  f: 'bg-cot-friendly',
+  h: 'bg-cot-hostile',
+  n: 'bg-cot-neutral',
+  u: 'bg-cot-unknown',
+}
 
 interface Props {
   lat: number
@@ -27,8 +37,6 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
   const [cotType, setCotType] = useState('b-m-p-w')
   const [affiliation, setAffiliation] = useState('f')
   const [remarks, setRemarks] = useState('')
-
-  const affiliationColor = AFFILIATIONS.find((a) => a.value === affiliation)?.color ?? '#3b82f6'
 
   // Map affiliation to legacy color field for backward compat
   const colorMap: Record<string, string> = { f: 'green', h: 'red', n: 'blue', u: 'yellow' }
@@ -46,30 +54,31 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
   }
 
   return (
-    <div className="bg-pl-sidebar rounded-xl shadow-2xl border border-pl-border p-4 w-72">
+    <div className="bg-surface-1 rounded-xl shadow-2xl border border-border-subtle p-4 w-72">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-semibold uppercase tracking-wider text-pl-text-sec/70">Place Marker</span>
-        <span className="text-[10px] text-pl-text-sec font-mono">
+        <span className="text-xs font-semibold uppercase tracking-wider text-fg-secondary/70">Place Marker</span>
+        <span className="text-[10px] text-fg-secondary font-mono">
           {lat.toFixed(5)}, {lon.toFixed(5)}
         </span>
       </div>
 
-      <input
-        type="text"
-        placeholder="Marker name / callsign"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleSubmit()
-          if (e.key === 'Escape') onCancel()
-        }}
-        className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-sm placeholder-pl-text-sec mb-3"
-        autoFocus
-      />
+      <div className="mb-3">
+        <Input
+          placeholder="Marker name / callsign"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSubmit()
+            if (e.key === 'Escape') onCancel()
+          }}
+          className="text-sm"
+          autoFocus
+        />
+      </div>
 
       {/* CoT type selector */}
       <div className="mb-3">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-pl-text-sec/70 block mb-1.5">Type</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-secondary/70 block mb-1.5">Type</span>
         <div className="flex gap-1">
           {COT_TYPES.map((ct) => (
             <button
@@ -77,8 +86,8 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
               onClick={() => setCotType(ct.value)}
               className={`flex-1 p-2 rounded-lg transition flex flex-col items-center gap-1 ${
                 cotType === ct.value
-                  ? 'bg-pl-accent/20 text-pl-accent'
-                  : 'text-pl-text-sec hover:bg-pl-hover hover:text-pl-text'
+                  ? 'bg-brand/20 text-brand'
+                  : 'text-fg-secondary hover:bg-surface-2 hover:text-fg-primary'
               }`}
               title={ct.label}
             >
@@ -93,20 +102,16 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
 
       {/* Affiliation selector */}
       <div className="mb-3">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-pl-text-sec/70 block mb-1.5">Affiliation</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-secondary/70 block mb-1.5">Affiliation</span>
         <div className="flex gap-2 justify-center">
           {AFFILIATIONS.map((a) => (
             <button
               key={a.value}
               onClick={() => setAffiliation(a.value)}
-              className={`w-8 h-8 rounded-full transition flex items-center justify-center text-[9px] font-bold ${
-                affiliation === a.value ? 'ring-2 ring-offset-2 ring-offset-pl-sidebar' : 'opacity-50 hover:opacity-80'
+              className={`w-8 h-8 rounded-full transition flex items-center justify-center text-[9px] font-bold ${a.bgClass} ${a.textClass} ${
+                affiliation === a.value ? 'ring-2 ring-offset-2 ring-offset-surface-1' : 'opacity-50 hover:opacity-80'
               }`}
-              style={{
-                backgroundColor: a.color,
-                ['--tw-ring-color' as string]: a.color,
-                color: a.value === 'u' ? '#111' : '#fff',
-              }}
+              style={affiliation === a.value ? { '--tw-ring-color': 'currentColor' } as React.CSSProperties : undefined}
               title={a.label}
             >
               {a.label[0]}
@@ -116,31 +121,33 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
       </div>
 
       {/* Remarks */}
-      <input
-        type="text"
-        placeholder="Remarks (optional)"
-        value={remarks}
-        onChange={(e) => setRemarks(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleSubmit()
-          if (e.key === 'Escape') onCancel()
-        }}
-        className="w-full bg-pl-input text-pl-text rounded-lg px-3 py-2 text-xs placeholder-pl-text-sec mb-3"
-      />
+      <div className="mb-3">
+        <Input
+          placeholder="Remarks (optional)"
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSubmit()
+            if (e.key === 'Escape') onCancel()
+          }}
+          className="text-xs"
+        />
+      </div>
 
       {/* Actions */}
       <div className="flex gap-2">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onCancel}
-          className="flex-1 py-2 rounded-lg text-sm text-pl-text-sec hover:bg-pl-hover transition"
+          className="flex-1"
         >
           Cancel
-        </button>
+        </Button>
         <button
           onClick={handleSubmit}
           disabled={!name.trim()}
-          className="flex-1 py-2 text-white rounded-lg text-sm font-medium hover:brightness-110 transition disabled:opacity-30"
-          style={{ backgroundColor: affiliationColor }}
+          className={`flex-1 py-2 text-fg-on-brand rounded-lg text-sm font-medium hover:brightness-110 transition disabled:opacity-30 ${affiliationPlaceClass[affiliation] ?? 'bg-cot-neutral'}`}
         >
           Place
         </button>

@@ -51,3 +51,9 @@ identity.key
 .env
 .env.local
 .certs/
+
+# Superpowers brainstorm sessions (visual companion state)
+.superpowers/
+
+# Claude Code local settings (per-developer)
+.claude/

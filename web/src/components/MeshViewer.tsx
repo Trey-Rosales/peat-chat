@@ -98,7 +98,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
   const activeTransports = [...new Set(peers.map((p) => p.transport))]
 
   return (
-    <div ref={containerRef} className="flex-1 relative bg-pl-bg overflow-hidden">
+    <div ref={containerRef} className="flex-1 relative bg-surface-canvas overflow-hidden">
       <svg width={dims.width} height={dims.height} className="absolute inset-0">
         {/* Connection lines */}
         {positions.map(({ peer, x, y, parentPos }) => {
@@ -206,7 +206,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
       {peers.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-pl-header flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-surface-2 flex items-center justify-center">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5">
                 <circle cx="12" cy="5" r="2.5" />
                 <circle cx="5" cy="18" r="2.5" />
@@ -216,8 +216,8 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
                 <line x1="5" y1="18" x2="19" y2="18" />
               </svg>
             </div>
-            <p className="text-pl-text-sec text-sm">No other peers in this room</p>
-            <p className="text-pl-text-sec text-xs mt-1 opacity-60">Waiting for mesh connections...</p>
+            <p className="text-fg-secondary text-sm">No other peers in this room</p>
+            <p className="text-fg-tertiary text-xs mt-1 opacity-60">Waiting for mesh connections...</p>
           </div>
         </div>
       )}
@@ -229,21 +229,21 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
 
       {/* Transport legend */}
       {activeTransports.length > 0 && (
-        <div className="absolute bottom-3 left-3 bg-pl-sidebar/80 backdrop-blur-sm rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
           {Object.entries(TRANSPORT_COLORS)
             .filter(([name]) => activeTransports.includes(name))
             .map(([name, color]) => (
               <div key={name} className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                <span className="text-[10px] text-pl-text-sec uppercase tracking-wide">{name}</span>
+                <span className="text-[10px] text-fg-tertiary uppercase tracking-wide">{name}</span>
               </div>
             ))}
         </div>
       )}
 
       {/* Peer count badge */}
-      <div className="absolute top-3 left-3 bg-pl-sidebar/80 backdrop-blur-sm rounded-lg px-3 py-1.5">
-        <span className="text-xs text-pl-text-sec">
+      <div className="absolute top-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-1.5">
+        <span className="text-xs text-fg-secondary">
           {peers.length} peer{peers.length !== 1 ? 's' : ''} connected
         </span>
       </div>
@@ -256,15 +256,15 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
   const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
 
   return (
-    <div className="absolute top-3 right-3 left-3 md:left-auto bg-pl-sidebar rounded-xl p-4 md:w-60 shadow-2xl border border-pl-border">
+    <div className="absolute top-3 right-3 left-3 md:left-auto bg-surface-1 rounded-xl p-4 md:w-60 shadow-2xl border border-border-subtle">
       <div className="flex justify-between items-start mb-3">
         <div>
-          <div className="text-sm font-medium text-pl-text">{peer.name}</div>
-          <div className="text-xs text-pl-text-sec font-mono">{peer.short_id}</div>
+          <div className="text-sm font-medium text-fg-primary">{peer.name}</div>
+          <div className="text-xs text-fg-secondary font-mono">{peer.short_id}</div>
         </div>
         <button
           onClick={onClose}
-          className="text-pl-text-sec hover:text-pl-text text-lg leading-none"
+          className="text-fg-secondary hover:text-fg-primary text-lg leading-none"
         >
           &times;
         </button>
@@ -274,7 +274,7 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
           <span className="font-semibold" style={{ color }}>{peer.transport.toUpperCase()}</span>
         </DetailRow>
         <DetailRow label="Latency">
-          <span className="text-pl-text">
+          <span className="text-fg-primary">
             {peer.latency_ms > 0 ? `${peer.latency_ms}ms` : 'measuring...'}
           </span>
         </DetailRow>
@@ -284,15 +284,15 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
           </span>
         </DetailRow>
         <DetailRow label="Connected">
-          <span className="text-pl-text">{duration}</span>
+          <span className="text-fg-primary">{duration}</span>
         </DetailRow>
         {peer.connected_via && (
           <DetailRow label="Via">
-            <span className="text-pl-text font-mono text-[10px] break-all">{peer.connected_via.slice(0, 12)}...</span>
+            <span className="text-fg-primary font-mono text-[10px] break-all">{peer.connected_via.slice(0, 12)}...</span>
           </DetailRow>
         )}
         <DetailRow label="Full ID">
-          <span className="text-pl-text font-mono text-[10px] break-all">{peer.id.slice(0, 24)}...</span>
+          <span className="text-fg-primary font-mono text-[10px] break-all">{peer.id.slice(0, 24)}...</span>
         </DetailRow>
       </div>
     </div>
@@ -302,7 +302,7 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex justify-between items-center">
-      <span className="text-pl-text-sec">{label}</span>
+      <span className="text-fg-secondary">{label}</span>
       {children}
     </div>
   )
