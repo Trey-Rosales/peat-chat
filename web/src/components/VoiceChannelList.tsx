@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { VoiceChannel } from '../types'
 import { useChatStore } from '../store/chatStore'
 import { VoiceMemberItem } from './VoiceMemberItem'
+import IconButton from './ui/IconButton'
+import Button from './ui/Button'
 
 interface Props {
   roomId: string
@@ -43,15 +45,19 @@ export function VoiceChannelList({
         <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-secondary/70">
           Voice Channels
         </span>
-        <button
+        <IconButton
           onClick={() => setShowCreate(!showCreate)}
-          className="text-fg-secondary/70 hover:text-fg-primary transition p-0.5 rounded"
+          toggled={showCreate}
+          size="sm"
+          variant="ghost"
+          label="Create voice channel"
           title="Create voice channel"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+          icon={
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          }
+        />
       </div>
 
       {/* Create channel input */}
@@ -70,12 +76,13 @@ export function VoiceChannelList({
               className="flex-1 bg-surface-2 text-fg-primary text-xs rounded px-2 py-1 placeholder-fg-secondary"
               autoFocus
             />
-            <button
+            <Button
               onClick={handleCreate}
-              className="text-xs text-brand px-2 py-1 rounded hover:bg-surface-2"
+              size="sm"
+              variant="ghost"
             >
               Add
-            </button>
+            </Button>
           </div>
         </div>
       )}

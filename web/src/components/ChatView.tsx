@@ -213,22 +213,24 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
 
         {/* Pinned messages toggle */}
         {pinnedMessages.length > 0 && (
-          <button
+          <IconButton
             onClick={() => { setPinnedPanelOpen(!pinnedPanelOpen); setSearchOpen(false) }}
-            className={`p-2 rounded-lg transition shrink-0 relative ${
-              pinnedPanelOpen
-                ? 'bg-brand/20 text-brand'
-                : 'text-fg-secondary hover:text-fg-primary hover:bg-surface-2 active:bg-surface-3'
-            }`}
+            toggled={pinnedPanelOpen}
+            size="sm"
+            variant="ghost"
+            label="Pinned messages"
             title="Pinned messages"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M16 2H8l-1 7H4l3 7v6h2v-6h6v6h2v-6l3-7h-3z" />
-            </svg>
-            <span className="absolute -top-0.5 -right-0.5 bg-brand text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
-              {pinnedMessages.length}
-            </span>
-          </button>
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M16 2H8l-1 7H4l3 7v6h2v-6h6v6h2v-6l3-7h-3z" />
+              </svg>
+            }
+            badge={
+              <span className="absolute -top-0.5 -right-0.5 bg-brand text-fg-on-brand text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
+                {pinnedMessages.length}
+              </span>
+            }
+          />
         )}
 
         {/* Map viewer toggle */}
@@ -363,15 +365,19 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
                   {replyParentMsg.deleted ? 'Message deleted' : replyParentMsg.content}
                 </div>
               </div>
-              <button
+              <IconButton
                 onClick={() => setReplyToId(null)}
-                className="text-fg-secondary hover:text-fg-primary p-1"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+                size="sm"
+                variant="ghost"
+                label="Cancel reply"
+                title="Cancel reply"
+                icon={
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                }
+              />
             </div>
           )}
 
@@ -381,15 +387,19 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
               <div className="flex-1 min-w-0 border-l-2 border-yellow-500 pl-2">
                 <div className="text-xs font-medium text-yellow-500">Editing message</div>
               </div>
-              <button
+              <IconButton
                 onClick={() => { setEditingId(null); setEditContent('') }}
-                className="text-fg-secondary hover:text-fg-primary p-1"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+                size="sm"
+                variant="ghost"
+                label="Cancel edit"
+                title="Cancel edit"
+                icon={
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                }
+              />
             </div>
           )}
 

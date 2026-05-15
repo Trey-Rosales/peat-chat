@@ -75,11 +75,24 @@ describe('LD-mode compliance', () => {
     assertNoBannedTokens(container);
   });
 
-  it('IconButton — toggled and untoggled render without banned tokens in LD', () => {
+  it('IconButton — all size/variant/toggled combos render without banned tokens in LD', () => {
     const { container } = renderInLd(
       <>
-        <IconButton icon={<span>i</span>} label="info" />
-        <IconButton icon={<span>i</span>} label="info" toggled />
+        <IconButton icon={<span>i</span>} label="solid md" />
+        <IconButton icon={<span>i</span>} label="solid md toggled" toggled />
+        <IconButton icon={<span>i</span>} label="solid sm" size="sm" />
+        <IconButton icon={<span>i</span>} label="solid sm toggled" size="sm" toggled />
+        <IconButton icon={<span>i</span>} label="ghost md" variant="ghost" />
+        <IconButton icon={<span>i</span>} label="ghost md toggled" variant="ghost" toggled />
+        <IconButton icon={<span>i</span>} label="ghost sm" variant="ghost" size="sm" />
+        <IconButton icon={<span>i</span>} label="ghost sm toggled" variant="ghost" size="sm" toggled />
+        <IconButton
+          icon={<span>i</span>}
+          label="with badge"
+          size="sm"
+          variant="ghost"
+          badge={<span className="absolute -top-0.5 -right-0.5 bg-brand text-fg-on-brand text-[9px] w-4 h-4 rounded-full">1</span>}
+        />
       </>
     );
     assertNoBannedTokens(container);

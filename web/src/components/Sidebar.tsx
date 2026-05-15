@@ -5,6 +5,8 @@ import { VoiceChannelList } from './VoiceChannelList'
 import { VoiceBar } from './VoiceBar'
 import Input from './ui/Input'
 import Toggle from './ui/Toggle'
+import IconButton from './ui/IconButton'
+import Button from './ui/Button'
 import type { VoiceMember, RoomInfoData } from '../types'
 
 interface Props {
@@ -110,40 +112,46 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {/* Settings */}
-          <button
+          <IconButton
             onClick={toggleSettings}
-            className="text-fg-secondary hover:text-fg-primary transition p-2 rounded-lg hover:bg-surface-2 active:bg-surface-3"
+            size="sm"
+            variant="ghost"
+            label="Settings"
             title="Settings"
-            aria-label="Settings"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            }
+          />
           {/* Create room */}
-          <button
+          <IconButton
             onClick={() => setShowCreateRoom(!showCreateRoom)}
-            className="text-fg-secondary hover:text-fg-primary transition p-2 rounded-lg hover:bg-surface-2 active:bg-surface-3"
+            size="sm"
+            variant="ghost"
+            label="Create room"
             title="Create room"
-            aria-label="Create room"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M12 8v8M8 12h8" />
-            </svg>
-          </button>
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M12 8v8M8 12h8" />
+              </svg>
+            }
+          />
           {/* Join room */}
-          <button
+          <IconButton
             onClick={onJoinRoom}
-            className="text-fg-secondary hover:text-fg-primary transition p-2 rounded-lg hover:bg-surface-2 active:bg-surface-3"
+            size="sm"
+            variant="ghost"
+            label="Join room"
             title="Join room"
-            aria-label="Join room"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            }
+          />
         </div>
       </div>
 
@@ -203,6 +211,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
                     <div className="text-sm text-fg-secondary truncate"># {r.name}</div>
                     <div className="text-[10px] text-fg-secondary">{r.members} member{r.members !== 1 ? 's' : ''}</div>
                   </div>
+                  {/* small inline pill — kept raw because no Button variant matches the tinier height/font-size used in discovery lists */}
                   <button
                     onClick={() => handleJoinDiscoveredRoom(r.name)}
                     className="text-[10px] font-medium text-brand hover:text-brand/80 px-2 py-1 rounded bg-brand/10 hover:bg-brand/20 transition shrink-0"
@@ -235,19 +244,23 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
               />
             </div>
             <div className="flex gap-2">
-              <button
+              <Button
                 onClick={handleCreateRoom}
                 disabled={!newRoomName.trim()}
-                className="flex-1 text-xs py-1.5 rounded bg-brand text-white font-medium disabled:opacity-40 hover:bg-brand/90 transition"
+                size="sm"
+                variant="primary"
+                className="flex-1"
               >
                 Create
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { setShowCreateRoom(false); setNewRoomName(''); setNewRoomPublic(true) }}
-                className="flex-1 text-xs py-1.5 rounded bg-surface-2 text-fg-secondary font-medium hover:bg-surface-3 transition"
+                size="sm"
+                variant="secondary"
+                className="flex-1"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -255,16 +268,19 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
         {/* DMs section */}
         <div className="px-3 pt-4 pb-1 flex items-center justify-between">
           <div className="text-[10px] font-semibold text-fg-secondary uppercase tracking-wider">Direct Messages</div>
-          <button
+          <IconButton
             onClick={() => setShowDMPicker(!showDMPicker)}
-            className="text-fg-secondary hover:text-fg-primary p-1 rounded hover:bg-surface-2"
-            title="New DM"
-            aria-label="New DM"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
+            toggled={showDMPicker}
+            size="sm"
+            variant="ghost"
+            label="Add direct message"
+            title="Add direct message"
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            }
+          />
         </div>
 
         {/* DM peer picker */}
