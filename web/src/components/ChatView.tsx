@@ -5,7 +5,7 @@ import { MessageInput } from './MessageInput'
 import { MeshViewer } from './MeshViewer'
 import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
-import IconButton from './dtak/IconButton'
+import IconButton from './ui/IconButton'
 import type { GeoPosition } from '../hooks/useGeolocation'
 import type { ChatMessage } from '../types'
 

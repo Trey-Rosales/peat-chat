@@ -1,7 +1,7 @@
 import { useState, Component, type ReactNode } from 'react'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
-import IconButton from './dtak/IconButton'
+import IconButton from './ui/IconButton'
 
 // Error boundary to prevent voice UI crashes from blanking the entire app
 class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string }> {

@@ -1,5 +1,5 @@
 import type { Room } from '../types'
-import StatusPill from './dtak/StatusPill'
+import StatusPill from './ui/StatusPill'
 
 interface Props {
   room: Room

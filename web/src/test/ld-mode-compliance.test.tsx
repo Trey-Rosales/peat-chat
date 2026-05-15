@@ -3,6 +3,9 @@ import { render } from '@testing-library/react';
 import { ThemeProvider } from 'flowbite-react';
 import { flowbiteTheme } from '../styles/flowbite-theme';
 import Button from '../components/ui/Button';
+import IconButton from '../components/ui/IconButton';
+import StatusPill from '../components/ui/StatusPill';
+import CotMarker from '../components/ui/CotMarker';
 
 const BANNED_CLASS_PATTERNS = [
   /(^|\s)(bg|text|border|ring|divide|fill|stroke|placeholder|from|to|via)-blue(-\d+)?(\s|$)/,
@@ -64,6 +67,40 @@ describe('LD-mode compliance', () => {
         <Button variant="destructive">destructive</Button>
         <Button size="sm">sm</Button>
         <Button size="lg">lg</Button>
+      </>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('IconButton — toggled and untoggled render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <IconButton icon={<span>i</span>} label="info" />
+        <IconButton icon={<span>i</span>} label="info" toggled />
+      </>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('StatusPill — all variants render without banned tokens in LD', () => {
+    const variants = [
+      'info', 'success', 'warning', 'critical', 'count',
+      'cot-friendly', 'cot-hostile', 'cot-neutral', 'cot-unknown',
+      'transport-wifi', 'transport-ble', 'transport-relay', 'transport-offline',
+    ] as const;
+    const { container } = renderInLd(
+      <>{variants.map((v) => <StatusPill key={v} variant={v}>x</StatusPill>)}</>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('CotMarker — all affiliations render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <CotMarker affiliation="friendly" />
+        <CotMarker affiliation="hostile" />
+        <CotMarker affiliation="neutral" />
+        <CotMarker affiliation="unknown" />
       </>
     );
     assertNoBannedTokens(container);
