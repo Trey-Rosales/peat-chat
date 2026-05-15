@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { ThemeProvider } from 'flowbite-react';
 import { flowbiteTheme } from '../styles/flowbite-theme';
+import Button from '../components/ui/Button';
 
 const BANNED_CLASS_PATTERNS = [
   /(^|\s)(bg|text|border|ring|divide|fill|stroke|placeholder|from|to|via)-blue(-\d+)?(\s|$)/,
@@ -51,6 +52,20 @@ afterEach(() => {
 describe('LD-mode compliance', () => {
   it('scaffold renders nothing without primitives', () => {
     const { container } = renderInLd(<div />);
+    assertNoBannedTokens(container);
+  });
+
+  it('Button — all variants render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <Button>primary</Button>
+        <Button variant="secondary">secondary</Button>
+        <Button variant="ghost">ghost</Button>
+        <Button variant="destructive">destructive</Button>
+        <Button size="sm">sm</Button>
+        <Button size="lg">lg</Button>
+      </>
+    );
     assertNoBannedTokens(container);
   });
 });

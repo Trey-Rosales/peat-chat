@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import Button from './dtak/Button'
+import Button from './ui/Button'
 import Input from './dtak/Input'
 import Surface from './dtak/Surface'
 
