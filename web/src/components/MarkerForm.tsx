@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import Button from './dtak/Button'
-import Input from './dtak/Input'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const COT_TYPES = [
   { value: 'b-m-p-w', label: 'Waypoint', icon: 'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z' },
@@ -137,7 +137,7 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
       {/* Actions */}
       <div className="flex gap-2">
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={onCancel}
           className="flex-1"

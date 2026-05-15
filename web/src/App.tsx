@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import PrimitiveScratch from './scratch/PrimitiveScratch'
 import { useWebSocket } from './hooks/useWebSocket'
 import { usePTT } from './hooks/usePTT'
 import { useGeolocation } from './hooks/useGeolocation'
@@ -14,6 +15,7 @@ import type { VoiceMember } from './types'
 
 export default function App() {
   useTheme()
+  if (window.location.search.includes('scratch')) return <PrimitiveScratch />
   const [showJoinModal, setShowJoinModal] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const displayName = useChatStore((s) => s.displayName)

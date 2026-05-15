@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import Button from './dtak/Button'
-import Input from './dtak/Input'
-import Surface from './dtak/Surface'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 interface Props {
   onJoin: (name: string) => void
@@ -18,7 +17,7 @@ export function JoinRoomModal({ onJoin, onClose }: Props) {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <Surface variant="1" className="rounded-2xl p-6 w-80 shadow-2xl">
+      <div className="bg-surface-1 rounded-2xl p-6 w-80 shadow-2xl">
         <h2 className="text-lg font-semibold text-fg-primary mb-4">Join Room</h2>
         <Input
           placeholder="Room name"
@@ -33,14 +32,14 @@ export function JoinRoomModal({ onJoin, onClose }: Props) {
         />
         <div className="flex gap-2">
           <Button
-            variant="ghost"
+            variant="outline"
             onClick={onClose}
             className="flex-1"
           >
             Cancel
           </Button>
           <Button
-            variant="primary"
+            variant="default"
             onClick={() => name.trim() && onJoin(name.trim())}
             disabled={!name.trim()}
             className="flex-1"
@@ -48,7 +47,7 @@ export function JoinRoomModal({ onJoin, onClose }: Props) {
             Join
           </Button>
         </div>
-      </Surface>
+      </div>
     </div>
   )
 }

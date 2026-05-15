@@ -5,7 +5,7 @@ import { MessageInput } from './MessageInput'
 import { MeshViewer } from './MeshViewer'
 import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
-import IconButton from './dtak/IconButton'
+import { Button } from '@/components/ui/button'
 import type { GeoPosition } from '../hooks/useGeolocation'
 import type { ChatMessage } from '../types'
 
@@ -171,16 +171,17 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
       {/* Header */}
       <div className="px-3 md:px-4 py-3 bg-surface-2 flex items-center gap-2 md:gap-3 border-b border-border-subtle shrink-0">
         {/* Hamburger - mobile only */}
-        <IconButton
+        <Button
+          size="icon"
+          variant="ghost"
           onClick={onOpenSidebar}
-          icon={
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 12h18M3 6h18M3 18h18" />
-            </svg>
-          }
-          label="Open sidebar"
+          aria-label="Open sidebar"
           className="md:hidden shrink-0"
-        />
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 12h18M3 6h18M3 18h18" />
+          </svg>
+        </Button>
 
         <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-surface-3 flex items-center justify-center text-fg-secondary font-semibold text-sm shrink-0">
           {room.name.charAt(0).toUpperCase()}
@@ -198,18 +199,19 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
         </div>
 
         {/* Search toggle */}
-        <IconButton
+        <Button
+          size="icon"
+          variant="ghost"
           onClick={() => { setSearchOpen(!searchOpen); setSearchQuery(''); setPinnedPanelOpen(false) }}
-          toggled={searchOpen}
-          icon={
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-          }
-          label="Search messages"
+          aria-label="Search messages"
+          aria-pressed={searchOpen ? true : undefined}
           className="shrink-0"
-        />
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </Button>
 
         {/* Pinned messages toggle */}
         {pinnedMessages.length > 0 && (
@@ -232,37 +234,39 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
         )}
 
         {/* Map viewer toggle */}
-        <IconButton
+        <Button
+          size="icon"
+          variant="ghost"
           onClick={toggleMapViewer}
-          toggled={mapViewerOpen}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
-              <line x1="8" y1="2" x2="8" y2="18" />
-              <line x1="16" y1="6" x2="16" y2="22" />
-            </svg>
-          }
-          label="Tactical map"
+          aria-label="Tactical map"
+          aria-pressed={mapViewerOpen ? true : undefined}
           className="shrink-0"
-        />
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" />
+            <line x1="8" y1="2" x2="8" y2="18" />
+            <line x1="16" y1="6" x2="16" y2="22" />
+          </svg>
+        </Button>
 
         {/* Mesh viewer toggle */}
-        <IconButton
+        <Button
+          size="icon"
+          variant="ghost"
           onClick={toggleMeshViewer}
-          toggled={meshViewerOpen}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="12" cy="5" r="2.5" />
-              <circle cx="5" cy="18" r="2.5" />
-              <circle cx="19" cy="18" r="2.5" />
-              <line x1="12" y1="7.5" x2="5" y2="15.5" />
-              <line x1="12" y1="7.5" x2="19" y2="15.5" />
-              <line x1="5" y1="18" x2="19" y2="18" />
-            </svg>
-          }
-          label="Mesh topology"
+          aria-label="Mesh topology"
+          aria-pressed={meshViewerOpen ? true : undefined}
           className="shrink-0"
-        />
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="12" cy="5" r="2.5" />
+            <circle cx="5" cy="18" r="2.5" />
+            <circle cx="19" cy="18" r="2.5" />
+            <line x1="12" y1="7.5" x2="5" y2="15.5" />
+            <line x1="12" y1="7.5" x2="19" y2="15.5" />
+            <line x1="5" y1="18" x2="19" y2="18" />
+          </svg>
+        </Button>
       </div>
 
       {/* Search bar */}

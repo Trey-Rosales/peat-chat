@@ -1,5 +1,5 @@
 import type { Room } from '../types'
-import StatusPill from './dtak/StatusPill'
+import { Badge } from '@/components/ui/badge'
 
 interface Props {
   room: Room
@@ -32,9 +32,9 @@ export function RoomItem({ room, active, onClick }: Props) {
         <div className="flex justify-between items-center mt-0.5">
           <span className="text-xs text-fg-tertiary truncate">{preview}</span>
           {room.unread > 0 && (
-            <StatusPill variant="count" className="ml-2 shrink-0">
+            <Badge variant="count" className="ml-2 shrink-0 font-bold">
               {room.unread}
-            </StatusPill>
+            </Badge>
           )}
         </div>
       </div>
