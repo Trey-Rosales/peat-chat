@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 import tokens from './src/styles/tokens.json' with { type: 'json' };
+import flowbitePlugin from 'flowbite-react/plugin/tailwindcss';
 
 const semanticColors = (() => {
   // Build a single map of CSS-var-driven utilities from semantic token names.
@@ -74,5 +75,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [flowbitePlugin],
 };
