@@ -302,8 +302,8 @@ export function VoiceSettings() {
             <FormItem>
               <FormLabel>Microphone</FormLabel>
               <Select
-                onValueChange={field.onChange}
-                value={field.value || ''}
+                onValueChange={(v) => field.onChange(v === '__default__' ? '' : v)}
+                value={field.value || '__default__'}
               >
                 <FormControl>
                   <SelectTrigger>
@@ -311,7 +311,7 @@ export function VoiceSettings() {
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="">Default</SelectItem>
+                  <SelectItem value="__default__">Default</SelectItem>
                   {micDevices.map((d) => (
                     <SelectItem key={d.deviceId} value={d.deviceId}>
                       {d.label || `Microphone (${d.deviceId.slice(0, 8)}…)`}
@@ -332,8 +332,8 @@ export function VoiceSettings() {
             <FormItem>
               <FormLabel>Speaker</FormLabel>
               <Select
-                onValueChange={field.onChange}
-                value={field.value || ''}
+                onValueChange={(v) => field.onChange(v === '__default__' ? '' : v)}
+                value={field.value || '__default__'}
               >
                 <FormControl>
                   <SelectTrigger>
@@ -341,7 +341,7 @@ export function VoiceSettings() {
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="">Default</SelectItem>
+                  <SelectItem value="__default__">Default</SelectItem>
                   {speakerDevices.map((d) => (
                     <SelectItem key={d.deviceId} value={d.deviceId}>
                       {d.label || `Speaker (${d.deviceId.slice(0, 8)}…)`}

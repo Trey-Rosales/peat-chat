@@ -1,6 +1,24 @@
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { joinRoomSchema, type JoinRoomInput } from '@/lib/forms/join-room'
 
 interface Props {
   onJoin: (name: string) => void
@@ -8,46 +26,56 @@ interface Props {
 }
 
 export function JoinRoomModal({ onJoin, onClose }: Props) {
-  const [name, setName] = useState('')
+  const form = useForm<JoinRoomInput>({
+    resolver: zodResolver(joinRoomSchema),
+    defaultValues: { name: '' },
+    mode: 'onChange',
+  })
+
+  function handleJoin(values: JoinRoomInput) {
+    onJoin(values.name.trim())
+  }
 
   return (
-    <div
-      className="fixed inset-0 bg-surface-overlay flex items-center justify-center z-50"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="bg-surface-1 rounded-2xl p-6 w-80 shadow-2xl">
-        <h2 className="text-lg font-semibold text-fg-primary mb-4">Join Room</h2>
-        <Input
-          placeholder="Room name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && name.trim()) onJoin(name.trim())
-            if (e.key === 'Escape') onClose()
-          }}
-          className="mb-3"
-          autoFocus
-        />
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            className="flex-1"
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="default"
-            onClick={() => name.trim() && onJoin(name.trim())}
-            disabled={!name.trim()}
-            className="flex-1"
-          >
-            Join
-          </Button>
-        </div>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Join Room</DialogTitle>
+          <DialogDescription>Enter the name of the room you want to join.</DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleJoin)} className="space-y-4">
+            <FormField
+              name="name"
+              control={form.control}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Room name</FormLabel>
+                  <FormControl>
+                    <Input {...field} placeholder="Room name" autoFocus />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={onClose}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!form.formState.isValid}
+              >
+                Join
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   )
 }
