@@ -249,6 +249,11 @@ SEMANTIC_MAPS = {
 WHITE = "100% 0 0"
 BLACK = "0% 0 0"
 
+# Non-color constants applied to every theme block
+THEME_CONSTANTS = {
+    "radius": "0.375rem",  # used by shadcn components via rounded-[var(--radius)]
+}
+
 def resolve_var(scales, ref):
     name, stop = ref
     if name == "WHITE": return WHITE
@@ -269,6 +274,9 @@ def write_theme_css(mode, scales, mapping, out_path):
         lines.append(f"  --color-surface-overlay: oklch(72% 0.002 220 / 0.5);")
     else:  # ld
         lines.append(f"  --color-surface-overlay: oklch(0% 0 0 / 0.85);")
+    # Non-color constants (same value in every theme)
+    for key, value in THEME_CONSTANTS.items():
+        lines.append(f"  --{key}: {value};")
     lines.append("}")
     out_path.write_text("\n".join(lines) + "\n")
 
