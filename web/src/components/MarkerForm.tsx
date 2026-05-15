@@ -165,7 +165,7 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
                         type="button"
                         onClick={() => field.onChange(a.value)}
                         className={`w-8 h-8 rounded-full transition flex items-center justify-center text-[9px] font-bold ${a.bgClass} ${a.textClass} ${
-                          affiliation === a.value ? 'ring-2 ring-offset-2 ring-offset-surface-1' : 'opacity-50 hover:opacity-80'
+                          affiliation === a.value ? 'ring-2' : 'opacity-50 hover:opacity-80'
                         }`}
                         style={affiliation === a.value ? ({ '--tw-ring-color': 'currentColor' } as React.CSSProperties) : undefined}
                         title={a.label}

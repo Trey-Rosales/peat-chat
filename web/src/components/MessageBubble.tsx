@@ -178,7 +178,7 @@ export function MessageBubble({
                   Pinned
                 </div>
               )}
-              <div className="text-sm whitespace-pre-wrap break-words">
+              <div className="text-sm whitespace-pre-wrap wrap-break-word">
                 {message.content}
               </div>
               <div className="text-[10px] text-right mt-0.5 -mb-0.5 flex items-center justify-end gap-1 opacity-70">

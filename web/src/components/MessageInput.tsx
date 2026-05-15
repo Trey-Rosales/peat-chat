@@ -66,7 +66,7 @@ export function MessageInput({ onSend, editContent }: Props) {
         disabled={!connected}
         rows={1}
         className={cn(
-          'flex-1 resize-none min-h-[44px] max-h-32 overflow-y-auto bg-surface-2 text-fg-primary text-sm placeholder:text-fg-tertiary',
+          'flex-1 resize-none min-h-touch max-h-32 overflow-y-auto bg-surface-2 text-fg-primary text-sm placeholder:text-fg-tertiary',
           isEditing && 'ring-1 ring-status-warning/50'
         )}
       />
