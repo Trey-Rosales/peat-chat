@@ -1,5 +1,6 @@
 import type { Room } from '../types'
 import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 interface Props {
   room: Room
@@ -15,11 +16,13 @@ export function RoomItem({ room, active, onClick }: Props) {
   const time = lastMsg ? formatTime(lastMsg.timestamp) : ''
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition ${
-        active ? 'bg-surface-3' : 'hover:bg-surface-2'
-      }`}
+      className={cn(
+        'w-full text-left flex items-center gap-3 px-4 py-3 min-h-touch transition-colors',
+        active ? 'bg-surface-3' : 'hover:bg-surface-2',
+      )}
     >
       <div className="w-12 h-12 rounded-full bg-surface-2 flex items-center justify-center text-fg-secondary font-semibold text-sm shrink-0">
         {room.name.charAt(0).toUpperCase()}
@@ -38,7 +41,7 @@ export function RoomItem({ room, active, onClick }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { VoiceChannel } from '../types'
 import { useChatStore } from '../store/chatStore'
 import { VoiceMemberItem } from './VoiceMemberItem'
+import { Separator } from '@/components/ui/separator'
 
 interface Props {
   roomId: string
@@ -81,67 +82,70 @@ export function VoiceChannelList({
       )}
 
       {/* Channel list */}
-      {safeChannels.map((channel) => {
-        const inThis = isInChannel(channel.id)
-        const memberCount = Array.isArray(channel.members) ? channel.members.length : 0
-        const members = Array.isArray(channel.members) ? channel.members : []
-        return (
-          <div key={channel.id} className="mb-1">
-            <button
-              onClick={() => {
-                if (inThis) {
-                  onLeaveChannel()
-                } else {
-                  onJoinChannel(channel.id)
-                }
-              }}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition ${
-                inThis
-                  ? 'bg-brand/15 text-brand'
-                  : 'text-fg-secondary hover:bg-surface-2 hover:text-fg-primary'
-              }`}
-            >
-              {/* Speaker icon */}
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                className="shrink-0"
+      <ul className="bg-card rounded-md overflow-hidden">
+        {safeChannels.map((channel, i) => {
+          const inThis = isInChannel(channel.id)
+          const memberCount = Array.isArray(channel.members) ? channel.members.length : 0
+          const members = Array.isArray(channel.members) ? channel.members : []
+          return (
+            <li key={channel.id}>
+              {i > 0 && <Separator />}
+              <button
+                onClick={() => {
+                  if (inThis) {
+                    onLeaveChannel()
+                  } else {
+                    onJoinChannel(channel.id)
+                  }
+                }}
+                className={`w-full flex items-center gap-2 px-2 rounded-none text-left transition min-h-touch ${
+                  inThis
+                    ? 'bg-brand/15 text-brand'
+                    : 'text-fg-secondary hover:bg-accent hover:text-fg-primary'
+                }`}
               >
-                <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                {/* Speaker icon */}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  className="shrink-0"
+                >
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  {memberCount > 0 && (
+                    <>
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    </>
+                  )}
+                </svg>
+                <span className="text-xs font-medium truncate">{String(channel.name || 'Voice')}</span>
                 {memberCount > 0 && (
-                  <>
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  </>
+                  <span className="text-[10px] text-fg-secondary ml-auto shrink-0">
+                    {memberCount}
+                  </span>
                 )}
-              </svg>
-              <span className="text-xs font-medium truncate">{String(channel.name || 'Voice')}</span>
-              {memberCount > 0 && (
-                <span className="text-[10px] text-fg-secondary ml-auto shrink-0">
-                  {memberCount}
-                </span>
-              )}
-            </button>
+              </button>
 
-            {/* Members in this channel */}
-            {memberCount > 0 && (
-              <div className="ml-4 mt-0.5">
-                {members.map((member) => (
-                  <VoiceMemberItem
-                    key={member.id}
-                    member={member}
-                    isSelf={member.id === userId}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
+              {/* Members in this channel */}
+              {memberCount > 0 && (
+                <div className="ml-4 mt-0.5">
+                  {members.map((member) => (
+                    <VoiceMemberItem
+                      key={member.id}
+                      member={member}
+                      isSelf={member.id === userId}
+                    />
+                  ))}
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

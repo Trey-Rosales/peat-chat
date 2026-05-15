@@ -6,6 +6,7 @@ import { MeshViewer } from './MeshViewer'
 import { MapViewer } from './MapViewer'
 import { PTTButton } from './PTTButton'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { GeoPosition } from '../hooks/useGeolocation'
 import type { ChatMessage } from '../types'
 
@@ -329,32 +330,34 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
         />
       ) : (
         <>
-          <div className="flex-1 overflow-y-auto px-3 md:px-4 py-2 space-y-1">
-            {filteredMessages.map((msg, i) => {
-              const prev = filteredMessages[i - 1]
-              const showSender = !prev || prev.sender !== msg.sender
-              const replyParent = msg.reply_to ? messageMap.get(msg.reply_to) : undefined
-              return (
-                <div key={msg.id} id={`msg-${msg.id}`}>
-                  <MessageBubble
-                    message={msg}
-                    isSelf={msg.sender === userId}
-                    showSender={showSender}
-                    replyParent={replyParent}
-                    onReply={handleReply}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onReact={handleReact}
-                    onRemoveReact={handleRemoveReact}
-                    onPin={handlePin}
-                    onUnpin={handleUnpin}
-                    userId={userId}
-                  />
-                </div>
-              )
-            })}
-            <div ref={bottomRef} />
-          </div>
+          <ScrollArea className="flex-1">
+            <div className="px-3 md:px-4 py-2 space-y-1">
+              {filteredMessages.map((msg, i) => {
+                const prev = filteredMessages[i - 1]
+                const showSender = !prev || prev.sender !== msg.sender
+                const replyParent = msg.reply_to ? messageMap.get(msg.reply_to) : undefined
+                return (
+                  <div key={msg.id} id={`msg-${msg.id}`}>
+                    <MessageBubble
+                      message={msg}
+                      isSelf={msg.sender === userId}
+                      showSender={showSender}
+                      replyParent={replyParent}
+                      onReply={handleReply}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onReact={handleReact}
+                      onRemoveReact={handleRemoveReact}
+                      onPin={handlePin}
+                      onUnpin={handleUnpin}
+                      userId={userId}
+                    />
+                  </div>
+                )
+              })}
+              <div ref={bottomRef} />
+            </div>
+          </ScrollArea>
 
           {/* Reply-to bar */}
           {replyParentMsg && (
@@ -382,8 +385,8 @@ export function ChatView({ send, onOpenSidebar, onPTTStart, onPTTEnd, selfPositi
           {/* Edit bar */}
           {editingId && (
             <div className="px-3 md:px-4 py-1.5 bg-surface-1 border-t border-border-subtle shrink-0 flex items-center gap-2">
-              <div className="flex-1 min-w-0 border-l-2 border-yellow-500 pl-2">
-                <div className="text-xs font-medium text-yellow-500">Editing message</div>
+              <div className="flex-1 min-w-0 border-l-2 border-status-warning pl-2">
+                <div className="text-xs font-medium text-status-warning">Editing message</div>
               </div>
               <button
                 onClick={() => { setEditingId(null); setEditContent('') }}
