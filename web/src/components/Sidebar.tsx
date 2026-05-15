@@ -99,7 +99,7 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
       {/* Header */}
       <div className="px-4 py-3 bg-surface-2 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-full bg-brand flex items-center justify-center text-white font-semibold text-sm shrink-0">
+          <div className="w-10 h-10 rounded-full bg-brand flex items-center justify-center text-fg-on-brand font-semibold text-sm shrink-0">
             {safeDisplayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">

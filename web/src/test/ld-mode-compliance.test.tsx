@@ -9,6 +9,8 @@ import CotMarker from '../components/ui/CotMarker';
 import Surface from '../components/ui/Surface';
 import Toggle from '../components/ui/Toggle';
 import Input from '../components/ui/Input';
+import Select from '../components/ui/Select';
+import RangeSlider from '../components/ui/RangeSlider';
 
 const BANNED_CLASS_PATTERNS = [
   /(^|\s)(bg|text|border|ring|divide|fill|stroke|placeholder|from|to|via)-blue(-\d+)?(\s|$)/,
@@ -153,6 +155,22 @@ describe('LD-mode compliance', () => {
         <Input error="oops" />
       </>
     );
+    assertNoBannedTokens(container);
+  });
+
+  it('Select — renders without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <Select defaultValue="b">
+        <option value="a">A</option>
+        <option value="b">B</option>
+        <option value="c">C</option>
+      </Select>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('RangeSlider — renders without banned tokens in LD', () => {
+    const { container } = renderInLd(<RangeSlider min={0} max={100} defaultValue={50} />);
     assertNoBannedTokens(container);
   });
 });

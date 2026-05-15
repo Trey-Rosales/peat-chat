@@ -59,6 +59,33 @@ export const flowbiteTheme = createTheme({
   alert: {
     base: 'flex items-center gap-3 px-4 py-2 rounded-r border-l-4 text-fg-primary',
   },
+  select: {
+    field: {
+      select: {
+        base:
+          'block w-full appearance-none rounded-lg bg-arrow-down-icon bg-[length:0.75em_0.75em] ' +
+          'bg-[position:right_12px_center] bg-no-repeat pr-10 ' +
+          'bg-surface-2 text-fg-primary border border-border-default ' +
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus ' +
+          'disabled:cursor-not-allowed disabled:opacity-50',
+        sizes: {
+          sm: 'p-2 text-xs',
+          md: 'p-2.5 text-sm',
+          lg: 'p-4 text-base',
+        },
+        colors: {
+          gray: '',
+        },
+      },
+    },
+  },
+  rangeSlider: {
+    field: {
+      input: {
+        base: 'w-full cursor-pointer appearance-none rounded-lg bg-surface-3 accent-brand',
+      },
+    },
+  },
 });
 
 export type FlowbiteThemeShape = typeof flowbiteTheme;

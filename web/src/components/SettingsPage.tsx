@@ -4,6 +4,12 @@ import { useChatStore } from '../store/chatStore'
 import { KeyBindingCapture } from './KeyBindingCapture'
 import { VoiceSettings } from './VoiceSettings'
 import { useTheme } from '../hooks/useTheme'
+import IconButton from './ui/IconButton'
+import Button from './ui/Button'
+import Input from './ui/Input'
+import Toggle from './ui/Toggle'
+import Select from './ui/Select'
+import RangeSlider from './ui/RangeSlider'
 
 interface Props {
   onClose: () => void
@@ -87,14 +93,18 @@ export function SettingsPage({ onClose, send }: Props) {
       {/* Header */}
       <div className="px-4 py-3 bg-surface-2 flex items-center justify-between border-b border-border-subtle shrink-0">
         <h1 className="text-lg font-semibold text-fg-primary">Settings</h1>
-        <button
+        <IconButton
           onClick={onClose}
-          className="text-fg-secondary hover:text-fg-primary transition p-2 rounded-lg hover:bg-surface-3"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
+          size="sm"
+          variant="ghost"
+          label="Close settings"
+          title="Close settings"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          }
+        />
       </div>
 
       {/* Content */}
@@ -107,21 +117,16 @@ export function SettingsPage({ onClose, send }: Props) {
             </h2>
             <div className="flex gap-2">
               {(['dark', 'light', 'ld'] as const).map((t) => (
-                <button
+                <Button
                   key={t}
                   type="button"
                   onClick={() => setTheme(t)}
                   aria-pressed={theme === t}
-                  className={
-                    'px-4 py-2 rounded-lg text-sm font-medium transition-colors ' +
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus ' +
-                    (theme === t
-                      ? 'bg-brand text-fg-on-brand'
-                      : 'bg-surface-2 text-fg-primary hover:bg-surface-3 border border-border-default')
-                  }
+                  variant={theme === t ? 'primary' : 'secondary'}
+                  size="sm"
                 >
                   {t === 'ld' ? 'Low-detection' : t.charAt(0).toUpperCase() + t.slice(1)}
-                </button>
+                </Button>
               ))}
             </div>
             <p className="text-fg-tertiary text-xs mt-2">
@@ -136,23 +141,23 @@ export function SettingsPage({ onClose, send }: Props) {
             </h2>
             <div className="space-y-2">
               <label className="text-sm text-fg-primary">Display Name</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleNameSave()
-                  }}
-                  className="flex-1 bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm placeholder:text-fg-tertiary"
-                />
-                <button
+              <div className="flex gap-2 items-start">
+                <div className="flex-1">
+                  <Input
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleNameSave()
+                    }}
+                  />
+                </div>
+                <Button
                   onClick={handleNameSave}
                   disabled={!nameInput.trim() || nameInput.trim() === displayName}
-                  className="px-4 py-2 bg-brand text-fg-on-brand rounded-lg text-sm font-medium hover:brightness-110 transition disabled:opacity-30"
+                  size="sm"
                 >
                   Save
-                </button>
+                </Button>
               </div>
             </div>
           </section>
@@ -165,32 +170,26 @@ export function SettingsPage({ onClose, send }: Props) {
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm text-fg-primary">Microphone</label>
-                <select
-                  value={micDeviceId}
-                  onChange={(e) => setMicDevice(e.target.value)}
-                  className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
-                >
+                <Select value={micDeviceId} onChange={(e) => setMicDevice(e.target.value)}>
                   <option value="">System Default</option>
                   {audioInputs.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>
                       {d.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="space-y-2">
                 <label className="text-sm text-fg-primary">
                   Input Volume ({Math.round(inputVolume * 100)}%)
                 </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
+                <RangeSlider
+                  min={0}
+                  max={1}
+                  step={0.05}
                   value={inputVolume}
                   onChange={(e) => setInputVolume(parseFloat(e.target.value))}
-                  className="w-full accent-brand"
                 />
               </div>
             </div>
@@ -203,18 +202,14 @@ export function SettingsPage({ onClose, send }: Props) {
             </h2>
             <div className="space-y-2">
               <label className="text-sm text-fg-primary">Speaker</label>
-              <select
-                value={speakerDeviceId}
-                onChange={(e) => setSpeakerDevice(e.target.value)}
-                className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
-              >
+              <Select value={speakerDeviceId} onChange={(e) => setSpeakerDevice(e.target.value)}>
                 <option value="">System Default</option>
                 {audioOutputs.map((d) => (
                   <option key={d.deviceId} value={d.deviceId}>
                     {d.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </section>
 
@@ -242,48 +237,33 @@ export function SettingsPage({ onClose, send }: Props) {
             </h2>
             <div className="space-y-2">
               <label className="text-sm text-fg-primary">Preferred Transport</label>
-              <select
+              <Select
                 value={preferredTransport}
                 onChange={(e) => {
                   setPreferredTransport(e.target.value)
                   send('set_preferred_transport', { transport: e.target.value })
                 }}
-                className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm"
               >
                 <option value="tcp">TCP &mdash; stable internet connection</option>
                 <option value="wifi-direct">WiFi Direct &mdash; peer-to-peer, no internet needed</option>
                 <option value="btle">BLE &mdash; lowest power, shortest range</option>
-              </select>
+              </Select>
               <p className="text-xs text-fg-secondary/60">
                 Preferred network path for mesh connections. Default priority: TCP &gt; WiFi Direct &gt; BLE.
               </p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm text-fg-primary">Keep Mesh Alive in Background</label>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setBackgroundMode(!backgroundMode)}
-                  className={`w-12 h-6 rounded-full transition-colors relative ${
-                    backgroundMode ? 'bg-brand' : 'bg-surface-3'
-                  }`}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-full absolute top-0.5 transition-transform ${
-                      backgroundMode
-                        ? 'bg-fg-on-brand translate-x-6'
-                        : 'bg-fg-primary translate-x-0.5'
-                    }`}
-                  />
-                </button>
-                <span className="text-xs text-fg-secondary">
-                  {backgroundMode
-                    ? 'Mesh stays active when app is backgrounded'
-                    : 'Mesh stops when app is backgrounded'}
-                </span>
-              </div>
+              <Toggle
+                checked={backgroundMode}
+                onChange={setBackgroundMode}
+                label="Keep Mesh Alive in Background"
+              />
               <p className="text-xs text-fg-secondary/60">
-                Runs a foreground service to keep BLE, WiFi Direct, and the Rust server alive (Android only)
+                {backgroundMode
+                  ? 'Mesh stays active when app is backgrounded.'
+                  : 'Mesh stops when app is backgrounded.'}
+                {' '}Runs a foreground service to keep BLE, WiFi Direct, and the Rust server alive (Android only).
               </p>
             </div>
           </section>
@@ -296,12 +276,11 @@ export function SettingsPage({ onClose, send }: Props) {
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm text-fg-primary">Protomaps API Key</label>
-                <input
-                  type="text"
+                <Input
                   value={protomapsApiKey}
                   onChange={(e) => setProtomapsApiKey(e.target.value)}
                   placeholder="Get a free key at protomaps.com"
-                  className="w-full bg-surface-2 text-fg-primary rounded-lg px-3 py-2 text-sm placeholder:text-fg-tertiary font-mono"
+                  className="font-mono"
                 />
                 <p className="text-xs text-fg-secondary/60">
                   Required for tactical map tiles
@@ -309,44 +288,30 @@ export function SettingsPage({ onClose, send }: Props) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm text-fg-primary">Share Location</label>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => {
-                      if (!locationEnabled) {
-                        // Trigger geolocation from user gesture so iOS prompts
-                        navigator.geolocation.getCurrentPosition(
-                          () => setLocationEnabled(true),
-                          (err) => {
-                            console.warn('Geolocation denied:', err.message)
-                            alert('Location access denied. Enable location in your browser/OS settings.')
-                          },
-                          { enableHighAccuracy: true, timeout: 10000 }
-                        )
-                      } else {
-                        setLocationEnabled(false)
-                      }
-                    }}
-                    className={`w-12 h-6 rounded-full transition-colors relative ${
-                      locationEnabled ? 'bg-brand' : 'bg-surface-3'
-                    }`}
-                  >
-                    <div
-                      className={`w-5 h-5 rounded-full absolute top-0.5 transition-transform ${
-                        locationEnabled
-                          ? 'bg-fg-on-brand translate-x-6'
-                          : 'bg-fg-primary translate-x-0.5'
-                      }`}
-                    />
-                  </button>
-                  <span className="text-xs text-fg-secondary">
-                    {locationEnabled
-                      ? 'Broadcasting position to room'
-                      : 'Location sharing off'}
-                  </span>
-                </div>
+                <Toggle
+                  checked={locationEnabled}
+                  onChange={(next) => {
+                    if (next) {
+                      // Trigger geolocation from user gesture so iOS prompts
+                      navigator.geolocation.getCurrentPosition(
+                        () => setLocationEnabled(true),
+                        (err) => {
+                          console.warn('Geolocation denied:', err.message)
+                          alert('Location access denied. Enable location in your browser/OS settings.')
+                        },
+                        { enableHighAccuracy: true, timeout: 10000 }
+                      )
+                    } else {
+                      setLocationEnabled(false)
+                    }
+                  }}
+                  label="Share Location"
+                />
                 <p className="text-xs text-fg-secondary/60">
-                  When enabled, your GPS position is shared with room members on the tactical map
+                  {locationEnabled
+                    ? 'Broadcasting position to room. '
+                    : 'Location sharing off. '}
+                  When enabled, your GPS position is shared with room members on the tactical map.
                 </p>
               </div>
             </div>
