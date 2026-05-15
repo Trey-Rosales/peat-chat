@@ -3,7 +3,7 @@ import { useChatStore } from '../store/chatStore'
 import { RoomItem } from './RoomItem'
 import { VoiceChannelList } from './VoiceChannelList'
 import { VoiceBar } from './VoiceBar'
-import Input from './dtak/Input'
+import Input from './ui/Input'
 import Toggle from './ui/Toggle'
 import type { VoiceMember, RoomInfoData } from '../types'
 

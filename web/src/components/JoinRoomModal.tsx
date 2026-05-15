@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Button from './ui/Button'
-import Input from './dtak/Input'
+import Input from './ui/Input'
 import Surface from './ui/Surface'
 
 interface Props {

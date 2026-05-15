@@ -8,6 +8,7 @@ import StatusPill from '../components/ui/StatusPill';
 import CotMarker from '../components/ui/CotMarker';
 import Surface from '../components/ui/Surface';
 import Toggle from '../components/ui/Toggle';
+import Input from '../components/ui/Input';
 
 const BANNED_CLASS_PATTERNS = [
   /(^|\s)(bg|text|border|ring|divide|fill|stroke|placeholder|from|to|via)-blue(-\d+)?(\s|$)/,
@@ -126,6 +127,17 @@ describe('LD-mode compliance', () => {
       <>
         <Toggle checked={false} onChange={() => {}} label="off" />
         <Toggle checked={true} onChange={() => {}} label="on" />
+      </>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('Input — text and textarea render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <Input placeholder="text" />
+        <Input multiline placeholder="area" />
+        <Input error="oops" />
       </>
     );
     assertNoBannedTokens(container);
