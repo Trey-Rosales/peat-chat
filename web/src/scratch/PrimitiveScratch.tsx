@@ -1,11 +1,15 @@
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export default function PrimitiveScratch() {
   return (
@@ -85,6 +89,33 @@ export default function PrimitiveScratch() {
           <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-12 w-12 rounded-full" />
         </div>
+      </section>
+      <section className="space-y-2">
+        <h3 className="text-sm uppercase text-fg-tertiary">Switch</h3>
+        <div className="flex items-center justify-between min-h-touch max-w-sm">
+          <Label htmlFor="scratch-switch">Enable feature</Label>
+          <Switch id="scratch-switch" />
+        </div>
+      </section>
+      <section className="space-y-2">
+        <h3 className="text-sm uppercase text-fg-tertiary">Tooltip</h3>
+        <Tooltip>
+          <TooltipTrigger asChild><Button variant="outline">Hover me</Button></TooltipTrigger>
+          <TooltipContent>Tooltip text</TooltipContent>
+        </Tooltip>
+      </section>
+      <section className="space-y-2">
+        <h3 className="text-sm uppercase text-fg-tertiary">Avatar</h3>
+        <div className="flex gap-2">
+          <Avatar><AvatarImage src="https://example.invalid/x.png" /><AvatarFallback>ZG</AvatarFallback></Avatar>
+          <Avatar><AvatarFallback>OM</AvatarFallback></Avatar>
+        </div>
+      </section>
+      <section className="space-y-2">
+        <h3 className="text-sm uppercase text-fg-tertiary">ScrollArea</h3>
+        <ScrollArea className="h-32 w-72 rounded border border-border p-2">
+          {Array.from({ length: 30 }).map((_, i) => <div key={i}>Row {i}</div>)}
+        </ScrollArea>
       </section>
     </div>
   )

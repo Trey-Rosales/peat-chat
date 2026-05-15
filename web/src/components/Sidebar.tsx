@@ -4,7 +4,8 @@ import { RoomItem } from './RoomItem'
 import { VoiceChannelList } from './VoiceChannelList'
 import { VoiceBar } from './VoiceBar'
 import { Input } from '@/components/ui/input'
-import Toggle from './dtak/Toggle'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import type { VoiceMember, RoomInfoData } from '../types'
 
 interface Props {
@@ -227,11 +228,12 @@ export function Sidebar({ onJoinRoom, onSelectRoom, onJoinVoice, onLeaveVoice, o
               className="mb-2 text-sm py-1.5 px-2"
               autoFocus
             />
-            <div className="flex items-center gap-2 mb-2">
-              <Toggle
+            <div className="flex items-center justify-between min-h-touch mb-2">
+              <Label htmlFor="sidebar-toggle-room-public">{newRoomPublic ? 'Public' : 'Private'}</Label>
+              <Switch
+                id="sidebar-toggle-room-public"
                 checked={newRoomPublic}
-                onChange={setNewRoomPublic}
-                label={newRoomPublic ? 'Public' : 'Private'}
+                onCheckedChange={setNewRoomPublic}
               />
             </div>
             <div className="flex gap-2">
