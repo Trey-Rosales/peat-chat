@@ -4,7 +4,7 @@ import { RoomItem } from './RoomItem'
 import { VoiceChannelList } from './VoiceChannelList'
 import { VoiceBar } from './VoiceBar'
 import Input from './dtak/Input'
-import Toggle from './dtak/Toggle'
+import Toggle from './ui/Toggle'
 import type { VoiceMember, RoomInfoData } from '../types'
 
 interface Props {

@@ -6,6 +6,8 @@ import Button from '../components/ui/Button';
 import IconButton from '../components/ui/IconButton';
 import StatusPill from '../components/ui/StatusPill';
 import CotMarker from '../components/ui/CotMarker';
+import Surface from '../components/ui/Surface';
+import Toggle from '../components/ui/Toggle';
 
 const BANNED_CLASS_PATTERNS = [
   /(^|\s)(bg|text|border|ring|divide|fill|stroke|placeholder|from|to|via)-blue(-\d+)?(\s|$)/,
@@ -101,6 +103,29 @@ describe('LD-mode compliance', () => {
         <CotMarker affiliation="hostile" />
         <CotMarker affiliation="neutral" />
         <CotMarker affiliation="unknown" />
+      </>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('Surface — all variants render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <Surface variant="canvas">canvas</Surface>
+        <Surface variant="1">s1</Surface>
+        <Surface variant="2">s2</Surface>
+        <Surface variant="3">s3</Surface>
+        <Surface variant="overlay">overlay</Surface>
+      </>
+    );
+    assertNoBannedTokens(container);
+  });
+
+  it('Toggle — on and off render without banned tokens in LD', () => {
+    const { container } = renderInLd(
+      <>
+        <Toggle checked={false} onChange={() => {}} label="off" />
+        <Toggle checked={true} onChange={() => {}} label="on" />
       </>
     );
     assertNoBannedTokens(container);

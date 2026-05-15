@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Button from './ui/Button'
 import Input from './dtak/Input'
-import Surface from './dtak/Surface'
+import Surface from './ui/Surface'
 
 interface Props {
   onJoin: (name: string) => void

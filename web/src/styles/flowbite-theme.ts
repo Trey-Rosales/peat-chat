@@ -43,7 +43,8 @@ export const flowbiteTheme = createTheme({
   },
   toggleSwitch: {
     toggle: {
-      base: 'rounded-full transition-colors',
+      // after:bg-fg-on-brand suppresses default `after:bg-white` (banned in LD mode)
+      base: 'rounded-full transition-colors after:bg-fg-on-brand',
       checked: {
         on: 'bg-brand',
         off: 'bg-surface-3',
