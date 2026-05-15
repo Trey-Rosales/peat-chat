@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { X, Layers } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '../store/settingsStore'
 import { useChatStore } from '../store/chatStore'
 import { MarkerForm } from './MarkerForm'
@@ -267,13 +269,16 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
           </span>
         </div>
         {availableStyles.length > 1 && (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={cycleStyle}
-            className="bg-surface-1/80 backdrop-blur-sm rounded-lg px-2.5 py-1.5 text-xs text-fg-secondary hover:text-fg-primary transition"
             title={`Map style: ${effectiveStyle}`}
+            className="bg-surface-1/80 backdrop-blur-sm text-fg-secondary hover:text-fg-primary text-xs h-auto px-2.5 py-1.5"
           >
+            <Layers className="h-3 w-3" />
             {styleLabel[effectiveStyle]}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -301,14 +306,14 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-fg-primary">{selectedContact.callsign}</span>
-            <button
+            <Button
+              size="icon"
+              variant="ghost"
               onClick={() => setSelectedContact(null)}
-              className="text-fg-secondary hover:text-fg-primary p-0.5"
+              className="h-6 w-6 min-h-0 text-fg-secondary hover:text-fg-primary"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
+              <X className="h-3.5 w-3.5" />
+            </Button>
           </div>
           <div className="space-y-1 text-xs text-fg-secondary">
             <div>Type: <span className="text-fg-primary font-mono">{selectedContact.cot_type}</span></div>
@@ -330,14 +335,14 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-fg-primary">{selectedMarker.name}</span>
-            <button
+            <Button
+              size="icon"
+              variant="ghost"
               onClick={() => setSelectedMarker(null)}
-              className="text-fg-secondary hover:text-fg-primary p-0.5"
+              className="h-6 w-6 min-h-0 text-fg-secondary hover:text-fg-primary"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
+              <X className="h-3.5 w-3.5" />
+            </Button>
           </div>
           <div className="space-y-1 text-xs text-fg-secondary">
             <div>Placed by: <span className="text-fg-primary">{selectedMarker.creator_name}</span></div>
@@ -349,12 +354,14 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
             )}
           </div>
           {selectedMarker.creator_id === userId && (
-            <button
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={() => handleDeleteMarker(selectedMarker.id)}
-              className="mt-2 w-full py-1.5 bg-status-critical/20 text-status-critical rounded-lg text-xs font-medium hover:bg-status-critical/30 transition"
+              className="mt-2 w-full text-xs"
             >
               Delete Marker
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -371,23 +378,23 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         </div>
       )}
 
-      {/* Legend */}
+      {/* Legend — swatch colors match MapLibre DOM marker colors exactly */}
       <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 z-10">
         <div className="text-[10px] text-fg-secondary space-y-1">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#00a884]" />
+            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.green }} />
             <span>Self</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#3b82f6]" />
+            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.blue }} />
             <span>Friendly</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#ea4335]" />
+            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.red }} />
             <span>Hostile</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#6b7280]" />
+            <div className="w-3 h-3 rounded-full bg-fg-secondary/40" />
             <span>Stale (&gt;30s)</span>
           </div>
           <div className="text-fg-secondary/50 mt-1">Right-click to place marker</div>

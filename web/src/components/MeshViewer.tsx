@@ -1,15 +1,36 @@
 import { useState, useRef, useEffect } from 'react'
 import type { MeshPeer } from '../types'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 
-const TRANSPORT_COLORS: Record<string, string> = {
-  tcp:            '#3b82f6',
-  btle:           '#8b5cf6',
-  quic:           '#06b6d4',
-  wifi:           '#f59e0b',
-  'wifi-direct':  '#f59e0b',
-  lan:            '#22c55e',
-  p2p:            '#ec4899',
-  relay:          '#6b7280',
+// Map transport name → CSS variable for SVG fill/stroke attributes.
+// These must be CSS var() references because SVG presentation attributes
+// cannot use Tailwind utility classes.
+const TRANSPORT_CSS_VAR: Record<string, string> = {
+  tcp:           'var(--color-transport-wifi)',   // TCP reuses wifi slot (blue)
+  btle:          'var(--color-transport-ble)',
+  wifi:          'var(--color-transport-wifi)',
+  'wifi-direct': 'var(--color-transport-wifi)',
+  quic:          'var(--color-transport-wifi)',
+  lan:           'var(--color-status-success)',
+  p2p:           'var(--color-status-info)',
+  relay:         'var(--color-transport-relay)',
+}
+
+const FALLBACK_CSS_VAR = 'var(--color-fg-tertiary)'
+
+function transportCssVar(transport: string): string {
+  return TRANSPORT_CSS_VAR[transport] ?? FALLBACK_CSS_VAR
+}
+
+// Map transport name → Badge variant for HTML (Tailwind-aware) contexts.
+type TransportBadgeVariant = 'transport-wifi' | 'transport-ble' | 'transport-relay' | 'transport-offline'
+
+function transportBadgeVariant(transport: string): TransportBadgeVariant {
+  if (transport === 'btle') return 'transport-ble'
+  if (transport === 'relay') return 'transport-relay'
+  if (transport === 'wifi' || transport === 'wifi-direct' || transport === 'tcp' || transport === 'quic' || transport === 'lan' || transport === 'p2p') return 'transport-wifi'
+  return 'transport-offline'
 }
 
 interface Props {
@@ -102,7 +123,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
       <svg width={dims.width} height={dims.height} className="absolute inset-0">
         {/* Connection lines */}
         {positions.map(({ peer, x, y, parentPos }) => {
-          const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
+          const color = transportCssVar(peer.transport)
           const isDegraded = peer.state === 'degraded'
           const isRelay = !!peer.connected_via
           // Direct peers connect to self (center); relay peers connect to parent
@@ -126,7 +147,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
                 x={mx - 20} y={my - 18}
                 width={40} height={14}
                 rx={3}
-                fill="#0b141a"
+                fill="var(--color-surface-canvas)"
                 opacity={0.8}
               />
               <text
@@ -141,7 +162,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
               {/* Latency */}
               <text
                 x={mx} y={my + 6}
-                fill="#8696a0"
+                fill="var(--color-fg-tertiary)"
                 fontSize={8}
                 textAnchor="middle"
               >
@@ -152,21 +173,21 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
         })}
 
         {/* Self node (center) */}
-        <circle cx={cx} cy={cy} r={28} fill="#00a884" opacity={0.12}>
+        <circle cx={cx} cy={cy} r={28} fill="var(--color-status-success)" opacity={0.12}>
           <animate attributeName="r" values="28;34;28" dur="3s" repeatCount="indefinite" />
           <animate attributeName="opacity" values="0.12;0.04;0.12" dur="3s" repeatCount="indefinite" />
         </circle>
-        <circle cx={cx} cy={cy} r={22} fill="#00a884" />
-        <text x={cx} y={cy - 3} fill="white" fontSize={10} textAnchor="middle" fontWeight={600}>
+        <circle cx={cx} cy={cy} r={22} fill="var(--color-status-success)" />
+        <text x={cx} y={cy - 3} fill="var(--color-fg-on-brand)" fontSize={10} textAnchor="middle" fontWeight={600}>
           {selfName.length > 6 ? selfName.slice(0, 6) : selfName}
         </text>
-        <text x={cx} y={cy + 10} fill="rgba(255,255,255,0.6)" fontSize={8} textAnchor="middle">
+        <text x={cx} y={cy + 10} fill="var(--color-fg-secondary)" fontSize={8} textAnchor="middle">
           YOU
         </text>
 
         {/* Peer nodes */}
         {positions.map(({ peer, x, y }) => {
-          const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
+          const color = transportCssVar(peer.transport)
           const isSelected = selectedPeer?.id === peer.id
           const isRelay = !!peer.connected_via
           const nodeRadius = isRelay ? 14 : 18
@@ -190,11 +211,11 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
               {/* Node circle */}
               <circle cx={x} cy={y} r={nodeRadius} fill={color} opacity={isRelay ? 0.75 : 0.9} />
               {/* Name above */}
-              <text x={x} y={y - nodeRadius - 8} fill="#e9edef" fontSize={isRelay ? 10 : 11} textAnchor="middle" fontWeight={500}>
+              <text x={x} y={y - nodeRadius - 8} fill="var(--color-fg-primary)" fontSize={isRelay ? 10 : 11} textAnchor="middle" fontWeight={500}>
                 {peer.name}
               </text>
               {/* Short ID inside */}
-              <text x={x} y={y + 4} fill="white" fontSize={isRelay ? 7 : 8} textAnchor="middle" fontFamily="monospace">
+              <text x={x} y={y + 4} fill="var(--color-fg-on-brand)" fontSize={isRelay ? 7 : 8} textAnchor="middle" fontFamily="monospace">
                 {peer.short_id}
               </text>
             </g>
@@ -207,7 +228,7 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-surface-2 flex items-center justify-center">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--color-fg-tertiary)" strokeWidth="1.5">
                 <circle cx="12" cy="5" r="2.5" />
                 <circle cx="5" cy="18" r="2.5" />
                 <circle cx="19" cy="18" r="2.5" />
@@ -229,15 +250,12 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
 
       {/* Transport legend */}
       {activeTransports.length > 0 && (
-        <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
-          {Object.entries(TRANSPORT_COLORS)
-            .filter(([name]) => activeTransports.includes(name))
-            .map(([name, color]) => (
-              <div key={name} className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                <span className="text-[10px] text-fg-tertiary uppercase tracking-wide">{name}</span>
-              </div>
-            ))}
+        <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 flex flex-wrap gap-x-3 gap-y-1">
+          {activeTransports.map((name) => (
+            <Badge key={name} variant={transportBadgeVariant(name)} className="text-[10px] uppercase tracking-wide">
+              {name}
+            </Badge>
+          ))}
         </div>
       )}
 
@@ -253,25 +271,28 @@ export function MeshViewer({ peers, selfName, selfShortId }: Props) {
 
 function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) {
   const duration = formatDuration(Date.now() - peer.connected_at)
-  const color = TRANSPORT_COLORS[peer.transport] || '#6b7280'
 
   return (
-    <div className="absolute top-3 right-3 left-3 md:left-auto bg-surface-1 rounded-xl p-4 md:w-60 shadow-2xl border border-border-subtle">
-      <div className="flex justify-between items-start mb-3">
-        <div>
-          <div className="text-sm font-medium text-fg-primary">{peer.name}</div>
-          <div className="text-xs text-fg-secondary font-mono">{peer.short_id}</div>
+    <Card className="absolute top-3 right-3 left-3 md:left-auto md:w-60 shadow-2xl">
+      <CardHeader className="p-4 pb-3">
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="text-sm font-medium text-fg-primary">{peer.name}</div>
+            <div className="text-xs text-fg-secondary font-mono">{peer.short_id}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-fg-secondary hover:text-fg-primary text-lg leading-none"
+          >
+            &times;
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="text-fg-secondary hover:text-fg-primary text-lg leading-none"
-        >
-          &times;
-        </button>
-      </div>
-      <div className="space-y-2.5 text-xs">
+      </CardHeader>
+      <CardContent className="px-4 pb-4 space-y-2.5 text-xs">
         <DetailRow label="Transport">
-          <span className="font-semibold" style={{ color }}>{peer.transport.toUpperCase()}</span>
+          <Badge variant={transportBadgeVariant(peer.transport)}>
+            {peer.transport.toUpperCase()}
+          </Badge>
         </DetailRow>
         <DetailRow label="Latency">
           <span className="text-fg-primary">
@@ -279,7 +300,7 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
           </span>
         </DetailRow>
         <DetailRow label="State">
-          <span className={peer.state === 'connected' ? 'text-[#00a884]' : 'text-[#ea4335]'}>
+          <span className={peer.state === 'connected' ? 'text-status-success' : 'text-status-critical'}>
             {peer.state}
           </span>
         </DetailRow>
@@ -294,8 +315,8 @@ function PeerDetail({ peer, onClose }: { peer: MeshPeer; onClose: () => void }) 
         <DetailRow label="Full ID">
           <span className="text-fg-primary font-mono text-[10px] break-all">{peer.id.slice(0, 24)}...</span>
         </DetailRow>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }
 
