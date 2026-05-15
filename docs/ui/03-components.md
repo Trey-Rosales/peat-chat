@@ -1,6 +1,6 @@
 # DTAK Component Primitives
 
-Eight primitives in `web/src/components/dtak/`. Each consumes semantic tokens — never raw scale stops. Each is fully tested with `vitest` + `@testing-library/react`.
+Primitives live in `web/src/components/ui/`. Each consumes semantic tokens — never raw scale stops. Each is fully tested with `vitest` + `@testing-library/react`. `Button` and `Toggle` wrap `flowbite-react`; the rest are bespoke.
 
 ## Surface
 
@@ -14,6 +14,8 @@ Token-aware container. Replaces ad-hoc `<div className="bg-something">`.
 
 Variants: `canvas | 1 | 2 | 3 | overlay`.
 
+Implementation: bespoke themed `<div>` (`flowbite-react`'s `Card` adds opinionated styling we don't want).
+
 ## Button
 
 ```tsx
@@ -25,6 +27,8 @@ Variants: `canvas | 1 | 2 | 3 | overlay`.
 Variants: `primary | secondary | ghost | destructive`.
 Sizes: `sm` (32px), `md` (40px desktop / 44px mobile), `lg` (48px — LD-friendly).
 
+Implementation: wraps `flowbite-react`'s `Button` via `flowbite-theme.ts` `button` slot.
+
 ## Input
 
 ```tsx
@@ -32,6 +36,8 @@ Sizes: `sm` (32px), `md` (40px desktop / 44px mobile), `lg` (48px — LD-friendl
 <Input multiline placeholder="Message..." />
 <Input error="Required" />
 ```
+
+Implementation: bespoke (discriminated `multiline` / `error` union doesn't map onto `flowbite-react`'s `TextInput`).
 
 ## IconButton
 
@@ -41,6 +47,8 @@ Sizes: `sm` (32px), `md` (40px desktop / 44px mobile), `lg` (48px — LD-friendl
 ```
 
 `label` is required (a11y). 44px touch target everywhere.
+
+Implementation: bespoke (no `flowbite-react` analog for 44px square hit target).
 
 ## StatusPill
 
@@ -53,15 +61,11 @@ Sizes: `sm` (32px), `md` (40px desktop / 44px mobile), `lg` (48px — LD-friendl
 
 Variants cover every `status-*`, `cot-*`, `transport-*` semantic, plus `count` (uses status-critical).
 
+Implementation: bespoke (13 semantic variants don't map onto `flowbite-react`'s `Badge` small color set).
+
 ## CalloutBar
 
-```tsx
-<CalloutBar variant="active-call" icon={<PhoneIcon />} onDismiss={() => ...}>
-  Active call · Dispatch North
-</CalloutBar>
-```
-
-Variants: `info | success | warning | critical | active-call`. Dismissible when `onDismiss` is provided.
+*CalloutBar was removed in the Flowbite migration (2026-05-15) due to having no consumers. If you need a callout/alert primitive, wrap `flowbite-react`'s `Alert` under `/ui/` following the pattern of `Button`.*
 
 ## Toggle
 
@@ -71,6 +75,8 @@ Variants: `info | success | warning | critical | active-call`. Dismissible when 
 
 `role="switch"` + `aria-checked`. Used heavily in Settings.
 
+Implementation: wraps `flowbite-react`'s `ToggleSwitch` via `flowbite-theme.ts` `toggleSwitch` slot.
+
 ## CotMarker
 
 ```tsx
@@ -79,11 +85,15 @@ Variants: `info | success | warning | critical | active-call`. Dismissible when 
 
 Affiliations: `friendly | hostile | neutral | unknown`. Drives marker color via `cot-*` tokens.
 
+Implementation: bespoke (CoT-affiliation map overlay, no `flowbite-react` analog).
+
 ## When to add a new primitive
 
-Promote a feature-local component into `dtak/` only if:
+Promote a feature-local component into `ui/` only if:
 
 1. It would be used in 3+ feature folders, or
 2. It encapsulates a token contract that should be enforced (e.g. ensures consistent focus rings).
 
 Otherwise: keep it in the feature folder; just consume DTAK semantic tokens directly.
+
+When adopting a new `flowbite-react` component, wrap it in `/ui/` first — never import `flowbite-react` directly from feature code.

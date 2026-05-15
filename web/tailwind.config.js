@@ -44,34 +44,13 @@ const scaleColors = Object.fromEntries(
   ]),
 );
 
-// Legacy pl-* compatibility shims. These map old token names to DTAK semantic
-// tokens so existing components keep rendering correctly until the Phase 6
-// migration replaces them. Theme-reactive (resolves through CSS vars).
-// Remove this block after `git grep "pl-" web/src` returns no matches.
-const legacyPlCompat = {
-  'pl-bg':       'oklch(var(--color-surface-canvas) / <alpha-value>)',
-  'pl-sidebar':  'oklch(var(--color-surface-1) / <alpha-value>)',
-  'pl-header':   'oklch(var(--color-surface-2) / <alpha-value>)',
-  'pl-input':    'oklch(var(--color-surface-2) / <alpha-value>)',
-  'pl-hover':    'oklch(var(--color-surface-2) / <alpha-value>)',
-  'pl-active':   'oklch(var(--color-surface-3) / <alpha-value>)',
-  'pl-sent':     'oklch(var(--color-brand) / <alpha-value>)',
-  'pl-received': 'oklch(var(--color-surface-2) / <alpha-value>)',
-  'pl-border':   'oklch(var(--color-border-subtle) / <alpha-value>)',
-  'pl-text':     'oklch(var(--color-fg-primary) / <alpha-value>)',
-  'pl-text-sec': 'oklch(var(--color-fg-secondary) / <alpha-value>)',
-  'pl-accent':   'oklch(var(--color-brand) / <alpha-value>)',
-  'pl-danger':   'oklch(var(--color-status-critical) / <alpha-value>)',
-};
-
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        ...scaleColors,         // gray, blue, red, orange, yellow, green, violet
-        ...semanticColors,      // surface, fg, border, brand, status, cot, voice, transport
-        ...legacyPlCompat,      // pl-* shim — remove after Phase 6 migration
+        ...scaleColors,
+        ...semanticColors,
       },
     },
   },
