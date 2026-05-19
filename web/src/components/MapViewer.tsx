@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { X, Layers } from 'lucide-react'
+import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '../store/settingsStore'
 import { useChatStore } from '../store/chatStore'
@@ -10,12 +10,26 @@ import { contactHasPosition } from '../types'
 import type { CotContact, CotMarker } from '../types'
 import type { GeoPosition } from '../hooks/useGeolocation'
 
-const MARKER_COLORS: Record<string, string> = {
-  green: '#00a884',
-  blue: '#3b82f6',
-  red: '#ea4335',
-  yellow: '#f59e0b',
-  white: '#e9edef',
+import { getCotIcon, getCotColorVar } from '@/lib/cot-icons'
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+// Build an inline SVG element for a CoT-type icon. The icon is drawn with
+// currentColor so the parent can theme it via `style.color`.
+function buildIconSvg(cotType: string, size: number): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  const path = document.createElementNS(SVG_NS, 'path')
+  path.setAttribute('d', getCotIcon(cotType))
+  svg.appendChild(path)
+  return svg
 }
 
 type MapStyle = 'dark' | 'light' | 'topo' | 'satellite'
@@ -36,18 +50,20 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
   const selfMarkerRef = useRef<maplibregl.Marker | null>(null)
   const protomapsApiKey = useSettingsStore((s) => s.protomapsApiKey)
   const mapStyle = useSettingsStore((s) => s.mapStyle)
-  const setMapStyle = useSettingsStore((s) => s.setMapStyle)
   const userId = useChatStore((s) => s.userId)
-  const shortId = useChatStore((s) => s.shortId)
   const activeRoomId = useChatStore((s) => s.activeRoomId)
-  const reactivePosition = useChatStore((s) => s.selfPosition)
 
   const [selectedContact, setSelectedContact] = useState<CotContact | null>(null)
   const [selectedMarker, setSelectedMarker] = useState<CotMarker | null>(null)
   const [markerForm, setMarkerForm] = useState<{ lat: number; lon: number } | null>(null)
+  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null)
 
-  // Fall back to satellite if no API key
-  const effectiveStyle: MapStyle = (!protomapsApiKey && mapStyle !== 'satellite') ? 'satellite' : mapStyle
+  // Available styles depend on whether we have a Protomaps API key
+  const availableStyles: MapStyle[] = protomapsApiKey
+    ? ['dark', 'light', 'topo', 'satellite']
+    : ['satellite']
+
+  const effectiveStyle: MapStyle = availableStyles.includes(mapStyle) ? mapStyle : availableStyles[0]
 
   // Initialize map
   useEffect(() => {
@@ -62,7 +78,6 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     })
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     // Right-click (desktop) to place marker
     map.on('contextmenu', (e) => {
@@ -101,7 +116,33 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
 
     mapRef.current = map
 
+    // Register imperative map actions for the layout shell (MapRail buttons).
+    // Use getState() to avoid re-subscribing this effect to store changes.
+    useChatStore.getState().setMapControls({
+      zoomIn: () => map.zoomIn(),
+      zoomOut: () => map.zoomOut(),
+      centerOnSelf: () => {
+        const pos = useChatStore.getState().selfPosition
+        if (pos) {
+          map.flyTo({ center: [pos.lon, pos.lat], zoom: Math.max(map.getZoom(), 15) })
+        }
+      },
+      openAddMarker: () => {
+        const c = map.getCenter()
+        setMarkerForm({ lat: c.lat, lon: c.lng })
+      },
+    })
+
+    // Ensure the map resizes whenever its container does. Maplibre doesn't
+    // auto-resize; without this, the canvas may stay at its initial-mount size.
+    const resizeObserver = new ResizeObserver(() => {
+      map.resize()
+    })
+    if (containerRef.current) resizeObserver.observe(containerRef.current)
+
     return () => {
+      resizeObserver.disconnect()
+      useChatStore.getState().setMapControls(null)
       map.remove()
       mapRef.current = null
       contactMarkersRef.current.clear()
@@ -199,7 +240,7 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     for (const m of markers) {
       if (userMarkersRef.current.has(m.id)) continue
 
-      const el = buildUserMarkerEl(m.name, m.color)
+      const el = buildUserMarkerEl(m.name, m.color, m.cot_type)
       el.addEventListener('click', () => {
         setSelectedMarker(m)
         setSelectedContact(null)
@@ -213,6 +254,33 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
       userMarkersRef.current.set(m.id, marker)
     }
   }, [markers])
+
+  // Track screen position of selected pin so popover sticks to it during pan/zoom
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) {
+      setPopoverPos(null)
+      return
+    }
+    const lngLat: [number, number] | null = selectedContact
+      ? [selectedContact.lon, selectedContact.lat]
+      : selectedMarker
+        ? [selectedMarker.lon, selectedMarker.lat]
+        : null
+    if (!lngLat) {
+      setPopoverPos(null)
+      return
+    }
+    const update = () => {
+      const p = map.project(lngLat)
+      setPopoverPos({ x: p.x, y: p.y })
+    }
+    update()
+    map.on('move', update)
+    return () => {
+      map.off('move', update)
+    }
+  }, [selectedContact, selectedMarker])
 
   const handlePlaceMarker = useCallback(
     (data: { name: string; icon: string; color: string; cot_type: string; remarks: string }) => {
@@ -241,76 +309,27 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
     [activeRoomId, send]
   )
 
-  const cycleStyle = () => {
-    if (availableStyles.length <= 1) return
-    const idx = availableStyles.indexOf(effectiveStyle)
-    setMapStyle(availableStyles[(idx + 1) % availableStyles.length])
-  }
-
-  const styleLabel: Record<MapStyle, string> = {
-    dark: 'Dark', light: 'Light', topo: 'Topo', satellite: 'Satellite',
-  }
-
-  const availableStyles: MapStyle[] = protomapsApiKey
-    ? ['dark', 'light', 'topo', 'satellite']
-    : ['satellite']
-
   return (
-    <div className="flex-1 relative bg-surface-canvas overflow-hidden">
-      <div ref={containerRef} className="absolute inset-0" />
+    <div className="h-full w-full relative bg-surface-canvas overflow-hidden">
+      <div ref={containerRef} className="h-full w-full" />
 
-      {/* Top-left: contact/marker count + style switcher */}
-      <div className="absolute top-3 left-3 flex items-center gap-2 z-10">
-        <div className="bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-1.5">
-          <span className="text-xs text-fg-secondary">
-            {contacts.length} contact{contacts.length !== 1 ? 's' : ''}
-            {contacts.length > 0 && ` (${contacts.filter(contactHasPosition).length} GPS)`}
-            {markers.length > 0 && ` · ${markers.length} marker${markers.length !== 1 ? 's' : ''}`}
-          </span>
-        </div>
-        {availableStyles.length > 1 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={cycleStyle}
-            title={`Map style: ${effectiveStyle}`}
-            className="bg-surface-1/80 backdrop-blur-sm text-fg-secondary hover:text-fg-primary text-xs h-auto px-2.5 py-1.5"
-          >
-            <Layers className="h-3 w-3" />
-            {styleLabel[effectiveStyle]}
-          </Button>
-        )}
-      </div>
-
-      {/* Bottom-right: callsign HUD (TAK-style), above attribution */}
-      <div className="absolute bottom-8 right-3 bg-surface-1/85 backdrop-blur-sm rounded-lg px-3 py-2 z-10 text-right">
-        <div className="text-sm font-bold text-brand">{selfName}</div>
-        <div className="text-[10px] font-mono text-fg-secondary">
-          {shortId && <span className="text-fg-secondary/60">{shortId}</span>}
-        </div>
-        {reactivePosition ? (
-          <div className="text-[10px] font-mono text-fg-secondary mt-0.5">
-            <div>{reactivePosition.lat.toFixed(6)}, {reactivePosition.lon.toFixed(6)}</div>
-            {reactivePosition.hae !== 0 && (
-              <div>ALT {reactivePosition.hae.toFixed(0)}m HAE</div>
-            )}
-            <div>CE {reactivePosition.ce.toFixed(0)}m</div>
-          </div>
-        ) : (
-          <div className="text-[10px] text-fg-secondary/50 mt-0.5">No GPS</div>
-        )}
-      </div>
-
-      {/* Selected contact detail */}
-      {selectedContact && (
-        <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
+      {/* Selected contact detail — anchored above the pin */}
+      {selectedContact && popoverPos && (
+        <div
+          className="absolute bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56 pointer-events-auto"
+          style={{
+            left: popoverPos.x,
+            top: popoverPos.y,
+            transform: 'translate(-50%, calc(-100% - 24px))',
+          }}
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-fg-primary">{selectedContact.callsign}</span>
             <Button
-              size="icon"
+              size="icon-xs"
               variant="ghost"
               onClick={() => setSelectedContact(null)}
-              className="h-6 w-6 min-h-0 text-fg-secondary hover:text-fg-primary"
+              className="text-fg-secondary hover:text-fg-primary"
             >
               <X className="h-3.5 w-3.5" />
             </Button>
@@ -330,16 +349,23 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         </div>
       )}
 
-      {/* Selected marker detail */}
-      {selectedMarker && (
-        <div className="absolute top-3 right-14 bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56">
+      {/* Selected marker detail — anchored above the pin */}
+      {selectedMarker && popoverPos && (
+        <div
+          className="absolute bg-surface-1/90 backdrop-blur-sm rounded-xl shadow-2xl border border-border-subtle p-3 z-10 w-56 pointer-events-auto"
+          style={{
+            left: popoverPos.x,
+            top: popoverPos.y,
+            transform: 'translate(-50%, calc(-100% - 24px))',
+          }}
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-fg-primary">{selectedMarker.name}</span>
             <Button
-              size="icon"
+              size="icon-xs"
               variant="ghost"
               onClick={() => setSelectedMarker(null)}
-              className="h-6 w-6 min-h-0 text-fg-secondary hover:text-fg-primary"
+              className="text-fg-secondary hover:text-fg-primary"
             >
               <X className="h-3.5 w-3.5" />
             </Button>
@@ -378,20 +404,24 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
         </div>
       )}
 
-      {/* Legend — swatch colors match MapLibre DOM marker colors exactly */}
+      {/* Legend — swatch colors driven by cot-* tokens so they adapt per theme */}
       <div className="absolute bottom-3 left-3 bg-surface-1/80 backdrop-blur-sm rounded-lg px-3 py-2 z-10">
         <div className="text-[10px] text-fg-secondary space-y-1">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.green }} />
-            <span>Self</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.blue }} />
+            <div className="w-3 h-3 rounded-full bg-cot-friendly" />
             <span>Friendly</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ background: MARKER_COLORS.red }} />
+            <div className="w-3 h-3 rounded-full bg-cot-hostile" />
             <span>Hostile</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-cot-neutral" />
+            <span>Neutral</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-cot-unknown" />
+            <span>Unknown</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-fg-secondary/40" />
@@ -405,21 +435,62 @@ export function MapViewer({ contacts, markers, selfPosition, selfName, send }: P
 }
 
 // --- Safe marker DOM builders (no innerHTML -- prevents XSS) ---
+//
+// Markers use `var(--color-cot-*)` for the disc fill, so the active theme
+// (dark / light / low-detection) controls the actual color. The icon glyph
+// inside is drawn in white via `color: #fff` on the disc — `currentColor` in
+// the SVG resolves to that.
+
+function buildMarkerLabel(text: string): HTMLSpanElement {
+  const label = document.createElement('span')
+  label.textContent = text
+  Object.assign(label.style, {
+    fontSize: '10px',
+    fontWeight: '500',
+    color: 'var(--color-fg-primary)',
+    background: 'color-mix(in oklch, var(--color-surface-1) 90%, transparent)',
+    padding: '1px 6px',
+    borderRadius: '4px',
+    whiteSpace: 'nowrap',
+    border: '1px solid var(--color-border-subtle)',
+  })
+  return label
+}
+
+function buildMarkerWrapper(): HTMLDivElement {
+  const wrapper = document.createElement('div')
+  Object.assign(wrapper.style, {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '3px',
+  })
+  return wrapper
+}
 
 function buildSelfMarkerEl(name: string): HTMLDivElement {
   const el = document.createElement('div')
-  const wrapper = document.createElement('div')
-  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+  const wrapper = buildMarkerWrapper()
 
-  const label = document.createElement('span')
-  label.textContent = name
-  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: '#111b21', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap', fontWeight: '600' })
+  const label = buildMarkerLabel(name)
+  label.style.fontWeight = '600'
 
   const dot = document.createElement('div')
-  Object.assign(dot.style, { width: '28px', height: '28px', borderRadius: '50%', background: '#00a884', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid rgba(0,168,132,0.3)', boxShadow: '0 0 12px rgba(0,168,132,0.4)' })
+  Object.assign(dot.style, {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    background: 'var(--color-cot-friendly)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    border: '3px solid color-mix(in oklch, var(--color-cot-friendly) 30%, transparent)',
+    boxShadow: '0 0 12px color-mix(in oklch, var(--color-cot-friendly) 40%, transparent)',
+  })
   const youLabel = document.createElement('span')
   youLabel.textContent = 'YOU'
-  Object.assign(youLabel.style, { color: 'white', fontSize: '8px', fontWeight: '700' })
+  Object.assign(youLabel.style, { color: '#fff', fontSize: '8px', fontWeight: '700', letterSpacing: '0.04em' })
   dot.appendChild(youLabel)
 
   wrapper.appendChild(label)
@@ -433,39 +504,55 @@ function buildContactMarkerEl(callsign: string, isStale: boolean): HTMLDivElemen
   el.style.cursor = 'pointer'
   el.style.opacity = isStale ? '0.4' : '1'
 
-  const wrapper = document.createElement('div')
-  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+  const wrapper = buildMarkerWrapper()
+  wrapper.appendChild(buildMarkerLabel(callsign))
 
-  const label = document.createElement('span')
-  label.textContent = callsign
-  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: '#111b21', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap' })
+  const disc = document.createElement('div')
+  Object.assign(disc.style, {
+    width: '22px',
+    height: '22px',
+    borderRadius: '50%',
+    background: 'var(--color-cot-friendly)',
+    border: '2px solid color-mix(in oklch, var(--color-cot-friendly) 60%, white)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+  })
+  // Contacts use the generic Contact CoT icon so they read as "other operator".
+  disc.appendChild(buildIconSvg('b-m-p-c-cp', 12))
 
-  const dot = document.createElement('div')
-  Object.assign(dot.style, { width: '20px', height: '20px', borderRadius: '50%', background: '#3b82f6', border: '2px solid #60a5fa' })
-
-  wrapper.appendChild(label)
-  wrapper.appendChild(dot)
+  wrapper.appendChild(disc)
   el.appendChild(wrapper)
   return el
 }
 
-function buildUserMarkerEl(name: string, colorKey: string): HTMLDivElement {
-  const color = MARKER_COLORS[colorKey] || MARKER_COLORS.blue
+function buildUserMarkerEl(name: string, colorKey: string, cotType: string): HTMLDivElement {
   const el = document.createElement('div')
   el.style.cursor = 'pointer'
 
-  const wrapper = document.createElement('div')
-  Object.assign(wrapper.style, { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' })
+  const colorVar = getCotColorVar(colorKey)
 
-  const label = document.createElement('span')
-  label.textContent = name
-  Object.assign(label.style, { fontSize: '10px', color: '#e9edef', background: `${color}33`, padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap', border: `1px solid ${color}66` })
+  const wrapper = buildMarkerWrapper()
+  wrapper.appendChild(buildMarkerLabel(name))
 
-  const dot = document.createElement('div')
-  Object.assign(dot.style, { width: '16px', height: '16px', borderRadius: '50%', background: color, border: `2px solid ${color}99` })
+  const disc = document.createElement('div')
+  Object.assign(disc.style, {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    background: colorVar,
+    border: `2px solid color-mix(in oklch, ${colorVar} 60%, white)`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
+  })
+  disc.appendChild(buildIconSvg(cotType, 15))
 
-  wrapper.appendChild(label)
-  wrapper.appendChild(dot)
+  wrapper.appendChild(disc)
   el.appendChild(wrapper)
   return el
 }
@@ -485,27 +572,29 @@ const COMMON_GLYPHS = 'https://protomaps.github.io/basemaps-assets/fonts/{fontst
 
 function buildStyle(apiKey: string, theme: MapStyle): maplibregl.StyleSpecification {
   if (theme === 'satellite') {
-    return {
-      version: 8,
-      glyphs: COMMON_GLYPHS,
-      sources: {
-        esri: {
-          type: 'raster',
-          tiles: [
-            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-          ],
-          tileSize: 256,
-          maxzoom: 19,
-          attribution: '&copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
-        },
-        // Overlay vector labels on satellite
-        protomaps: {
-          type: 'vector',
-          url: `https://api.protomaps.com/tiles/v4.json?key=${apiKey}`,
-        },
+    const hasProtomaps = Boolean(apiKey)
+    const sources: maplibregl.StyleSpecification['sources'] = {
+      esri: {
+        type: 'raster',
+        tiles: [
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        ],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: '&copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
       },
-      layers: [
-        { id: 'satellite', type: 'raster', source: 'esri' },
+    }
+    if (hasProtomaps) {
+      sources.protomaps = {
+        type: 'vector',
+        url: `https://api.protomaps.com/tiles/v4.json?key=${apiKey}`,
+      }
+    }
+    const layers: maplibregl.LayerSpecification[] = [
+      { id: 'satellite', type: 'raster', source: 'esri' },
+    ]
+    if (hasProtomaps) {
+      layers.push(
         {
           id: 'roads_major', type: 'line', source: 'protomaps', 'source-layer': 'roads',
           filter: ['any', ['==', 'pmap:kind', 'highway'], ['==', 'pmap:kind', 'major_road']],
@@ -520,7 +609,13 @@ function buildStyle(apiKey: string, theme: MapStyle): maplibregl.StyleSpecificat
           layout: { 'text-field': ['get', 'name'], 'text-size': ['interpolate', ['linear'], ['zoom'], 6, 10, 14, 14], 'text-font': ['Noto Sans Regular'] },
           paint: { 'text-color': '#ffffff', 'text-halo-color': '#000000', 'text-halo-width': 2 },
         },
-      ],
+      )
+    }
+    return {
+      version: 8,
+      glyphs: COMMON_GLYPHS,
+      sources,
+      layers,
     }
   }
 

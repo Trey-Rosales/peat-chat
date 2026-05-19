@@ -23,13 +23,14 @@ interface SettingsStore {
   setPreferredTransport: (t: string) => void
   setProtomapsApiKey: (key: string) => void
   setMapStyle: (style: 'dark' | 'light' | 'topo' | 'satellite') => void
+  cycleMapStyle: () => void
   setLocationEnabled: (enabled: boolean) => void
   setBackgroundMode: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       micDeviceId: '',
       speakerDeviceId: '',
       pttKey: ' ',
@@ -51,6 +52,12 @@ export const useSettingsStore = create<SettingsStore>()(
       setPreferredTransport: (t) => set({ preferredTransport: t }),
       setProtomapsApiKey: (key) => set({ protomapsApiKey: key }),
       setMapStyle: (style) => set({ mapStyle: style }),
+      cycleMapStyle: () => {
+        const order: Array<'dark' | 'light' | 'topo' | 'satellite'> = ['dark', 'light', 'topo', 'satellite']
+        const i = order.indexOf(get().mapStyle)
+        const next = order[(i + 1) % order.length]
+        set({ mapStyle: next })
+      },
       setLocationEnabled: (enabled) => set({ locationEnabled: enabled }),
       setBackgroundMode: (enabled) => {
         (window as any).PeatLinkSettings?.setBackgroundMode?.(enabled)

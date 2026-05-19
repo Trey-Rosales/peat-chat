@@ -1,14 +1,6 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Form,
   FormControl,
   FormField,
@@ -19,13 +11,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { joinRoomSchema, type JoinRoomInput } from '@/lib/forms/join-room'
+import { useSend } from '@/lib/WebSocketContext'
+import { useChatStore } from '../store/chatStore'
 
-interface Props {
-  onJoin: (name: string) => void
-  onClose: () => void
-}
+export function JoinRoomModal() {
+  const send = useSend()
+  const setMenuRoute = useChatStore((s) => s.setMenuRoute)
 
-export function JoinRoomModal({ onJoin, onClose }: Props) {
   const form = useForm<JoinRoomInput>({
     resolver: zodResolver(joinRoomSchema),
     defaultValues: { name: '' },
@@ -33,49 +25,47 @@ export function JoinRoomModal({ onJoin, onClose }: Props) {
   })
 
   function handleJoin(values: JoinRoomInput) {
-    onJoin(values.name.trim())
+    const name = values.name.trim()
+    if (!name) return
+    send('join_room', { name })
+    setMenuRoute('home')
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Join Room</DialogTitle>
-          <DialogDescription>Enter the name of the room you want to join.</DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleJoin)} className="space-y-4">
-            <FormField
-              name="name"
-              control={form.control}
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Room name</FormLabel>
-                  <FormControl>
-                    <Input {...field} placeholder="Room name" autoFocus />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <DialogFooter>
-              <Button
-                variant="outline"
-                type="button"
-                onClick={onClose}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={!form.formState.isValid}
-              >
-                Join
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+    <div className="flex h-full flex-col gap-4 p-4">
+      <p className="text-sm text-fg-secondary">Enter the name of the room you want to join.</p>
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleJoin)} className="space-y-4">
+          <FormField
+            name="name"
+            control={form.control}
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Room name</FormLabel>
+                <FormControl>
+                  <Input {...field} placeholder="Room name" autoFocus />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setMenuRoute('home')}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!form.formState.isValid}
+            >
+              Join
+            </Button>
+          </div>
+        </form>
+      </Form>
+    </div>
   )
 }

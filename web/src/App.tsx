@@ -6,19 +6,14 @@ import { useTheme } from './hooks/useTheme'
 import { useChatStore } from './store/chatStore'
 import { useSettingsStore } from './store/settingsStore'
 import { VoiceManager } from './voice/VoiceManager'
-import { Sidebar } from './components/Sidebar'
-import { ChatView } from './components/ChatView'
-import { JoinRoomModal } from './components/JoinRoomModal'
-import { SettingsPage } from './components/SettingsPage'
+import { AppShell } from './components/layout/AppShell'
+import { WebSocketContext } from './lib/WebSocketContext'
+import { AppActionsProvider } from './lib/AppActionsContext'
 import type { VoiceMember } from './types'
 
 export default function App() {
   useTheme()
-  const [showJoinModal, setShowJoinModal] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
   const displayName = useChatStore((s) => s.displayName)
-  const settingsOpen = useChatStore((s) => s.settingsOpen)
-  const toggleSettings = useChatStore((s) => s.toggleSettings)
   const [nameInput, setNameInput] = useState('')
 
   // VoiceManager ref -- shared between WebSocket hook and voice controls
@@ -48,7 +43,7 @@ export default function App() {
   usePTT(send, voiceManagerRef.current)
 
   // Geolocation tracking for tactical map
-  const selfPositionRef = useGeolocation(send)
+  useGeolocation(send)
 
   const joinVoice = useCallback(
     async (roomId: string, channelId: string, existingMembers: VoiceMember[]) => {
@@ -88,10 +83,12 @@ export default function App() {
   const leaveVoice = useCallback(() => {
     voiceManagerRef.current?.leaveChannel()
     useChatStore.getState().clearActiveVoice()
+    useChatStore.getState().setVoiceMuted(false)
   }, [])
 
   const handleMuteToggle = useCallback((muted: boolean) => {
     voiceManagerRef.current?.setMuted(muted)
+    useChatStore.getState().setVoiceMuted(muted)
   }, [])
 
   const handleModeChange = useCallback((newMode: string) => {
@@ -196,54 +193,19 @@ export default function App() {
   }
 
   return (
-    <div className="h-full flex relative">
-      {/* Sidebar - always visible on desktop, overlay on mobile */}
-      <div
-        className={`
-          fixed inset-0 z-40 md:relative md:inset-auto
-          ${sidebarOpen ? 'block' : 'hidden'} md:block
-        `}
+    <WebSocketContext.Provider value={send}>
+      <AppActionsProvider
+        value={{
+          onJoinVoice: joinVoice,
+          onLeaveVoice: leaveVoice,
+          onMuteToggle: handleMuteToggle,
+          onModeChange: handleModeChange,
+          onPTTStart: handlePTTStart,
+          onPTTEnd: handlePTTEnd,
+        }}
       >
-        <div
-          className="absolute inset-0 bg-black/50 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-        <div className="relative z-10 h-full">
-          <Sidebar
-            onJoinRoom={() => setShowJoinModal(true)}
-            onSelectRoom={() => setSidebarOpen(false)}
-            onJoinVoice={joinVoice}
-            onLeaveVoice={leaveVoice}
-            onPTTStart={handlePTTStart}
-            onPTTEnd={handlePTTEnd}
-            onMuteToggle={handleMuteToggle}
-            onModeChange={handleModeChange}
-            send={send}
-          />
-        </div>
-      </div>
-
-      {/* Chat area */}
-      <ChatView
-        send={send}
-        onOpenSidebar={() => setSidebarOpen(true)}
-        onPTTStart={handlePTTStart}
-        onPTTEnd={handlePTTEnd}
-        selfPosition={selfPositionRef}
-      />
-
-      {showJoinModal && (
-        <JoinRoomModal
-          onJoin={(name) => {
-            send('join_room', { name })
-            setShowJoinModal(false)
-            setSidebarOpen(false)
-          }}
-          onClose={() => setShowJoinModal(false)}
-        />
-      )}
-
-      {settingsOpen && <SettingsPage onClose={toggleSettings} send={send} />}
-    </div>
+        <AppShell />
+      </AppActionsProvider>
+    </WebSocketContext.Provider>
   )
 }

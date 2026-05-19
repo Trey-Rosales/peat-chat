@@ -21,6 +21,11 @@ const buttonVariants = cva(
         sm:      "h-9 rounded-md px-3 min-h-touch",
         lg:      "h-11 rounded-md px-8 min-h-touch",
         icon:    "h-11 w-11 min-h-touch",
+        // Compact variants for in-header chrome (section labels, popovers).
+        // These intentionally bypass the 44px touch-target rule and should
+        // only be used on desktop/tablet chrome, never as primary controls.
+        xs:      "h-7 rounded-md px-2 text-xs",
+        "icon-xs": "h-7 w-7 rounded-md",
       },
     },
     defaultVariants: {

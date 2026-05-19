@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { X } from 'lucide-react'
 
 import { useSettingsStore } from '../store/settingsStore'
 import { useChatStore } from '../store/chatStore'
 import { KeyBindingCapture } from './KeyBindingCapture'
 import { VoiceSettings } from './VoiceSettings'
 import { useTheme, type Theme } from '../hooks/useTheme'
+import { useSend } from '@/lib/WebSocketContext'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -39,11 +39,6 @@ import { meshSchema, type MeshValues } from '@/lib/forms/mesh'
 
 const DEFAULT_DEVICE_SENTINEL = '__default__'
 
-interface Props {
-  onClose: () => void
-  send: (type: string, data: any) => void
-}
-
 interface DeviceInfo {
   deviceId: string
   label: string
@@ -57,7 +52,8 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function SettingsPage({ onClose, send }: Props) {
+export function SettingsPage() {
+  const send = useSend()
   const displayName = useChatStore((s) => s.displayName)
   const setDisplayName = useChatStore((s) => s.setDisplayName)
 
@@ -83,21 +79,21 @@ export function SettingsPage({ onClose, send }: Props) {
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([])
   const [audioOutputs, setAudioOutputs] = useState<DeviceInfo[]>([])
 
-  // Enumerate audio devices
+  // Enumerate audio devices. We deliberately do NOT call getUserMedia here —
+  // it triggers the mic permission prompt, which blocks the render and freezes
+  // the page when Settings opens. Device labels are populated by the browser
+  // once the user grants mic access elsewhere (e.g., joining a voice channel).
   useEffect(() => {
     async function loadDevices() {
+      if (!navigator.mediaDevices?.enumerateDevices) return
       try {
-        // Request permission first so labels are populated
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        stream.getTracks().forEach((t) => t.stop())
-
         const devices = await navigator.mediaDevices.enumerateDevices()
         setAudioInputs(
           devices
             .filter((d) => d.kind === 'audioinput')
             .map((d) => ({
               deviceId: d.deviceId,
-              label: d.label || `Microphone ${d.deviceId.slice(0, 8)}`,
+              label: d.label || `Microphone ${d.deviceId.slice(0, 8) || 'default'}`,
             }))
         )
         setAudioOutputs(
@@ -105,11 +101,11 @@ export function SettingsPage({ onClose, send }: Props) {
             .filter((d) => d.kind === 'audiooutput')
             .map((d) => ({
               deviceId: d.deviceId,
-              label: d.label || `Speaker ${d.deviceId.slice(0, 8)}`,
+              label: d.label || `Speaker ${d.deviceId.slice(0, 8) || 'default'}`,
             }))
         )
       } catch {
-        // Mic permission denied -- show empty lists
+        // enumerateDevices failed — leave lists empty
       }
     }
     loadDevices()
@@ -145,16 +141,8 @@ export function SettingsPage({ onClose, send }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-surface-canvas flex flex-col">
-      {/* Header */}
-      <div className="px-4 py-3 bg-surface-2 flex items-center justify-between border-b border-border-subtle shrink-0">
-        <h1 className="text-lg font-semibold text-fg-primary">Settings</h1>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close settings">
-          <X className="h-5 w-5" />
-        </Button>
-      </div>
-
-      {/* Single-page scrollable content */}
+    <div className="flex h-full flex-col bg-surface-canvas">
+      {/* Header is provided by the parent sheet (OverlaySheets) */}
       <ScrollArea className="flex-1">
         <div className="max-w-lg mx-auto px-4 py-6 space-y-10">
 

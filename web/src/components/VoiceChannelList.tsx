@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { Plus, Volume2, VolumeX } from 'lucide-react'
 import type { VoiceChannel } from '../types'
 import { useChatStore } from '../store/chatStore'
 import { VoiceMemberItem } from './VoiceMemberItem'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 
 interface Props {
@@ -39,28 +42,28 @@ export function VoiceChannelList({
 
   return (
     <div className="px-2 pb-2">
-      {/* Section header */}
-      <div className="flex items-center justify-between px-2 pt-2 pb-1">
+      {/* Section header — aligned to px-3 from sidebar edge (px-2 wrapper + px-1 here) */}
+      <div className="flex items-center justify-between px-1 pt-2 pb-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-secondary/70">
           Voice Channels
         </span>
-        <button
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-fg-secondary/70 hover:text-fg-primary"
           onClick={() => setShowCreate(!showCreate)}
-          className="text-fg-secondary/70 hover:text-fg-primary transition p-0.5 rounded"
+          aria-label="Create voice channel"
           title="Create voice channel"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
       {/* Create channel input */}
       {showCreate && (
-        <div className="px-2 pb-2">
+        <div className="px-1 pb-2">
           <div className="flex gap-1">
-            <input
-              type="text"
+            <Input
               placeholder="Channel name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -68,15 +71,16 @@ export function VoiceChannelList({
                 if (e.key === 'Enter') handleCreate()
                 if (e.key === 'Escape') setShowCreate(false)
               }}
-              className="flex-1 bg-surface-2 text-fg-primary text-xs rounded px-2 py-1 placeholder-fg-secondary"
+              className="h-8 text-xs"
               autoFocus
             />
-            <button
+            <Button
+              size="sm"
               onClick={handleCreate}
-              className="text-xs text-brand px-2 py-1 rounded hover:bg-surface-2"
+              className="h-8 text-xs"
             >
               Add
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -104,24 +108,11 @@ export function VoiceChannelList({
                     : 'text-fg-secondary hover:bg-accent hover:text-fg-primary'
                 }`}
               >
-                {/* Speaker icon */}
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="shrink-0"
-                >
-                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
-                  {memberCount > 0 && (
-                    <>
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                    </>
-                  )}
-                </svg>
+                {memberCount > 0 ? (
+                  <Volume2 className="h-4 w-4 shrink-0" />
+                ) : (
+                  <VolumeX className="h-4 w-4 shrink-0" />
+                )}
                 <span className="text-xs font-medium truncate">{String(channel.name || 'Voice')}</span>
                 {memberCount > 0 && (
                   <span className="text-[10px] text-fg-secondary ml-auto shrink-0">

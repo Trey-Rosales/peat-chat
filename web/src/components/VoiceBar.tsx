@@ -1,8 +1,10 @@
 import { useState, Component, type ReactNode } from 'react'
+import { Mic, MicOff, PhoneOff } from 'lucide-react'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 // Error boundary to prevent voice UI crashes from blanking the entire app
 class VoiceBarErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; errorMsg: string }> {
@@ -127,16 +129,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle, onMod
                   : 'bg-transparent! text-fg-secondary! hover:text-fg-primary! hover:bg-surface-2!'
               }`}
             >
-              {muted ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.55-.9l4.17 4.18L21 19.73 4.27 3z"/>
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-                </svg>
-              )}
+              {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent>{muted ? 'Unmute mic' : 'Mute mic'}</TooltipContent>
@@ -145,17 +138,20 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle, onMod
         {/* Voice mode cycle button */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={cycleMode}
-              className={`px-2 py-1 rounded-md text-[10px] font-medium transition shrink-0 ${
-                voiceMode !== 'ptt'
-                  ? 'bg-brand/20 text-brand'
-                  : 'bg-surface-2 text-fg-secondary hover:text-fg-primary'
-              }`}
               aria-label={`Voice mode: ${voiceMode} (tap to cycle)`}
+              className={cn(
+                'h-7 px-2 text-[10px] font-medium shrink-0',
+                voiceMode !== 'ptt'
+                  ? 'bg-brand/20 text-brand hover:bg-brand/30 hover:text-brand'
+                  : 'text-fg-secondary hover:text-fg-primary',
+              )}
             >
               {String(MODE_LABELS[voiceMode as string] || 'PTT')}
-            </button>
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Voice mode: {voiceMode} (tap to cycle)</TooltipContent>
         </Tooltip>
@@ -177,10 +173,7 @@ function VoiceBarInner({ onDisconnect, onPTTStart, onPTTEnd, onMuteToggle, onMod
               aria-label="Disconnect"
               className="shrink-0 bg-transparent! text-status-critical! hover:bg-status-critical/10!"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                <line x1="1" y1="1" x2="23" y2="23" />
-              </svg>
+              <PhoneOff className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Disconnect from voice</TooltipContent>

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import type { MeshPeer } from '../types'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { useChatStore } from '../store/chatStore'
 
 // Map transport name → CSS variable for SVG fill/stroke attributes.
 // These must be CSS var() references because SVG presentation attributes
@@ -33,13 +34,12 @@ function transportBadgeVariant(transport: string): TransportBadgeVariant {
   return 'transport-offline'
 }
 
-interface Props {
-  peers: MeshPeer[]
-  selfName: string
-  selfShortId: string
-}
-
-export function MeshViewer({ peers, selfName, selfShortId }: Props) {
+export function MeshViewer() {
+  const activeRoomId = useChatStore((s) => s.activeRoomId)
+  const peers = useChatStore((s) =>
+    activeRoomId ? s.meshPeers[activeRoomId] ?? [] : []
+  )
+  const selfName = useChatStore((s) => s.displayName)
   const [selectedPeer, setSelectedPeer] = useState<MeshPeer | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dims, setDims] = useState({ width: 600, height: 400 })

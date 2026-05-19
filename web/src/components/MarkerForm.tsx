@@ -4,17 +4,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { markerSchema, type MarkerInput, COT_TYPE_VALUES, AFFILIATION_VALUES } from '@/lib/forms/marker'
+import { markerSchema, type MarkerInput, AFFILIATION_VALUES } from '@/lib/forms/marker'
+import { COT_TYPES, AFFILIATION_TO_LEGACY } from '@/lib/cot-icons'
 
 // ── Static lookup tables ──────────────────────────────────────────────────────
-
-const COT_TYPES: { value: (typeof COT_TYPE_VALUES)[number]; label: string; icon: string }[] = [
-  { value: 'b-m-p-w',     label: 'Waypoint',  icon: 'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z' },
-  { value: 'b-m-p-s-m',   label: 'Marker',    icon: 'M4 15s1-1 4-1 5 2 8 2 4-1V3s-3 1-4 1-5-2-8-2v12' },
-  { value: 'b-m-p-s-p-i', label: 'POI',       icon: 'M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-1-11v6h2v-6h-2zm0-4v2h2V7h-2z' },
-  { value: 'b-m-p-c-cp',  label: 'Contact',   icon: 'M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z' },
-  { value: 'b-r-.-O',     label: 'Objective', icon: 'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3' },
-]
 
 const AFFILIATIONS: {
   value: (typeof AFFILIATION_VALUES)[number]
@@ -35,9 +28,6 @@ const affiliationPlaceClass: Record<string, string> = {
   n: 'bg-cot-neutral',
   u: 'bg-cot-unknown',
 }
-
-// Map affiliation shortcode to legacy color field for backward compat
-const colorMap: Record<string, string> = { f: 'green', h: 'red', n: 'blue', u: 'yellow' }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -65,7 +55,7 @@ export function MarkerForm({ lat, lon, onSubmit, onCancel }: Props) {
     onSubmit({
       name: values.name.trim(),
       icon: values.cotType,
-      color: colorMap[values.affiliation] ?? 'blue',
+      color: AFFILIATION_TO_LEGACY[values.affiliation] ?? 'blue',
       cot_type: values.cotType,
       remarks: (values.remarks ?? '').trim(),
     })
