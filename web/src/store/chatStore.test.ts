@@ -11,7 +11,6 @@ beforeEach(() => {
     activeRoomId: null,
     connected: false,
     meshPeers: {},
-    meshViewerOpen: false,
     voiceState: {},
     activeVoice: null,
     localSpeaking: false,
@@ -20,7 +19,8 @@ beforeEach(() => {
     cotMarkers: {},
     mapViewerOpen: false,
     voiceError: null,
-    settingsOpen: false,
+    menuOpen: false,
+    menuRoute: 'home',
   })
 })
 
@@ -164,12 +164,12 @@ describe('chatStore - mesh', () => {
     expect(peers.find((p) => p.id === 'mac-1')?.connected_via).toBe('relay-1')
   })
 
-  it('toggles mesh viewer', () => {
-    expect(useChatStore.getState().meshViewerOpen).toBe(false)
-    useChatStore.getState().toggleMeshViewer()
-    expect(useChatStore.getState().meshViewerOpen).toBe(true)
-    useChatStore.getState().toggleMeshViewer()
-    expect(useChatStore.getState().meshViewerOpen).toBe(false)
+  it('navigates the menu via menuRoute', () => {
+    expect(useChatStore.getState().menuRoute).toBe('home')
+    useChatStore.getState().setMenuRoute('mesh')
+    expect(useChatStore.getState().menuRoute).toBe('mesh')
+    useChatStore.getState().setMenuRoute('home')
+    expect(useChatStore.getState().menuRoute).toBe('home')
   })
 })
 
@@ -367,28 +367,21 @@ describe('chatStore - map viewer', () => {
     expect(useChatStore.getState().mapViewerOpen).toBe(false)
   })
 
-  it('opening map closes mesh viewer', () => {
-    useChatStore.setState({ meshViewerOpen: true })
-    useChatStore.getState().toggleMapViewer()
-    expect(useChatStore.getState().mapViewerOpen).toBe(true)
-    expect(useChatStore.getState().meshViewerOpen).toBe(false)
-  })
-
-  it('opening mesh closes map viewer', () => {
-    useChatStore.setState({ mapViewerOpen: true })
-    useChatStore.getState().toggleMeshViewer()
-    expect(useChatStore.getState().meshViewerOpen).toBe(true)
-    expect(useChatStore.getState().mapViewerOpen).toBe(false)
-  })
 })
 
-describe('chatStore - settings', () => {
-  it('toggles settings', () => {
-    expect(useChatStore.getState().settingsOpen).toBe(false)
-    useChatStore.getState().toggleSettings()
-    expect(useChatStore.getState().settingsOpen).toBe(true)
-    useChatStore.getState().toggleSettings()
-    expect(useChatStore.getState().settingsOpen).toBe(false)
+describe('chatStore - menu', () => {
+  it('toggleMenu resets menuRoute to home on close', () => {
+    useChatStore.setState({ menuOpen: true, menuRoute: 'settings' })
+    useChatStore.getState().toggleMenu()
+    expect(useChatStore.getState().menuOpen).toBe(false)
+    expect(useChatStore.getState().menuRoute).toBe('home')
+  })
+
+  it('toggleMenu preserves menuRoute on open', () => {
+    useChatStore.setState({ menuOpen: false, menuRoute: 'mesh' })
+    useChatStore.getState().toggleMenu()
+    expect(useChatStore.getState().menuOpen).toBe(true)
+    expect(useChatStore.getState().menuRoute).toBe('mesh')
   })
 })
 

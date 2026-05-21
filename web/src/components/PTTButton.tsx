@@ -1,3 +1,7 @@
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { Mic } from 'lucide-react'
+
 interface Props {
   onPTTStart: () => void
   onPTTEnd: () => void
@@ -6,7 +10,9 @@ interface Props {
 
 export function PTTButton({ onPTTStart, onPTTEnd, active }: Props) {
   return (
-    <button
+    <Button
+      variant={active ? 'destructive' : 'default'}
+      size="lg"
       onTouchStart={(e) => {
         e.preventDefault()
         onPTTStart()
@@ -20,22 +26,13 @@ export function PTTButton({ onPTTStart, onPTTEnd, active }: Props) {
       onMouseLeave={() => {
         if (active) onPTTEnd()
       }}
-      className={`w-10 h-10 rounded-full flex items-center justify-center transition shrink-0 ${
-        active
-          ? 'bg-brand text-white scale-110'
-          : 'bg-surface-2 text-fg-secondary hover:text-fg-primary hover:bg-surface-2'
-      }`}
+      className={cn(
+        'h-16 w-10 shrink-0 rounded-full transition',
+        active && 'scale-110 animate-pulse',
+      )}
       title="Hold to talk"
     >
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-      >
-        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-      </svg>
-    </button>
+      <Mic className="h-5 w-5" />
+    </Button>
   )
 }

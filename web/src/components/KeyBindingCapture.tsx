@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface Props {
   currentKey: string
@@ -13,7 +15,7 @@ function keyLabel(key: string): string {
 
 export function KeyBindingCapture({ currentKey, onCapture }: Props) {
   const [capturing, setCapturing] = useState(false)
-  const ref = useRef<HTMLButtonElement>(null)
+  const ref = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!capturing) return
@@ -41,17 +43,24 @@ export function KeyBindingCapture({ currentKey, onCapture }: Props) {
     return () => window.removeEventListener('mousedown', handler)
   }, [capturing])
 
+  const displayValue = capturing ? 'Press any key...' : keyLabel(currentKey)
+
   return (
-    <button
-      ref={ref}
-      onClick={() => setCapturing(true)}
-      className={`px-4 py-2 rounded-lg text-sm font-mono transition ${
-        capturing
-          ? 'bg-brand/20 text-brand border border-brand'
-          : 'bg-surface-2 text-fg-primary border border-border-subtle hover:border-fg-secondary'
-      }`}
-    >
-      {capturing ? 'Press any key...' : keyLabel(currentKey)}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Input
+          ref={ref}
+          readOnly
+          value={displayValue}
+          onClick={() => setCapturing(true)}
+          className={`font-mono cursor-pointer ${
+            capturing
+              ? 'border-brand ring-2 ring-brand/20 text-brand bg-brand/10'
+              : ''
+          }`}
+        />
+      </TooltipTrigger>
+      <TooltipContent>Click input, then press a key combination</TooltipContent>
+    </Tooltip>
   )
 }

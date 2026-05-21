@@ -101,17 +101,17 @@ interface ChatStore {
   connected: boolean
   setConnected: (c: boolean) => void
 
-  // Mesh viewer
+  // Mesh state
   meshPeers: Record<string, MeshPeer[]>
-  meshViewerOpen: boolean
   setMeshPeers: (roomId: string, peers: MeshPeer[]) => void
   mergeMeshPeers: (roomId: string, blePeers: MeshPeer[]) => void
-  toggleMeshViewer: () => void
 
   // Voice
   voiceState: Record<string, VoiceChannel[]>
   activeVoice: { roomId: string; channelId: string } | null
   localSpeaking: boolean
+  voiceMuted: boolean
+  setVoiceMuted: (muted: boolean) => void
   setVoiceState: (roomId: string, channels: VoiceChannel[]) => void
   setActiveVoice: (roomId: string, channelId: string) => void
   clearActiveVoice: () => void
@@ -139,9 +139,30 @@ interface ChatStore {
   voiceError: string | null
   setVoiceError: (err: string | null) => void
 
-  // Settings
-  settingsOpen: boolean
-  toggleSettings: () => void
+  // Imperative map actions (registered by MapViewer when its map instance is ready)
+  mapControls: {
+    zoomIn: () => void
+    zoomOut: () => void
+    centerOnSelf: () => void
+    openAddMarker: () => void
+  } | null
+  setMapControls: (controls: ChatStore['mapControls']) => void
+
+  // Layout overlay sheets
+  menuOpen: boolean
+  toggleMenu: () => void
+  menuRoute: 'home' | 'settings' | 'join-room' | 'mesh'
+  setMenuRoute: (route: 'home' | 'settings' | 'join-room' | 'mesh') => void
+  drawerSnap: number
+  setDrawerSnap: (snap: number) => void
+  contextSurfaceHidden: boolean
+  setContextSurfaceHidden: (hidden: boolean) => void
+
+  // Context navigation stack (drawer / panel content)
+  contextStack: Array<{ route: 'list' } | { route: 'chat'; roomId: string }>
+  pushContextRoute: (route: { route: 'chat'; roomId: string }) => void
+  popContextRoute: () => void
+  resetContextStack: () => void
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -286,9 +307,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   connected: false,
   setConnected: (c) => set({ connected: c }),
 
-  // Mesh viewer
+  // Mesh state
   meshPeers: {},
-  meshViewerOpen: false,
   setMeshPeers: (roomId, peers) => {
     const meshPeers = { ...get().meshPeers }
     // Preserve BLE/wifi-direct peers from bridge — they come via ble_mesh_state,
@@ -314,18 +334,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     meshPeers[roomId] = [...preserved, ...blePeers]
     set({ meshPeers })
   },
-  toggleMeshViewer: () => {
-    const opening = !get().meshViewerOpen
-    set({
-      meshViewerOpen: opening,
-      mapViewerOpen: opening ? false : get().mapViewerOpen,
-    })
-  },
-
   // Voice
   voiceState: {},
   activeVoice: null,
   localSpeaking: false,
+  voiceMuted: false,
+  setVoiceMuted: (muted) => set({ voiceMuted: muted }),
 
   setVoiceState: (roomId, channels) => {
     const voiceState = { ...get().voiceState }
@@ -439,19 +453,38 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  toggleMapViewer: () => {
-    const opening = !get().mapViewerOpen
-    set({
-      mapViewerOpen: opening,
-      meshViewerOpen: opening ? false : get().meshViewerOpen,
-    })
-  },
+  toggleMapViewer: () => set({ mapViewerOpen: !get().mapViewerOpen }),
 
   // Voice error
   voiceError: null,
   setVoiceError: (err) => set({ voiceError: err }),
 
-  // Settings
-  settingsOpen: false,
-  toggleSettings: () => set({ settingsOpen: !get().settingsOpen }),
+  // Imperative map actions (registered by MapViewer when its map instance is ready)
+  mapControls: null,
+  setMapControls: (controls) => set({ mapControls: controls }),
+
+  // Layout overlay sheets
+  menuOpen: false,
+  // Closing the menu always resets to the home route so the next open starts fresh.
+  toggleMenu: () => {
+    const open = !get().menuOpen
+    set({ menuOpen: open, menuRoute: open ? get().menuRoute : 'home' })
+  },
+  menuRoute: 'home',
+  setMenuRoute: (route) => set({ menuRoute: route }),
+  drawerSnap: 0.25,
+  setDrawerSnap: (snap) => set({ drawerSnap: snap }),
+  contextSurfaceHidden: false,
+  setContextSurfaceHidden: (hidden) => set({ contextSurfaceHidden: hidden }),
+
+  // Context navigation stack (drawer / panel content)
+  contextStack: [{ route: 'list' }],
+  pushContextRoute: (route) =>
+    set({ contextStack: [...get().contextStack, route] }),
+  popContextRoute: () => {
+    const stack = get().contextStack
+    if (stack.length <= 1) return
+    set({ contextStack: stack.slice(0, -1) })
+  },
+  resetContextStack: () => set({ contextStack: [{ route: 'list' }] }),
 }))

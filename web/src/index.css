@@ -1,11 +1,13 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
 /* DTAK theme stylesheets — one set of CSS vars per mode */
 @import './styles/themes/dark.css';
 @import './styles/themes/light.css';
 @import './styles/themes/low-detection.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Generated @theme block (shadcn aliases + min-h-touch utility) */
+@import './styles/tokens.css';
 
 /* Default to dark mode if no data-theme is set on <html> */
 :root { color-scheme: dark; }

@@ -1,54 +1,52 @@
-# Migration Playbook — `pl-*` → DTAK
+# Migration History
 
-The legacy `pl-*` tokens (WhatsApp-derived) are deprecated. They are currently aliased via a compatibility shim in `web/tailwind.config.js` so existing UI keeps working *and* is theme-reactive automatically. Replace them with proper DTAK semantic tokens using this playbook.
+This file documents the design-system migrations Peat-Chat has gone through. Each section is a snapshot of what was migrated, when, and where to find the spec.
 
-## Mapping table
+## v0 → v1 — DTAK Interface Guide adoption (May 2026)
 
-| Legacy | DTAK |
-|---|---|
-| `bg-pl-bg` | `bg-surface-canvas` |
-| `bg-pl-sidebar` | `bg-surface-1` |
-| `bg-pl-header` | `bg-surface-2` |
-| `bg-pl-input` | `bg-surface-2` (or use within `<Input>`) |
-| `bg-pl-hover` | `hover:bg-surface-2` |
-| `bg-pl-active` | `bg-surface-3` or `data-active:bg-surface-3` |
-| `bg-pl-sent` | `bg-brand` |
-| `bg-pl-received` | `bg-surface-2` |
-| `border-pl-border` | `border-border-subtle` |
-| `text-pl-text` | `text-fg-primary` |
-| `text-pl-text-sec` | `text-fg-secondary` (use `fg-tertiary` for very faint text) |
-| `text-pl-accent` / `bg-pl-accent` | `text-brand` / `bg-brand` |
-| `text-pl-danger` / `bg-pl-danger` | `text-status-critical` / `bg-status-critical` |
+**Status:** Complete.
 
-## Rollout order (recommended)
+Replaced the original WhatsApp-derived `pl-*` Tailwind tokens with DTAK semantic tokens (surface-1, fg-primary, brand, status-critical, etc.). Introduced the seven OKLCH color scales and three-theme story (dark / light / low-detection).
 
-1. **Settings** — small surface, easy first migration.
-2. **Sidebar / room list** — high-traffic; gives the most visible dark→DTAK delta.
-3. **Chat view** — heaviest, save for after the pattern is solid.
-4. **Voice bar / call UI** — small surface but high-stakes (active-call states).
-5. **Mesh viewer** — uses transport tokens that are new; verify visually.
-6. **Map / markers** — uses CoT tokens; verify in all three modes.
+- Spec: [`docs/superpowers/specs/2026-05-01-dtak-interface-guide-design.md`](../superpowers/specs/2026-05-01-dtak-interface-guide-design.md)
+- Plan: [`docs/superpowers/plans/2026-05-01-dtak-interface-guide.md`](../superpowers/plans/2026-05-01-dtak-interface-guide.md)
 
-## Per-feature workflow
+The `pl-*` shim that bridged the migration (in the old `tailwind.config.js`) was removed when the shadcn refactor below deleted the JS config entirely. `pl-2`, `pl-4`, etc. are now standard Tailwind padding utilities.
 
-1. Read every line of `web/src/components/<Feature>.tsx` and apply the mapping table.
-2. If the component uses inline hex values, replace them with the appropriate token.
-3. If a primitive (Button, Input, etc.) fits a use case, swap to the DTAK primitive from `web/src/components/dtak/`.
-4. Run the existing tests for that feature.
-5. Open the app in dev. Test the feature in **all three modes**. Note any visual issues.
-6. Commit with a message like: `refactor(dtak): migrate <Feature> off pl-* tokens`.
+## v1 → v2 — shadcn/ui adoption (May 2026)
 
-## What to do if a token doesn't map cleanly
+**Status:** Complete.
 
-- If you find a use case the mapping table doesn't cover, ping the design lead.
-- Adding a new semantic token is OK if the use case is real and reusable. Add it to `SEMANTIC_MAPS` in `generate-tokens.py`, regenerate, then use.
-- Do NOT add a one-off custom hex. If it's truly one-off, use a raw scale stop (`bg-blue-500/20`) and document why.
+Replaced the bespoke DTAK primitive layer (Button, IconButton, Input, Surface, StatusPill, Toggle, CalloutBar — all under `web/src/components/dtak/`) with shadcn/ui primitives at `web/src/components/ui/`. shadcn primitives are restyled to consume DTAK semantic tokens via the alias layer in `tailwind.config.js` (later moved to `tokens.css` `@theme` block — see v2 → v3 below).
 
-## Final cleanup
+Sixteen feature components were migrated to use the new primitives in four passes (chat / voice / map / settings). Forms moved to `react-hook-form` + `zod` via shadcn's `<Form>` component.
 
-When all features are migrated:
+- Spec: [`docs/superpowers/specs/2026-05-15-shadcn-dtak-refactor-design.md`](../superpowers/specs/2026-05-15-shadcn-dtak-refactor-design.md)
+- Plan: [`docs/superpowers/plans/2026-05-15-shadcn-dtak-refactor.md`](../superpowers/plans/2026-05-15-shadcn-dtak-refactor.md)
 
-1. Remove the entire `legacyPlCompat` block from `web/tailwind.config.js`.
-2. Run `git grep "pl-"` and confirm no matches in `web/src/`.
-3. Add a CI check (if not already present) that fails on `pl-*` reintroduction.
-4. Commit the cleanup as `chore(dtak): remove legacy pl-* tokens and shim`.
+What's left of the old DTAK primitive layer:
+- `CotMarker` was relocated to `web/src/components/map/CotMarker.tsx` (it's map/CoT-specific, not a generic primitive).
+- `web/src/components/dtak/` was deleted entirely.
+
+## v2 → v3 — Tailwind 4 upgrade (May 2026)
+
+**Status:** Complete.
+
+Upgraded Tailwind 3.4 → 4.x. Moved to CSS-first config via `@theme` block in `web/src/styles/tokens.css` (generated by `scripts/generate-tokens.py`). Replaced the PostCSS pipeline with `@tailwindcss/vite`. Replaced `tailwindcss-animate` with `tw-animate-css` (drop-in v4 replacement). Dropped `autoprefixer` (Lightning CSS handles vendor prefixing). Deleted `tailwind.config.js` and `postcss.config.js`.
+
+Per-theme CSS files now emit values in full `oklch()` function form (not raw L/C/H triplets), enabling v4's native `bg-primary/50` opacity syntax.
+
+- Spec: [`docs/superpowers/specs/2026-05-15-tailwind-4-upgrade-design.md`](../superpowers/specs/2026-05-15-tailwind-4-upgrade-design.md)
+- Plan: [`docs/superpowers/plans/2026-05-15-tailwind-4-upgrade.md`](../superpowers/plans/2026-05-15-tailwind-4-upgrade.md)
+
+## Maintenance notes for future work
+
+- **Token edits:** edit `scripts/generate-tokens.py` (anchors, `SEMANTIC_MAPS`, or the `@theme` block in `write_tokens_css`), then run `python3 scripts/generate-tokens.py`. Commit the regenerated `tokens.json`, theme CSS files, and `tokens.css`.
+- **Adding a shadcn primitive:** `cd web && npx shadcn@latest add <name>`, then sanitize per `03-components.md`'s "Adding a new component" section.
+- **shadcn CLI v4 schema differences:** `components.json` was written for shadcn's v3 schema and still works against the v4 CLI for the primitives we have. New components added via the v4 CLI may emit slightly different class strings — review before merging.
+- **Browser baseline:** Tailwind 4 requires Safari 16.4+, Chrome 111+. Capacitor on iOS 16+ ships modern WKWebView; Android System WebView auto-updates from Play Store. Older Android devices without WebView updates may render incorrectly.
+
+## Known follow-ups
+
+- **LD-safe map marker palette.** `MARKER_COLORS.blue` in `web/src/components/MapViewer.tsx` violates LD rules (no blue in low-detection mode). Map markers are a separate tactical color system from DTAK design tokens — not addressed in any of the three migrations above.
+- **`min-h-[80px]` in textarea.tsx.** Hardcoded textarea height; intentional, not a touch-target. Could be expressed as a token (`--text-area-min-height` in `@theme`) if the value becomes used in 2+ places.
